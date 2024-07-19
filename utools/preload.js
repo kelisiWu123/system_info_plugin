@@ -13,13 +13,18 @@ window.versions = {
 window.services = {
   getCpuInfo: async function getCpuInfo() {
     const memo = await si.mem()
-    const gpu = await si.graphics()
-    console.log(gpu)
-    console.log(memo)
+    console.log(memo,'memo')
+
+
     const data = await si.currentLoad()
-    console.log('CPU Usage:')
-    console.log(data)
-    return si.cpu().then((data: { brand: string; cores: string; performanceCores: string }) => {
+    console.log('CPU Usage:',data)
+
+    const sys = await  si.osInfo()
+    console.log(sys,'sys')
+
+    const battery = await si.battery()
+
+    return si.cpu().then((data) => {
       console.log(data)
       return data
     })
@@ -30,4 +35,12 @@ window.services = {
     console.log(data)
     return data
   },
+  getGpuInfo: async function getGpuInfo() {
+    const graphics = await si.graphics()
+    const [gpu] = graphics.controllers.filter((ctr)=>{
+      return ctr.vram > 1
+    })
+    console.log(gpu)
+    return gpu
+  }
 }

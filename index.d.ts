@@ -12,6 +12,7 @@ declare global {
     services: {
       getCpuInfo: () => Promise<{ brand: string; cores: string; performanceCores: string }>
       getMemInfo: () => Promise<{ total: number; available: number; active: number }>
+      getGpuInfo: () => Promise<{model:string,vram:number}>
     }
   }
 }

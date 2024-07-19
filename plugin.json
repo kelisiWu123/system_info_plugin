@@ -16,5 +16,8 @@
 				"template"
 			]
 		}
-	]
+	],
+	"pluginSetting": {
+		"height": 200
+	}
 }

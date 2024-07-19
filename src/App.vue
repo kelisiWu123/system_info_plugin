@@ -4,6 +4,10 @@ import { bytesToGB } from './utils'
 const cpu_brand = ref('notion')
 const cpu_cores = ref(0)
 const cpu_performanceCores = ref(0)
+const gpuInfo = ref({
+  vram: 0,
+  model: ''
+})
 const memory_used = ref({
   total: 0,
   active: 0,
@@ -12,13 +16,20 @@ const memory_used = ref({
 async function hello() {
   const { brand, cores, performanceCores } = await window.services.getCpuInfo()
   const memoInfo = await window.services.getMemInfo()
+  const {vram,model} = await window.services.getGpuInfo()
+
   memory_used.value = memoInfo
   cpu_brand.value = brand
   cpu_cores.value = Number(cores)
   cpu_performanceCores.value = Number(performanceCores)
+
+  gpuInfo.value.vram = vram
+  gpuInfo.value.model = model
 }
 onMounted(() => {
-  hello()
+  setInterval(()=>{
+    hello()
+  },10000)
 })
 </script>
 
@@ -40,6 +51,12 @@ onMounted(() => {
   </div>
   <div>
     <span>已用内存:{{ `${bytesToGB(memory_used.active)} GB` }}</span>
+  </div>
+  <div>
+    <span>显卡:{{ `${gpuInfo.model}`}}</span>
+  </div>
+  <div>
+    <span>显存:{{ `${gpuInfo.vram}`}}</span>
   </div>
 </template>
 

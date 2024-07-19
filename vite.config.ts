@@ -21,7 +21,7 @@ export default defineConfig(({ command, mode }) => {
     plugins: [vue(),
     utools({
       entry: [
-        { entry: 'utools/preload.ts' }
+        { entry: 'utools/preload.js' }
       ],
       hmr: {
         pluginJsonPath: './plugin.json'
@@ -62,7 +62,7 @@ export default defineConfig(({ command, mode }) => {
         },
       },
       {
-        entry: 'utools/preload.ts',
+        entry: 'utools/preload.js',
         onstart({ reload }) {
           // Notify the Renderer process to reload the page when the Preload scripts build is complete,
           // instead of restarting the entire Electron App.
