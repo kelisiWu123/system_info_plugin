@@ -5,7 +5,9 @@ import pkg from './package.json'
 import electron from 'vite-plugin-electron'
 import { rmSync } from 'node:fs'
 import { notBundle } from 'vite-plugin-electron/plugin'
-
+import AutoImport from 'unplugin-auto-import/vite'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 
 // https://vitejs.dev/config/
@@ -19,6 +21,12 @@ export default defineConfig(({ command, mode }) => {
   return {
     base: './',
     plugins: [vue(),
+      AutoImport({
+        resolvers: [ElementPlusResolver()],
+      }),
+      Components({
+        resolvers: [ElementPlusResolver()],
+      }),
     utools({
       entry: [
         { entry: 'utools/preload.js' }
