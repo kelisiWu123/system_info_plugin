@@ -10,7 +10,7 @@ declare global {
   interface Window {
     versions: ProcessVersions
     services: {
-      getCpuInfo: () => Promise<{ brand: string; physicalCores: string; performanceCores: string }>
+      getCpuInfo: () => Promise<Cpu>
       getMemInfo: () => Promise<{ total: number; available: number; active: number }>
       getGpuInfo: () => Promise<{model:string,vram:number}>
       getMemoryLayout: () => Promise<{clockSpeed:number,size:number,type:string}[]>
