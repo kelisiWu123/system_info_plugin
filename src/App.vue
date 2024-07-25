@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { bytesToGB } from './utils'
+import {onMounted, ref} from 'vue'
+import {bytesToGB, mbToGB} from './utils'
 import {
   Cpu,
-    MemoryOne,
-    Airplay
+  MemoryOne,
+  Airplay
 } from "@icon-park/vue-next";
 
 
 import VConsole from "vconsole";
+
 const cpu_brand = ref('notion')
 const cpu_cores = ref(0)
 const cpu_performanceCores = ref(0)
@@ -21,12 +22,17 @@ const memory_used = ref({
   active: 0,
   available: 0,
 })
-const loading = ref(false)
-async function hello() {
-  const { brand, physicalCores, performanceCores } = await window.services.getCpuInfo()
-  const memoInfo = await window.services.getMemInfo()
-  const {vram,model} = await window.services.getGpuInfo()
+const memory_layout = ref<Partial<{
+  clockSpeed: number, size: number, type: string
+}>[]>([])
 
+
+async function hello() {
+  const {brand, physicalCores, performanceCores} = await window.services.getCpuInfo()
+  const memoInfo = await window.services.getMemInfo()
+  const {vram, model} = await window.services.getGpuInfo()
+  const memoryLayout = await window.services.getMemoryLayout()
+  memory_layout.value = memoryLayout
   memory_used.value = memoInfo
   cpu_brand.value = brand
   cpu_cores.value = Number(physicalCores)
@@ -35,73 +41,67 @@ async function hello() {
   gpuInfo.value.vram = vram
   gpuInfo.value.model = model
 }
+
 onMounted(() => {
-    hello()
+  hello()
 })
 
 const vConsole = new VConsole();
+console.log(vConsole)
+
 
 </script>
 
 <template>
 
-  <el-card style="max-width: 480px">
-    <OptionCard :title="'cpu'">
-      <template v-slot:content>
+
+    <OptionCard title="CPU">
+      <template v-slot:icon>
         <cpu theme="outline" size="24" fill="#333"/>
       </template>
-    </OptionCard>
-    <OptionCard :title="'memory'">
       <template v-slot:content>
-        <memory-one theme="outline" size="24" fill="#333"/>
+          <el-descriptions  :column="2">
+            <el-descriptions-item :span="2" label="CPU">{{cpu_brand}}</el-descriptions-item>
+            <el-descriptions-item label="核心">{{cpu_cores}}</el-descriptions-item>
+            <el-descriptions-item label="线程">{{cpu_performanceCores}}</el-descriptions-item>
+          </el-descriptions>
       </template>
     </OptionCard>
-    <OptionCard :title="'gpu'">
-      <template v-slot:content>
+    <OptionCard title="GPU">
+      <template v-slot:icon>
         <airplay theme="outline" size="24" fill="#333"/>
       </template>
-    </OptionCard>
-  <p>
-    <span>cpu: {{ cpu_brand }}</span>
-  </p>
+      <template v-slot:content>
+        <el-descriptions  :column="2">
+          <el-descriptions-item :span="2" label="显卡">{{gpuInfo.model}}</el-descriptions-item>
+          <el-descriptions-item label="显存">{{`${mbToGB(gpuInfo.vram)} GB`}}</el-descriptions-item>
 
-  <p>
-    <span>核心: {{ cpu_cores }}</span>
-  </p>
-  <p>
-    <span>线程: {{ cpu_performanceCores }}</span>
-  </p>
-  <p>
-    <span>可用内存: {{ `${bytesToGB(memory_used.available)} GB` }}</span>
-  </p>
-  <p>
-    <span>总内存:{{ `${bytesToGB(memory_used.total)} GB` }}</span>
-  </p>
-  <p>
-    <span>已用内存:{{ `${bytesToGB(memory_used.active)} GB` }}</span>
-  </p>
-  <p>
-    <span>显卡:{{ `${gpuInfo.model}`}}</span>
-  </p>
-  <p>
-    <span>显存:{{ `${gpuInfo.vram}`}}</span>
-  </p>
-  </el-card>
+        </el-descriptions>
+      </template>
+    </OptionCard>
+    <OptionCard :title="'运存'">
+      <template v-slot:icon>
+        <memory-one theme="outline" size="24" fill="#333"/>
+      </template>
+      <template v-slot:content>
+        <el-descriptions :column="2">
+          <el-descriptions-item :span="2"  label="总内存">{{ `${bytesToGB(memory_used.total)} GB` }}</el-descriptions-item>
+          <el-descriptions-item label="可用">{{ `${bytesToGB(memory_used.available)} GB` }}</el-descriptions-item>
+          <el-descriptions-item label="已用">{{ `${bytesToGB(memory_used.active)} GB` }}</el-descriptions-item>
+          <template  v-for="(item,index) in memory_layout">
+            <el-descriptions-item :span="2"  :label="`内存条${index + 1}`">
+              <el-descriptions >
+                <el-descriptions-item label="频率">{{ item.clockSpeed }}</el-descriptions-item>
+                <el-descriptions-item label="类型">{{ item.type }}</el-descriptions-item>
+                <el-descriptions-item label="容量">{{ `${bytesToGB(item.size || 0)} GB` }}</el-descriptions-item>
+              </el-descriptions>
+            </el-descriptions-item>
+          </template>
+        </el-descriptions>
+      </template>
+    </OptionCard>
 </template>
 
 <style scoped>
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
 
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #42b883aa);
-}
 </style>

@@ -24,7 +24,12 @@ import si from 'systeminformation'
       console.log(sys, 'sys')
 
       const battery = await si.battery()
+      const cpuCurrentSpeed = await si.cpuCurrentSpeed()
 
+
+      const memoryLayout=  await  si.memLayout()
+      console.log(memoryLayout,'memoryLayout')
+      console.log(cpuCurrentSpeed, 'cpuCurrentSpeed')
       return si.cpu().then((data) => {
         console.log(data)
         return data
@@ -35,6 +40,11 @@ import si from 'systeminformation'
       console.log('Memory Usage:')
       console.log(data)
       return data
+    },
+    getMemoryLayout: async function getMemoryLayout() {
+      const memoryLayout=  await  si.memLayout()
+      console.log(memoryLayout,'memoryLayout')
+      return memoryLayout
     },
     getGpuInfo: async function getGpuInfo() {
       const graphics = await si.graphics()

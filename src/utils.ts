@@ -3,5 +3,9 @@ function bytesToGB(bytes: number): string {
   const gb = bytes / BYTES_IN_GB
   return gb.toFixed(2)
 }
-
-export { bytesToGB }
+function mbToGB(megabytes: number): string {
+  // 1 GB = 1024 MB
+  const gigabytes = megabytes / 1024;
+  return gigabytes.toFixed(2); // 保留两位小数
+}
+export { bytesToGB ,mbToGB}

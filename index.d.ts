@@ -13,8 +13,7 @@ declare global {
       getCpuInfo: () => Promise<{ brand: string; physicalCores: string; performanceCores: string }>
       getMemInfo: () => Promise<{ total: number; available: number; active: number }>
       getGpuInfo: () => Promise<{model:string,vram:number}>
-      spellCheck:()=>Promise<void>
-      loadDic:()=>Promise<void>
+      getMemoryLayout: () => Promise<{clockSpeed:number,size:number,type:string}[]>
     }
   }
 }
