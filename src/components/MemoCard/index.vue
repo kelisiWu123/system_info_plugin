@@ -2,7 +2,7 @@
 import {bytesToGB} from "../../utils.ts";
 import {ref, watch} from "vue";
 import {MemoryOne} from "@icon-park/vue-next";
-defineProps({
+const props = defineProps({
   data: {
     type: Object as ()=>MemoData|undefined,
     default: undefined
@@ -27,9 +27,11 @@ let timerId:NodeJS.Timeout
 const watchMemo = ref(false)
 watch(watchMemo,()=>{
   if(watchMemo.value){
-    setInterval(()=>{
-
+    timerId = setInterval(()=>{
+      props.queryMemo?.()
     },2000)
+  }else {
+    clearInterval(timerId)
   }
 })
 </script>
