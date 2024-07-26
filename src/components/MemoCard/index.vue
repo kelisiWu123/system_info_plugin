@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import {bytesToGB} from "../../utils.ts";
+import {ref, watch} from "vue";
 defineProps({
   data: {
     type: Object as ()=>MemoData|undefined,
     default: undefined
   },
-  memoLayout:{
+  memoLayoutData:{
     type: Object as ()=>MemoLayoutData[]|undefined,
     default: undefined
   },
@@ -16,11 +17,10 @@ defineProps({
   loading: {
     type: Boolean,
     default: false
-  }
-  ,
+  },
 });
-</script>
 
+</script>
 <template>
   <OptionCard :title="'运存'">
     <template v-slot:icon>
@@ -37,7 +37,7 @@ defineProps({
       </el-descriptions>
       <el-descriptions title="硬件信息" >
         <el-descriptions-item>
-          <template  v-for="(item,index) in memoLayout">
+          <template  v-for="(item,index) in memoLayoutData">
             <el-descriptions :column="4">
               <el-descriptions-item :label="`内存条${index+1}`"/>
               <el-descriptions-item label="频率">{{ item.clockSpeed }}</el-descriptions-item>
