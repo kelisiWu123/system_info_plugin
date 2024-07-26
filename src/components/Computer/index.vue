@@ -11,9 +11,9 @@ function onWatchMemoChange() {
   watchMemo.value = !watchMemo.value;
 }
 async function queryMemo() {
-  console.log("queryMemo");
   memoData.value = await window.services.getMemInfo();
 }
+
 watch(watchMemo, () => {
   console.log("这时有触发吗");
   if (watchMemo.value) {
@@ -55,11 +55,13 @@ onMounted(() => {
 
 <template>
   <CpuCard :data="cpuData" :loading="loading" />
+
   <MemoCard
     :data="memoData"
     :memoLayoutData="memoLayoutData"
     :loading="loading"
     :watchMemo-="watchMemo"
+    :queryMemo="queryMemo"
   />
 </template>
 

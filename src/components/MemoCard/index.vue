@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {bytesToGB} from "../../utils.ts";
 import {ref, watch} from "vue";
+import {MemoryOne} from "@icon-park/vue-next";
 defineProps({
   data: {
     type: Object as ()=>MemoData|undefined,
@@ -18,8 +19,19 @@ defineProps({
     type: Boolean,
     default: false
   },
+  queryMemo:{
+    type:Function,
+  }
 });
+let timerId:NodeJS.Timeout
+const watchMemo = ref(false)
+watch(watchMemo,()=>{
+  if(watchMemo.value){
+    setInterval(()=>{
 
+    },2000)
+  }
+})
 </script>
 <template>
   <OptionCard :title="'运存'">
@@ -29,7 +41,7 @@ defineProps({
     <template v-slot:content>
       <el-descriptions title="运行信息" :column="2">
         <template v-slot:extra>
-          <span>实时监听：</span><el-switch/>
+          <span>实时监听：</span><el-switch v-model="watchMemo"/>
         </template>
         <el-descriptions-item :span="2"  label="总内存">{{ `${bytesToGB(data?.total || 0)} GB` }}</el-descriptions-item>
         <el-descriptions-item label="可用">{{ `${bytesToGB(data?.available || 0)} GB` }}</el-descriptions-item>
