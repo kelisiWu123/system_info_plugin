@@ -3,7 +3,7 @@
 </script>
 
 <template>
-<Playground/>
+<Computer/>
 </template>
 
 <style scoped>
