@@ -5,63 +5,70 @@ import si from 'systeminformation'
 
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
-  window.versions = {
-    node: () => process.versions.node,
-    chrome: () => process.versions.chrome,
-    electron: () => process.versions.electron,
-  }
-
   window.services = {
     getCpuInfo: async function getCpuInfo() {
-      const memo = await si.mem()
-      console.log(memo, 'memo')
-
-
-
-
-
-      const sys = await si.osInfo()
-      console.log(sys, 'sys')
-
-      const battery = await si.battery()
-      const cpuCurrentSpeed = await si.cpuCurrentSpeed()
-
-      console.log(si,'si')
-
-      const fullLoad = await si.fullLoad()
-      console.log(fullLoad,'fullLoad')
-
-
-      const memoryLayout=  await  si.memLayout()
-      console.log(memoryLayout,'memoryLayout')
-      console.log(cpuCurrentSpeed, 'cpuCurrentSpeed')
-      const cpuData = await si.cpu()
-      console.log(cpuData)
-      return cpuData
+      try {
+        const cpuData = await si.cpu()
+        return cpuData
+      }catch(e) {
+        console.error("Error getCpuInfo:");
+      }
     },
     getMemInfo: async function getMemInfo() {
-      const data = await si.mem()
-      console.log('Memory Usage:')
-      console.log(data)
-      return data
+      try {
+        const data = await si.mem()
+        console.log('Memory Usage:')
+        console.log(data)
+        return data
+      }catch (e){
+        console.error("Error getMemInfo:");
+      }
     },
     getMemoryLayout: async function getMemoryLayout() {
-      const memoryLayout=  await  si.memLayout()
-      console.log(memoryLayout,'memoryLayout')
-      return memoryLayout
+      try {
+        const memoryLayout=  await  si.memLayout()
+        console.log(memoryLayout,'memoryLayout')
+        return memoryLayout
+      }catch (e){
+        console.error("Error getMemoryLayout:");
+      }
+
     },
     getGpuInfo: async function getGpuInfo() {
-      const graphics = await si.graphics()
-      const [gpu] = graphics.controllers.filter((ctr) => {
-        return ctr.vram > 1
-      })
-      console.log(gpu)
-      return gpu
+      try {
+        const graphics = await si.graphics()
+        const [gpu] = graphics.controllers.filter((ctr) => {
+          return ctr.vram > 1
+        })
+        return gpu
+      }catch (e){
+        console.error("Error getGpuInfo:");
+      }
+
     },
     getCpuFullLoad: async function getCpuFullLoad() {
-      const data = await si.currentLoad()
+      try {
+        const data = await si.currentLoad()
+        return data.currentLoad.toFixed(2)
+      }catch (e){
+        console.error("Error getCpuFullLoad:");
+      }
+    },
+    getDiskData: async function getDiskData() {
+      try {
+        const data = await si.diskLayout()
+        return data
+      }catch (e){
+        console.error('Error getDiskData:')
+      }
+    },
+    getBoardData: async function getBoardData() {
+      try {
+        const board = await si.baseboard()
+        return board
+      }catch (e){
+        console.error('Error getBoardData:')
+      }
 
-      console.log(data,'cpuLoad')
-      return data.currentLoad.toFixed(2)
     }
 }

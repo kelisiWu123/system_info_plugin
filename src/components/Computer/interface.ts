@@ -19,3 +19,13 @@ interface MemoLayoutData {
   size: number;
   type: string;
 }
+interface DiskData{
+  name: string;
+  size: number;
+  type: string;
+  interfaceType: string;
+}
+interface BoardData {
+  manufacturer:string
+  model:string
+}

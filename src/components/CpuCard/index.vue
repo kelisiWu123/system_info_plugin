@@ -10,12 +10,7 @@ defineProps({
   title: {
     type: String,
     default: ''
-  },
-  loading: {
-    type: Boolean,
-    default: false
   }
-,
 });
 const cpu_fullLoad = ref<number>()
 const getCpuFullLoad = async () =>{
@@ -29,7 +24,7 @@ onMounted(()=>{
 </script>
 
 <template>
-  <OptionCard title="CPU" v-loading="loading">
+  <OptionCard title="CPU">
     <template v-slot:icon>
       <cpu theme="outline" size="24" fill="#333"/>
     </template>

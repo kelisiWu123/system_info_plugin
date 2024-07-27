@@ -3,10 +3,12 @@ import { onMounted, ref, watch } from "vue";
 
 const cpuData = ref<CpuData>();
 const memoData = ref<MemoData>();
-const gpuData = ref<GpuData>()
-let memoLayoutData = ref<MemoLayoutData[]>([]);
+const gpuData = ref<GpuData>();
+const boardData = ref<BoardData>()
 const loading = ref<boolean>(false);
 const watchMemo = ref(false);
+let memoLayoutData = ref<MemoLayoutData[]>([]);
+let diskData = ref<DiskData[]>([]);
 
 let watchMemoTimerId: NodeJS.Timeout;
 
@@ -24,15 +26,19 @@ watch(watchMemo, () => {
     clearInterval(watchMemoTimerId);
   }
 });
+
 async function init() {
   loading.value = true;
   try {
-    const [cpuRes, memoRes, memoLayoutRes ,gpuRes] = await Promise.allSettled([
-      window.services.getCpuInfo(),
-      window.services.getMemInfo(),
-      window.services.getMemoryLayout(),
-      window.services.getGpuInfo()
-    ]);
+    const [cpuRes, memoRes, memoLayoutRes, gpuRes, diskRes,boardRes] =
+      await Promise.allSettled([
+        window.services.getCpuInfo(),
+        window.services.getMemInfo(),
+        window.services.getMemoryLayout(),
+        window.services.getGpuInfo(),
+        window.services.getDiskData(),
+        window.services.getBoardData()
+      ]);
     loading.value = false;
     if (cpuRes.status === "fulfilled") {
       cpuData.value = cpuRes.value;
@@ -45,8 +51,14 @@ async function init() {
       console.log(memoLayoutData);
     }
     if (gpuRes.status === "fulfilled") {
-      gpuData.value = gpuRes.value
-      console.log(gpuData)
+      gpuData.value = gpuRes.value;
+      console.log(gpuData);
+    }
+    if (diskRes.status === "fulfilled") {
+      diskData.value = diskRes.value;
+    }
+    if (boardRes.status === 'fulfilled'){
+      boardData.value = boardRes.value
     }
   } catch {
     loading.value = false;
@@ -59,15 +71,20 @@ onMounted(() => {
 </script>
 
 <template>
-  <CpuCard :data="cpuData" :loading="loading" />
-  <GpuCard :data="gpuData"/>
-  <MemoCard
-    :data="memoData"
-    :memoLayoutData="memoLayoutData"
-    :loading="loading"
-    :watchMemo-="watchMemo"
-    :queryMemo="queryMemo"
-  />
+  <el-card v-loading="loading" shadow="never" style="padding: 0;margin: 0;border: none">
+    <CpuCard :data="cpuData" />
+    <GpuCard :data="gpuData" />
+    <MemoCard
+        :data="memoData"
+        :memoLayoutData="memoLayoutData"
+        :loading="loading"
+        :watchMemo-="watchMemo"
+        :queryMemo="queryMemo"
+    />
+    <DiskCard :data="diskData" />
+    <BoardCard :data="boardData" />
+  </el-card>
+
 </template>
 
 <style scoped></style>

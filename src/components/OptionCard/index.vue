@@ -8,7 +8,7 @@ defineProps({
 </script>
 
 <template>
-  <el-card shadow="hover" style="max-width: 480px">
+  <el-card shadow="never" style="max-width: 480px">
     <div style="display: flex;align-items: center;gap: 20px">
       <div style="display: flex;flex-direction: column">
         <div style="width: 50px">
