@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import {
-  Fill
-} from "@icon-park/vue-next";
+
 const cpuData = ref<CpuData>();
 const memoData = ref<MemoData>({
   active:0,

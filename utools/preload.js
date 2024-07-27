@@ -3,10 +3,9 @@
 import si from 'systeminformation'
 // promises style - new since version 3
 
-
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
   window.services = {
-    getCpuInfo: async function getCpuInfo() {
+    getCpuInfo: async ()=> {
       try {
         const cpuData = await si.cpu()
         const fsSize = await si.fsSize()
@@ -16,7 +15,7 @@ import si from 'systeminformation'
         // console.error("Error getCpuInfo:");
       }
     },
-    getMemInfo: async function getMemInfo() {
+    getMemInfo:async ()=> {
       try {
         const data = await si.mem()
         console.log('Memory Usage:')
@@ -26,7 +25,7 @@ import si from 'systeminformation'
         console.error("Error getMemInfo:");
       }
     },
-    getMemoryLayout: async function getMemoryLayout() {
+    getMemoryLayout: async () =>{
       try {
         const memoryLayout=  await  si.memLayout()
         console.log(memoryLayout,'memoryLayout')
@@ -36,7 +35,7 @@ import si from 'systeminformation'
       }
 
     },
-    getGpuInfo: async function getGpuInfo() {
+    getGpuInfo: async ()=> {
       try {
         const graphics = await si.graphics()
         const [gpu] = graphics.controllers.filter((ctr) => {
@@ -48,7 +47,7 @@ import si from 'systeminformation'
       }
 
     },
-    getCpuFullLoad: async function getCpuFullLoad() {
+    getCpuFullLoad: async ()=> {
       try {
         const data = await si.currentLoad()
         return data.currentLoad.toFixed(2)
@@ -56,7 +55,7 @@ import si from 'systeminformation'
         console.error("Error getCpuFullLoad:");
       }
     },
-    getDiskData: async function getDiskData() {
+    getDiskData: async ()=> {
       try {
         const data = await si.diskLayout()
         return data
@@ -64,13 +63,29 @@ import si from 'systeminformation'
         console.error('Error getDiskData:')
       }
     },
-    getBoardData: async function getBoardData() {
+    getBoardData: async() =>{
       try {
         const board = await si.baseboard()
         return board
       }catch (e){
         console.error('Error getBoardData:')
       }
+    },
+    creatSomething:()=>{
+      utools.createBrowserWindow('test.html', {
+        height: 300, width: 300,
+        skipTaskbar: true,
+        // backgroundColor: 'rgba(255, 255, 255, 0.5)',
+        //不能最大最小化
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        //背景透明，防止放大缩小时出现白框})
+        transparent: true,
+        backgroundColor: 'rgba(255, 255, 255, 0.5)',
+        frame: false,
+        alwaysOnTop: false,
+      })
+    },
 
-    }
 }
