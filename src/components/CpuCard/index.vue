@@ -12,7 +12,7 @@ defineProps({
     default: ''
   }
 });
-const cpu_fullLoad = ref<number>()
+const cpu_fullLoad = ref<number>(0)
 const getCpuFullLoad = async () =>{
   cpu_fullLoad.value = await window.services.getCpuFullLoad()
 }

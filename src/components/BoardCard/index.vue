@@ -15,6 +15,7 @@ defineProps({
     <template v-slot:icon>
       <pad theme="outline" size="24" fill="#333"/>
     </template>
+    
     <template v-slot:content>
       <el-descriptions  :column="2">
         <el-descriptions-item :span="2" label="制造商">{{data?.manufacturer}}</el-descriptions-item>

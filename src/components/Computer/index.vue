@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-
+import {
+  Fill
+} from "@icon-park/vue-next";
 const cpuData = ref<CpuData>();
 const memoData = ref<MemoData>({
   active:0,
@@ -68,14 +70,13 @@ async function init() {
     loading.value = false;
   }
 }
-
 onMounted(() => {
   init();
 });
 </script>
 
 <template>
-  <div v-loading="loading">
+  <template v-if="!loading">
     <CpuCard :data="cpuData" />
     <BoardCard :data="boardData" />
     <GpuCard :data="gpuData" />
@@ -87,8 +88,13 @@ onMounted(() => {
         :queryMemo="queryMemo"
     />
     <DiskCard :data="diskData" />
+  </template>
+  <template v-else>
+    <div v-loading="loading"   >
+      <el-empty description="正在加载中" />
+    </div>
+  </template>
 
-  </div>
 
 </template>
 

@@ -10,10 +10,10 @@
 	"homepage": "https://github.com/QC2168",
 	"features": [
 		{
-			"code": "template",
-			"explain": "插件模板主界面",
+			"code": "Hardware",
+			"explain": "硬件信息",
 			"cmds": [
-				"template"
+				"Hardware"
 			]
 		}
 	],
