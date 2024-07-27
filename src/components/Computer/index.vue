@@ -71,8 +71,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-card v-loading="loading" shadow="never" style="padding: 0;margin: 0;border: none">
+  <div v-loading="loading">
     <CpuCard :data="cpuData" />
+    <BoardCard :data="boardData" />
     <GpuCard :data="gpuData" />
     <MemoCard
         :data="memoData"
@@ -82,8 +83,8 @@ onMounted(() => {
         :queryMemo="queryMemo"
     />
     <DiskCard :data="diskData" />
-    <BoardCard :data="boardData" />
-  </el-card>
+
+  </div>
 
 </template>
 

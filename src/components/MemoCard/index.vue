@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {bytesToGB} from "../../utils.ts";
-import {ref, watch} from "vue";
+import {onBeforeUnmount, onMounted, ref, watch} from "vue";
 import {MemoryOne} from "@icon-park/vue-next";
 const props = defineProps({
   data: {
@@ -24,16 +24,15 @@ const props = defineProps({
   }
 });
 let timerId:NodeJS.Timeout
-const watchMemo = ref(false)
-watch(watchMemo,()=>{
-  if(watchMemo.value){
-    timerId = setInterval(()=>{
-      props.queryMemo?.()
-    },2000)
-  }else {
-    clearInterval(timerId)
-  }
+onMounted(()=>{
+  timerId = setInterval(()=>{
+    props.queryMemo?.()
+  },2000)
 })
+onBeforeUnmount(()=>{
+  clearInterval(timerId)
+})
+
 </script>
 <template>
   <OptionCard :title="'运存'">
@@ -41,15 +40,12 @@ watch(watchMemo,()=>{
       <memory-one theme="outline" size="24" fill="#333"/>
     </template>
     <template v-slot:content>
-      <el-descriptions title="运行信息" :column="2">
-        <template v-slot:extra>
-          <span>实时监听：</span><el-switch v-model="watchMemo"/>
-        </template>
-        <el-descriptions-item :span="2"  label="总内存">{{ `${bytesToGB(data?.total || 0)} GB` }}</el-descriptions-item>
-        <el-descriptions-item label="可用">{{ `${bytesToGB(data?.available || 0)} GB` }}</el-descriptions-item>
+      <el-descriptions :column="3">
+        <el-descriptions-item  label="总内存">{{ `${bytesToGB(data?.total || 0)} GB` }}</el-descriptions-item>
+        <el-descriptions-item  label="可用"><span style="color: #67c23a">{{ `${bytesToGB(data?.available || 0)} GB` }}</span></el-descriptions-item>
         <el-descriptions-item label="已用">{{ `${bytesToGB(data?.active || 0)} GB` }}</el-descriptions-item>
       </el-descriptions>
-      <el-descriptions title="硬件信息" >
+      <el-descriptions >
         <el-descriptions-item>
           <template  v-for="(item,index) in memoLayoutData">
             <el-descriptions :column="4">
