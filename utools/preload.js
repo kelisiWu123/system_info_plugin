@@ -17,8 +17,8 @@ import si from 'systeminformation'
       console.log(memo, 'memo')
 
 
-      const data = await si.currentLoad()
-      console.log('CPU Usage:', data)
+
+
 
       const sys = await si.osInfo()
       console.log(sys, 'sys')
@@ -26,14 +26,18 @@ import si from 'systeminformation'
       const battery = await si.battery()
       const cpuCurrentSpeed = await si.cpuCurrentSpeed()
 
+      console.log(si,'si')
+
+      const fullLoad = await si.fullLoad()
+      console.log(fullLoad,'fullLoad')
+
 
       const memoryLayout=  await  si.memLayout()
       console.log(memoryLayout,'memoryLayout')
       console.log(cpuCurrentSpeed, 'cpuCurrentSpeed')
-      return si.cpu().then((data) => {
-        console.log(data)
-        return data
-      })
+      const cpuData = await si.cpu()
+      console.log(cpuData)
+      return cpuData
     },
     getMemInfo: async function getMemInfo() {
       const data = await si.mem()
@@ -54,4 +58,10 @@ import si from 'systeminformation'
       console.log(gpu)
       return gpu
     },
+    getCpuFullLoad: async function getCpuFullLoad() {
+      const data = await si.currentLoad()
+
+      console.log(data,'cpuLoad')
+      return data.currentLoad.toFixed(2)
+    }
 }

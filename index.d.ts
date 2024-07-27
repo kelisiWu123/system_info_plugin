@@ -14,6 +14,7 @@ declare global {
       getMemInfo: () => Promise<MemoData>
       getGpuInfo: () => Promise<{model:string,vram:number}>
       getMemoryLayout: () => Promise<MemoLayoutData[]>
+      getCpuFullLoad: () => Promise<number>
     }
   }
 }

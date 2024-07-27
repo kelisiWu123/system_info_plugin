@@ -3,6 +3,10 @@ interface CpuData {
   performanceCores: number;
   physicalCores: number;
 }
+interface GpuData{
+  model:string;
+  vram:number;
+}
 
 interface MemoData {
   total: number;

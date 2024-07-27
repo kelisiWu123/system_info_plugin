@@ -3,13 +3,13 @@ import { onMounted, ref, watch } from "vue";
 
 const cpuData = ref<CpuData>();
 const memoData = ref<MemoData>();
+const gpuData = ref<GpuData>()
 let memoLayoutData = ref<MemoLayoutData[]>([]);
 const loading = ref<boolean>(false);
 const watchMemo = ref(false);
+
 let watchMemoTimerId: NodeJS.Timeout;
-function onWatchMemoChange() {
-  watchMemo.value = !watchMemo.value;
-}
+
 async function queryMemo() {
   memoData.value = await window.services.getMemInfo();
 }
@@ -27,10 +27,11 @@ watch(watchMemo, () => {
 async function init() {
   loading.value = true;
   try {
-    const [cpuRes, memoRes, memoLayoutRes] = await Promise.allSettled([
+    const [cpuRes, memoRes, memoLayoutRes ,gpuRes] = await Promise.allSettled([
       window.services.getCpuInfo(),
       window.services.getMemInfo(),
       window.services.getMemoryLayout(),
+      window.services.getGpuInfo()
     ]);
     loading.value = false;
     if (cpuRes.status === "fulfilled") {
@@ -42,6 +43,10 @@ async function init() {
     if (memoLayoutRes.status === "fulfilled") {
       memoLayoutData.value = memoLayoutRes.value;
       console.log(memoLayoutData);
+    }
+    if (gpuRes.status === "fulfilled") {
+      gpuData.value = gpuRes.value
+      console.log(gpuData)
     }
   } catch {
     loading.value = false;
@@ -55,7 +60,7 @@ onMounted(() => {
 
 <template>
   <CpuCard :data="cpuData" :loading="loading" />
-
+  <GpuCard :data="gpuData"/>
   <MemoCard
     :data="memoData"
     :memoLayoutData="memoLayoutData"
