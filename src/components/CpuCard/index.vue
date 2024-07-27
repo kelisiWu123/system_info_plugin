@@ -30,10 +30,10 @@ onMounted(()=>{
     </template>
     <template v-slot:content>
       <el-descriptions  :column="3">
-        <el-descriptions-item :span="3" label="CPU">{{data?.brand}}</el-descriptions-item>
+        <el-descriptions-item :span="3" label="CPU">{{data?.manufacturer}} {{data?.brand}}</el-descriptions-item>
         <el-descriptions-item label="核心">{{data?.physicalCores}}</el-descriptions-item>
         <el-descriptions-item label="线程">{{data?.performanceCores}}</el-descriptions-item>
-        <el-descriptions-item label="占用率">{{cpu_fullLoad}}%</el-descriptions-item>
+        <el-descriptions-item label="使用率"><span style="color:#ff4600;">{{cpu_fullLoad}}%</span></el-descriptions-item>
       </el-descriptions>
     </template>
   </OptionCard>

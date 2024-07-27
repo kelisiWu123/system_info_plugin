@@ -2,6 +2,7 @@ interface CpuData {
   brand: string;
   performanceCores: number;
   physicalCores: number;
+  manufacturer:string;
 }
 interface GpuData{
   model:string;

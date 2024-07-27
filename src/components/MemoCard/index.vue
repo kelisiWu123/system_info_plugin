@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import {bytesToGB} from "../../utils.ts";
-import {onBeforeUnmount, onMounted, ref, watch} from "vue";
+import {onBeforeUnmount, onMounted} from "vue";
 import {MemoryOne} from "@icon-park/vue-next";
 const props = defineProps({
   data: {
-    type: Object as ()=>MemoData|undefined,
-    default: undefined
+    type: Object as ()=>MemoData,
+    default: {
+      active:0,
+      total:0,
+      available:0
+    } satisfies MemoData,
   },
   memoLayoutData:{
     type: Object as ()=>MemoLayoutData[]|undefined,
@@ -33,6 +37,7 @@ onBeforeUnmount(()=>{
   clearInterval(timerId)
 })
 
+
 </script>
 <template>
   <OptionCard :title="'运存'">
@@ -40,19 +45,20 @@ onBeforeUnmount(()=>{
       <memory-one theme="outline" size="24" fill="#333"/>
     </template>
     <template v-slot:content>
-      <el-descriptions :column="3">
+      <el-descriptions :column="2">
         <el-descriptions-item  label="总内存">{{ `${bytesToGB(data?.total || 0)} GB` }}</el-descriptions-item>
         <el-descriptions-item  label="可用"><span style="color: #67c23a">{{ `${bytesToGB(data?.available || 0)} GB` }}</span></el-descriptions-item>
         <el-descriptions-item label="已用">{{ `${bytesToGB(data?.active || 0)} GB` }}</el-descriptions-item>
+        <el-descriptions-item label="使用率"><span style="color:#ff4600;">{{(data.active / data.total*100).toFixed(2)}}%</span></el-descriptions-item>
       </el-descriptions>
       <el-descriptions >
         <el-descriptions-item>
           <template  v-for="(item,index) in memoLayoutData">
-            <el-descriptions :column="4">
-              <el-descriptions-item :label="`内存条${index+1}`"/>
-              <el-descriptions-item label="频率">{{ item.clockSpeed }}</el-descriptions-item>
-              <el-descriptions-item label="类型">{{ item.type }}</el-descriptions-item>
-              <el-descriptions-item label="容量">{{ `${bytesToGB(item.size || 0)} GB` }}</el-descriptions-item>
+            <el-descriptions :column="3">
+              <el-descriptions-item :span="3" :label="`内存条${index+1}`"/>
+              <el-descriptions-item label="频率">{{ item?.clockSpeed }}</el-descriptions-item>
+              <el-descriptions-item label="类型">{{ item?.type }}</el-descriptions-item>
+              <el-descriptions-item label="容量">{{ `${bytesToGB(item?.size || 0)} GB` }}</el-descriptions-item>
             </el-descriptions>
           </template>
         </el-descriptions-item>

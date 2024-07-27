@@ -2,7 +2,11 @@
 import { onMounted, ref, watch } from "vue";
 
 const cpuData = ref<CpuData>();
-const memoData = ref<MemoData>();
+const memoData = ref<MemoData>({
+  active:0,
+  available:0,
+  total:0
+});
 const gpuData = ref<GpuData>();
 const boardData = ref<BoardData>()
 const loading = ref<boolean>(false);

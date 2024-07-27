@@ -9,9 +9,11 @@ import si from 'systeminformation'
     getCpuInfo: async function getCpuInfo() {
       try {
         const cpuData = await si.cpu()
+        const fsSize = await si.fsSize()
+        console.log(fsSize,'fsSize')
         return cpuData
       }catch(e) {
-        console.error("Error getCpuInfo:");
+        // console.error("Error getCpuInfo:");
       }
     },
     getMemInfo: async function getMemInfo() {

@@ -20,7 +20,7 @@ defineProps({
       <template v-for="item in data">
         <el-descriptions  :column="3">
           <el-descriptions-item :span="3" label="名称">{{item?.name}}</el-descriptions-item>
-          <el-descriptions-item label="大小">{{`${bytesToGB(item.size)} GB`}}</el-descriptions-item>
+          <el-descriptions-item label="大小">{{`${bytesToGB(item?.size)} GB`}}</el-descriptions-item>
           <el-descriptions-item label="类型">{{item?.type}}</el-descriptions-item>
           <el-descriptions-item label="接口类型">{{item?.interfaceType}}</el-descriptions-item>
         </el-descriptions>
