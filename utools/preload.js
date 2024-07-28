@@ -91,10 +91,4 @@ import si from 'systeminformation'
     },
 }
 
-utools.onPluginEnter(({code})=>{
-  console.log('onPluginEnter')
-  console.log(code,'code')
-  if (code === 'hardwareWatch'){
-    window.services.creatSomething()
-  }
-})
+

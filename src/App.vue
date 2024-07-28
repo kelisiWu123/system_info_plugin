@@ -5,6 +5,9 @@ let uToolCode = ref<string>('')
 watch(uToolCode,()=>{
   if(uToolCode.value ==="hardwareWatch"){
     window.services.creatSomething()
+  }else if(uToolCode.value === 'hardwareWatch'){} {
+    window.services.creatSomething()
+    utools.outPlugin()
   }
 })
 onBeforeMount(()=>{
