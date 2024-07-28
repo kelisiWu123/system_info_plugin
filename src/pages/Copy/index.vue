@@ -46,16 +46,12 @@ watch(watchMemo,()=>{
 
 async function allInfoInit() {
   const {brand, physicalCores, performanceCores} = await window.services.getCpuInfo()
-
   const {vram, model} = await window.services.getGpuInfo()
   const memoryLayout = await window.services.getMemoryLayout()
-
   memory_layout.value = memoryLayout
-
   cpu_brand.value = brand
   cpu_cores.value = Number(physicalCores)
   cpu_performanceCores.value = Number(performanceCores)
-
   gpuInfo.value.vram = vram
   gpuInfo.value.model = model
 }

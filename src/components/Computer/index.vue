@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
+import VConsole from "vconsole";
 
 const cpuData = ref<CpuData>();
 const memoData = ref<MemoData>({
@@ -19,7 +20,8 @@ let watchMemoTimerId: NodeJS.Timeout;
 async function queryMemo() {
   memoData.value = await window.services.getMemInfo();
 }
-
+const vConsole = new VConsole();
+console.log(vConsole)
 watch(watchMemo, () => {
   console.log("这时有触发吗");
   if (watchMemo.value) {
@@ -52,11 +54,11 @@ async function init() {
     }
     if (memoLayoutRes.status === "fulfilled") {
       memoLayoutData.value = memoLayoutRes.value;
-      console.log(memoLayoutData);
+      // console.log(memoLayoutData);
     }
     if (gpuRes.status === "fulfilled") {
       gpuData.value = gpuRes.value;
-      console.log(gpuData);
+      // console.log(gpuData);
     }
     if (diskRes.status === "fulfilled") {
       diskData.value = diskRes.value;

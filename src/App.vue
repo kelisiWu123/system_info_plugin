@@ -1,11 +1,23 @@
 <script setup lang="ts">
-// const openSome = () =>{
-//   window.services.creatSomething()
-// }
+
+import {onBeforeMount, ref, watch} from "vue";
+let uToolCode = ref<string>('')
+watch(uToolCode,()=>{
+  if(uToolCode.value ==="hardwareWatch"){
+    window.services.creatSomething()
+  }
+})
+onBeforeMount(()=>{
+  utools.onPluginEnter(({code})=>{
+    uToolCode.value = code
+  })
+})
 </script>
 
 <template>
-<Computer/>
+  <template v-if="uToolCode === 'hardware'">
+    <Computer/>
+  </template>
 <!--  <el-button @click="openSome"></el-button>-->
 </template>
 

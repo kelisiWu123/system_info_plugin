@@ -4,12 +4,14 @@ import si from 'systeminformation'
 // promises style - new since version 3
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
+
+
   window.services = {
     getCpuInfo: async ()=> {
       try {
         const cpuData = await si.cpu()
         const fsSize = await si.fsSize()
-        console.log(fsSize,'fsSize')
+        // console.log(fsSize,'fsSize')
         return cpuData
       }catch(e) {
         // console.error("Error getCpuInfo:");
@@ -18,7 +20,7 @@ import si from 'systeminformation'
     getMemInfo:async ()=> {
       try {
         const data = await si.mem()
-        console.log('Memory Usage:')
+        // console.log('Memory Usage:')
         console.log(data)
         return data
       }catch (e){
@@ -28,7 +30,7 @@ import si from 'systeminformation'
     getMemoryLayout: async () =>{
       try {
         const memoryLayout=  await  si.memLayout()
-        console.log(memoryLayout,'memoryLayout')
+        // console.log(memoryLayout,'memoryLayout')
         return memoryLayout
       }catch (e){
         console.error("Error getMemoryLayout:");
@@ -87,5 +89,12 @@ import si from 'systeminformation'
         alwaysOnTop: false,
       })
     },
-
 }
+
+utools.onPluginEnter(({code})=>{
+  console.log('onPluginEnter')
+  console.log(code,'code')
+  if (code === 'hardwareWatch'){
+    window.services.creatSomething()
+  }
+})
