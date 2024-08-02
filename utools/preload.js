@@ -82,7 +82,9 @@ const {
     },
     creatSomething:()=>{
       const watchWin = utools.createBrowserWindow('index.html', {
+        title:'watch',
         height: 300, width: 300,
+        useContentSize: true,
         skipTaskbar: true,
         // backgroundColor: 'rgba(255, 255, 255, 0.5)',
         //不能最大最小化
@@ -98,7 +100,7 @@ const {
           preload: 'preload.js'
         }
       },()=>{
-        ipcRenderer.on('ws://localhost:8080/ws/cpu')
+
       })
     },
 }
