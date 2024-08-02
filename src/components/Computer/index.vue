@@ -77,17 +77,18 @@ onMounted(() => {
 
 <template>
   <template v-if="!loading">
-    <CpuCard :data="cpuData" />
-    <BoardCard :data="boardData" />
-    <GpuCard :data="gpuData" />
-    <MemoCard
-        :data="memoData"
-        :memoLayoutData="memoLayoutData"
-        :loading="loading"
-        :watchMemo-="watchMemo"
-        :queryMemo="queryMemo"
-    />
-    <DiskCard :data="diskData" />
+<!--    <CpuCard :data="cpuData" />-->
+<!--    <BoardCard :data="boardData" />-->
+<!--    <GpuCard :data="gpuData" />-->
+<!--    <MemoCard-->
+<!--        :data="memoData"-->
+<!--        :memoLayoutData="memoLayoutData"-->
+<!--        :loading="loading"-->
+<!--        :watchMemo-="watchMemo"-->
+<!--        :queryMemo="queryMemo"-->
+<!--    />-->
+<!--    <DiskCard :data="diskData" />-->
+
   </template>
   <template v-else>
     <div v-loading="loading"   >

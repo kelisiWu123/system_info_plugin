@@ -1,6 +1,9 @@
 // 您可以在进行窗口交互
 // utools文档
 import si from 'systeminformation'
+const {
+  ipcRenderer
+} = require('electron')
 // promises style - new since version 3
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
@@ -19,9 +22,13 @@ import si from 'systeminformation'
     },
     getMemInfo:async ()=> {
       try {
+        // const networkInterfaces = await si.networkStats()
+        // console.log(networkInterfaces,'networkInterfaces')
+        const fs = await si.fsSize()
+        console.log(fs,'fs')
         const data = await si.mem()
         // console.log('Memory Usage:')
-        console.log(data)
+        // console.log(data)
         return data
       }catch (e){
         console.error("Error getMemInfo:");
@@ -74,7 +81,7 @@ import si from 'systeminformation'
       }
     },
     creatSomething:()=>{
-      utools.createBrowserWindow('test.html', {
+      const watchWin = utools.createBrowserWindow('index.html', {
         height: 300, width: 300,
         skipTaskbar: true,
         // backgroundColor: 'rgba(255, 255, 255, 0.5)',
@@ -87,6 +94,11 @@ import si from 'systeminformation'
         backgroundColor: 'rgba(255, 255, 255, 0.5)',
         frame: false,
         alwaysOnTop: false,
+        webPreferences: {
+          preload: 'preload.js'
+        }
+      },()=>{
+        ipcRenderer.on('ws://localhost:8080/ws/cpu')
       })
     },
 }
