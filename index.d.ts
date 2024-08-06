@@ -17,6 +17,7 @@ declare global {
       getCpuFullLoad: () => Promise<number>
       getDiskData: () => Promise<DiskData[]>
       getBoardData: () => Promise<BoardData>
+      getNetworkInfo:()=> Promise<NetworkStateData>
       creatSomething:()=>void
     }
   }

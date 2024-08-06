@@ -8,4 +8,12 @@ function mbToGB(megabytes: number): string {
   const gigabytes = megabytes / 1024;
   return gigabytes.toFixed(2); // 保留两位小数
 }
-export { bytesToGB ,mbToGB}
+
+function bytesToMB(bytes: number): number {
+  return bytes / (1024 * 1024);
+}
+
+function bytesToKB(bytes: number): number {
+  return bytes /  1024;
+}
+export { bytesToGB ,mbToGB,bytesToMB,bytesToKB}

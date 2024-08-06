@@ -30,3 +30,7 @@ interface BoardData {
   manufacturer:string
   model:string
 }
+interface NetworkStateData{
+  rx_sec:number
+  tx_sec:number
+}

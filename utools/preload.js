@@ -1,6 +1,7 @@
 // 您可以在进行窗口交互
 // utools文档
 import si from 'systeminformation'
+
 const {
   ipcRenderer
 } = require('electron')
@@ -20,12 +21,27 @@ const {
         // console.error("Error getCpuInfo:");
       }
     },
+    getNetworkInfo: async ()=> {
+      try {
+        // const disk = await si.diskLayout()
+        // const blockDevices  = await si.blockDevices()
+        // const fsSize = await si.fsSize()
+        // console.log(fsSize,'fsSize')
+        // console.log(blockDevices,'blockDevices')
+        // console.log(disk,'disk')
+
+        const [networkInterfaces] = await si.networkStats()
+        console.log(networkInterfaces)
+        return networkInterfaces;
+      }catch (e){
+
+      }
+
+    },
     getMemInfo:async ()=> {
       try {
-        // const networkInterfaces = await si.networkStats()
-        // console.log(networkInterfaces,'networkInterfaces')
-        const fs = await si.fsSize()
-        console.log(fs,'fs')
+
+
         const data = await si.mem()
         // console.log('Memory Usage:')
         // console.log(data)
@@ -58,8 +74,12 @@ const {
     },
     getCpuFullLoad: async ()=> {
       try {
-        const data = await si.currentLoad()
-        return data.currentLoad.toFixed(2)
+
+
+        const current = await si.currentLoad()
+
+        const percent = Math.round(current.currentLoad)
+        return percent
       }catch (e){
         console.error("Error getCpuFullLoad:");
       }

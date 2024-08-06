@@ -10,18 +10,19 @@
 	"homepage": "https://github.com/QC2168",
 	"features": [
 		{
-			"code": "hardware",
-			"explain": "硬件信息",
-			"cmds": [
-				"hardware"
-			]
-		},
-		{
 			"code": "hardwareWatch",
 			"explain": "硬件监控",
 			"cmds": [
 				"hardwareWatch"
 			]
+		},
+		{
+			"code": "hardware",
+			"explain": "硬件信息",
+			"cmds": [
+				"hardware"
+			]
 		}
+
 	]
 }
