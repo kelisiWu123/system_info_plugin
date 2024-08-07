@@ -2,7 +2,7 @@
 import {Cpu,Disk,DownloadOne,UploadOne} from '@icon-park/vue-next'
 import {onMounted, onUnmounted, ref,toRefs,computed,reactive} from "vue";
 import { bytesToMB} from "../../utils.ts";
-
+import VConsole from "vconsole";
 const memoData = reactive<MemoData>({
   active:0,
   available:0,
@@ -42,10 +42,20 @@ const colors = [
   { color: '#f56c6c', percentage: 100},
 ]
 const {active,total} = toRefs(memoData)
-const usedMemoPercent = computed( ()=>((active.value / total.value) * 100).toFixed(2))
+const usedMemoPercent = computed( ()=>((active.value / total.value) * 100))
+const vsConsole = new VConsole()
+console.log(vsConsole)
 </script>
 
 <template >
+  <div style="background-color: #d9d8d9;padding:0 10px;height: 30px;display: flex;justify-content: space-between">
+    <div style="display: flex;justify-content: center; align-items: center;gap: 5px">
+      <div style="height: 12px;width: 12px;border-radius: 100%; background-color: #fb625f"/>
+      <div style="height: 12px;width: 12px;border-radius: 100%; background-color: #f9c57a"/>
+      <div style="height: 12px;width: 12px;border-radius: 100%; background-color: #8ac872"/>
+    </div>
+
+  </div>
   <div style="padding:0 10px">
   <WatchRow>
     <template v-slot:icon>
@@ -68,7 +78,7 @@ const usedMemoPercent = computed( ()=>((active.value / total.value) * 100).toFix
     <template v-slot:content>
       <el-progress
           :text-inside="true"
-          :percentage="Number(usedMemoPercent)"
+          :percentage="Number(usedMemoPercent.toFixed(2))"
           :stroke-width="18"
           :color="colors"
       >
