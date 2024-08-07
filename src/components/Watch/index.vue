@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import {Cpu,Disk,DownloadOne,UploadOne} from '@icon-park/vue-next'
-import {onMounted, ref} from "vue";
+import {onMounted, onUnmounted, ref,toRefs,computed,reactive} from "vue";
 import { bytesToMB} from "../../utils.ts";
 
-const memoData = ref<MemoData>({
+const memoData = reactive<MemoData>({
   active:0,
   available:0,
   total:0
@@ -20,19 +20,33 @@ const getCpuFullLoad = async () =>{
 async function init() {
  const memo =  await window.services.getMemInfo()
   const net =  await window.services.getNetworkInfo()
+  memoData.active = memo.active
+  memoData.total = memo.total
+  memoData.available = memo.available
 
-  memoData.value = memo
   netData.value = net
 }
+let timerId:NodeJS.Timeout
 onMounted(()=>{
-  setInterval(()=>{
+   timerId = setInterval(()=>{
     getCpuFullLoad()
     init()
-  },1000)
+  },2000)
 })
+onUnmounted(()=>{
+  clearInterval(timerId)
+})
+const colors = [
+  { color: '#1989fa', percentage: 60 },
+  { color: '#e6a23c', percentage: 81 },
+  { color: '#f56c6c', percentage: 100},
+]
+const {active,total} = toRefs(memoData)
+const usedMemoPercent = computed( ()=>((active.value / total.value) * 100).toFixed(2))
 </script>
 
-<template>
+<template >
+  <div style="padding:0 10px">
   <WatchRow>
     <template v-slot:icon>
       <Cpu/>
@@ -40,8 +54,9 @@ onMounted(()=>{
     <template v-slot:content>
       <el-progress
           :percentage="Number(cpu_fullLoad)"
-          :stroke-width="10"
+          :stroke-width="18"
           :text-inside="true"
+          :color="colors"
       />
     </template>
   </WatchRow>
@@ -53,9 +68,12 @@ onMounted(()=>{
     <template v-slot:content>
       <el-progress
           :text-inside="true"
-          :percentage="Number((memoData.active / memoData.total * 100).toFixed(2))"
-          :stroke-width="10"
-      />
+          :percentage="Number(usedMemoPercent)"
+          :stroke-width="18"
+          :color="colors"
+      >
+      </el-progress>
+
     </template>
   </WatchRow>
 
@@ -78,7 +96,7 @@ onMounted(()=>{
   </WatchRow>
 
 
-
+  </div>
 </template>
 
 <style scoped>
