@@ -113,8 +113,8 @@ const {
         maximizable: false,
         fullscreenable: false,
         //背景透明，防止放大缩小时出现白框})
-        transparent: true,
-        backgroundColor: 'rgba(255, 255, 255, 0.5)',
+        // transparent: true,
+        backgroundColor: '#d9d8d9',
         frame: false,
         alwaysOnTop: false,
         webPreferences: {

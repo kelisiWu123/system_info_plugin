@@ -48,7 +48,10 @@ console.log(vsConsole)
 </script>
 
 <template >
-  <div style="background-color: #d9d8d9;padding:0 10px;height: 30px;display: flex;justify-content: space-between">
+  <div class="container">
+
+
+  <div class="title">
     <div style="display: flex;justify-content: center; align-items: center;gap: 5px">
       <div style="height: 12px;width: 12px;border-radius: 100%; background-color: #fb625f"/>
       <div style="height: 12px;width: 12px;border-radius: 100%; background-color: #f9c57a"/>
@@ -107,8 +110,17 @@ console.log(vsConsole)
 
 
   </div>
+  </div>
 </template>
 
-<style scoped>
-
+<style scoped lang="less">
+.container{
+  .title{
+    background-color:  #d9d8d9;
+    padding: 0 10px;
+    height: 30px;
+    display: flex;
+    justify-content: space-between;
+  }
+}
 </style>
