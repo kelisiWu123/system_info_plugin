@@ -16,6 +16,7 @@
 
 </script>
 <template>
+  <router-view></router-view>
 <!--  <template v-if="uToolCode === 'hardware'">-->
 <!--    <Computer/>-->
 <!--  <Watch />-->

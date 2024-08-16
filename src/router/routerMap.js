@@ -1,20 +1,13 @@
-/**
- * 基础路由
- * @type { *[] }
- */
-
 const constantRouterMap = [
     {
         path: '/',
-        redirect:{name:'Computer'}
-
+        redirect: '/computer'
     },
     {
         path: '/computer',
         name: 'Computer',
-        component: () => import('@/components/Computer/index.vue'),
+        component: () => import('@/components/Computer/index.vue')
     },
-
 ]
 
-export default constantRouterMap
+export default constantRouterMap;
