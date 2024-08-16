@@ -19,7 +19,8 @@
     "element-plus": "^2.7.7",
     "systeminformation": "^5.22.11",
     "vconsole": "^3.15.1",
-    "vue": "^3.3.9"
+    "vue": "^3.3.9",
+    "vue-router": "4.0.14"
   },
   "devDependencies": {
     "@types/node": "^20.10.1",

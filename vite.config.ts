@@ -8,8 +8,7 @@ import { notBundle } from 'vite-plugin-electron/plugin'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
-
-
+import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
   rmSync('dist-electron', { recursive: true, force: true })
@@ -19,6 +18,11 @@ export default defineConfig(({ command, mode }) => {
   const isStartElectron = mode === 'electron'
   const sourcemap = isServe || !!process.env.VSCODE_DEBUG
   return {
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, 'src'),
+      },
+    },
     base: './',
     plugins: [vue(),
       AutoImport({
