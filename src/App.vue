@@ -21,7 +21,7 @@
 <!--  <Watch />-->
 <!--  </template>-->
 <!--  <template v-else-if="uToolCode === 'hardwareWatch'">-->
-    <Watch/>
+<!--    <Watch/>-->
 <!--  </template>-->
 <!--  <el-button @click="openSome"></el-button>-->
 </template>
