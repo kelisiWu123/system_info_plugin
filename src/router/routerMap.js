@@ -6,7 +6,7 @@ const constantRouterMap = [
     {
         path: '/computer',
         name: 'Computer',
-        component: () => import('@/components/Computer/index.vue')
+        component: () => import('@/components/Watch/index.vue')
     },
 ]
 

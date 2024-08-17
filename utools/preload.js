@@ -101,20 +101,20 @@ const {
       }
     },
     creatSomething:()=>{
-      const watchWin = utools.createBrowserWindow('index.html', {
+      const watchWin = utools.createBrowserWindow('watch/index.html', {
         title:'watch',
         height:300,
         width:300,
         // useContentSize: true,
         skipTaskbar: true,
-        // backgroundColor: 'rgba(255, 255, 255, 0.5)',
+        backgroundColor: 'rgba(255, 255, 255, 0.7)',
         //不能最大最小化
         minimizable: false,
         maximizable: false,
         fullscreenable: false,
         //背景透明，防止放大缩小时出现白框})
-        // transparent: true,
-        backgroundColor: '#d9d8d9',
+        transparent: true,
+        // backgroundColor: '#424242',
         frame: false,
         alwaysOnTop: false,
         webPreferences: {

@@ -8,4 +8,5 @@ body {
     overflow-x: hidden;
     overflow-y: hidden;
     opacity: 1;
+    border-radius: 5px;
 }
