@@ -19,6 +19,7 @@ declare global {
       getBoardData: () => Promise<BoardData>
       getNetworkInfo:()=> Promise<NetworkStateData>
       creatSomething:()=>void
+      closeWindow:()=>void
     }
   }
 }

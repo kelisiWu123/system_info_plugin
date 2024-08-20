@@ -9,7 +9,10 @@ const {
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
 
-
+let winId;
+ipcRenderer.on('init', (event) => {
+  winId = event.senderId;
+});
   window.services = {
     getCpuInfo: async ()=> {
       try {
@@ -100,6 +103,9 @@ const {
         console.error('Error getBoardData:')
       }
     },
+    closeWindow:()=>{
+      ipcRenderer.sendTo(winId, 'closeWindow');
+    },
     creatSomething:()=>{
       const watchWin = utools.createBrowserWindow('watch/index.html', {
         title:'watch',
@@ -122,7 +128,9 @@ const {
           devTools: true
         }
       },()=>{
-
+        ipcRenderer.on('closeWindow', (event) => {
+          watchWin.close()
+        });
       })
     },
 }
