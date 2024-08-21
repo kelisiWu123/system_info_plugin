@@ -1,7 +1,7 @@
 <script setup lang="ts">
 
 import {Cpu} from "@icon-park/vue-next";
-import {onMounted, ref} from "vue";
+import {onMounted, onUnmounted, ref} from "vue";
 defineProps({
   data: {
     type: Object as ()=>CpuData|undefined,
@@ -16,11 +16,16 @@ const cpu_fullLoad = ref<number>(0)
 const getCpuFullLoad = async () =>{
   cpu_fullLoad.value = await window.services.getCpuFullLoad()
 }
+let cpuTimerId:NodeJS.Timeout;
 onMounted(()=>{
-  setInterval(()=>{
+  cpuTimerId = setInterval(()=>{
     getCpuFullLoad()
   },1000)
 })
+onUnmounted(()=>{
+  clearInterval(cpuTimerId)
+})
+
 </script>
 
 <template>

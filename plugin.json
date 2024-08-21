@@ -1,5 +1,5 @@
 {
-	"logo": "logo.png",
+	"logo": "logo.jpeg",
 	"main": "index.html",
 	"preload": "preload.js",
 	"name": "your plugin ID",
@@ -9,7 +9,8 @@
 	"author": "kelisiWu123",
 	"homepage": "https://github.com/QC2168",
 	"pluginSetting": {
-		"height": 800
+		"height": 800,
+		"width": 450
 	},
 	"features": [
 		{

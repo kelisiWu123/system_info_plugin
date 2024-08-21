@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import {onMounted, onUnmounted, ref} from "vue";
 
 
 const cpuData = ref<CpuData>();
@@ -11,25 +11,24 @@ const memoData = ref<MemoData>({
 const gpuData = ref<GpuData>();
 const boardData = ref<BoardData>()
 const loading = ref<boolean>(false);
-const watchMemo = ref(false);
+
 let memoLayoutData = ref<MemoLayoutData[]>([]);
 let diskData = ref<DiskData[]>([]);
 
 let watchMemoTimerId: NodeJS.Timeout;
 
+onMounted(()=>{
+  watchMemoTimerId = setInterval(() => {
+    queryMemo();
+  }, 2000);
+})
+onUnmounted(()=>{
+  clearInterval(watchMemoTimerId)
+})
 async function queryMemo() {
   memoData.value = await window.services.getMemInfo();
 }
-watch(watchMemo, () => {
-  console.log("这时有触发吗");
-  if (watchMemo.value) {
-    watchMemoTimerId = setInterval(() => {
-      queryMemo();
-    }, 2000);
-  } else {
-    clearInterval(watchMemoTimerId);
-  }
-});
+
 
 async function init() {
   loading.value = true;
@@ -82,7 +81,6 @@ onMounted(() => {
         :data="memoData"
         :memoLayoutData="memoLayoutData"
         :loading="loading"
-        :watchMemo-="watchMemo"
         :queryMemo="queryMemo"
     />
     <DiskCard :data="diskData" />
