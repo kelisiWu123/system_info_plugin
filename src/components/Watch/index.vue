@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { Cpu, Disk, DownloadOne, UploadOne } from "@icon-park/vue-next";
-import { onMounted, onUnmounted, ref, toRefs, computed, reactive } from "vue";
+import { Cpu, Disk, DownloadOne, UploadOne,Setting} from "@icon-park/vue-next";
+import {onMounted, onUnmounted, ref, toRefs, computed, reactive, watch} from "vue";
 import { bytesToMB } from "../../utils.ts";
-import VConsole from "vconsole";
-
 const memoData = reactive<MemoData>({
   active: 0,
   available: 0,
@@ -13,31 +11,42 @@ const netData = ref<NetworkStateData>({
   tx_sec: 0,
   rx_sec: 0,
 });
+const drawer = ref(false)
 const cpu_fullLoad = ref<number>(0);
 const getCpuFullLoad = async () => {
   cpu_fullLoad.value = await window.services.getCpuFullLoad();
 };
 
-// const duration = computed(() => Math.floor(cpu_fullLoad.value / 10))
-async function init() {
+async  function getMemo () {
   const memo = await window.services.getMemInfo();
-  const net = await window.services.getNetworkInfo();
   memoData.active = memo.active;
   memoData.total = memo.total;
   memoData.available = memo.available;
-
+}
+async  function getNetwork () {
+  const net = await window.services.getNetworkInfo();
   netData.value = net;
 }
-
-let timerId: NodeJS.Timeout;
+let timerId: {[key:string]: NodeJS.Timeout | undefined} = {
+  cpu:undefined,
+  memo:undefined,
+  net:undefined,
+};
 onMounted(() => {
-  timerId = setInterval(() => {
+  timerId.cpu = setInterval(() => {
     getCpuFullLoad();
-    init();
+  }, 2000);
+  timerId.net = setInterval(() => {
+   getNetwork()
+  }, 2000);
+  timerId.memo = setInterval(() => {
+    getMemo()
   }, 2000);
 });
 onUnmounted(() => {
-  clearInterval(timerId);
+  for(let key in timerId){
+    clearInterval(timerId[key])
+  }
 });
 const colors = [
   { color: "#1989fa", percentage: 60 },
@@ -45,63 +54,128 @@ const colors = [
   { color: "#f56c6c", percentage: 100 },
 ];
 const { active, total } = toRefs(memoData);
-const usedMemoPercent = computed(() => (active.value / total.value) * 100);
-const vsConsole = new VConsole();
-console.log(vsConsole);
+const usedMemoPercent = computed(() => {
+  if (active.value > 0){
+    return (active.value / total.value) * 100
+  }else {
+    return 0
+  }
+
+})
+
+
+
+
+function openSetting (){
+  drawer.value = true
+}
+const cpuShow = ref(true);
+
+watch(cpuShow,()=>{
+  if (cpuShow.value){
+    timerId.cpu = setInterval(() => {
+      getCpuFullLoad();
+    }, 2000);
+  }else {
+    clearInterval( timerId.cpu)
+  }
+})
+const memoShow = ref(true);
+watch(memoShow,()=>{
+  if (memoShow.value){
+    timerId.memo = setInterval(() => {
+      getMemo()
+    }, 2000);
+  }else {
+    clearInterval( timerId.memo)
+  }
+})
+const netShow = ref(true);
+watch(netShow,()=>{
+  if (netShow.value){
+    timerId.net = setInterval(() => {
+      getNetwork()
+    }, 2000);
+  }else {
+    clearInterval( timerId.net)
+  }
+})
 </script>
 
 <template>
   <div class="container">
     <Bar />
     <div style="padding: 0 10px">
-      <WatchRow>
-        <template v-slot:icon>
-          <Cpu />
-        </template>
-        <template v-slot:content>
-          <el-progress
-            :percentage="Number(cpu_fullLoad)"
-            :stroke-width="18"
-            :text-inside="true"
-            :color="colors"
-          />
-        </template>
-      </WatchRow>
+      <div style="position: fixed; bottom: 20px;right: 20px"  @click="openSetting">
+        <el-button :icon="Setting"></el-button>
+      </div>
+      <template v-if="cpuShow">
+        <WatchRow>
+          <template v-slot:icon>
+            <Cpu />
+          </template>
+          <template v-slot:content>
+            <el-progress
+                :percentage="Number(cpu_fullLoad)"
+                :stroke-width="18"
+                :text-inside="true"
+                :color="colors"
+            />
+          </template>
+        </WatchRow>
+      </template>
 
-      <WatchRow>
-        <template v-slot:icon>
-          <Disk />
-        </template>
-        <template v-slot:content>
-          <el-progress
-            :text-inside="true"
-            :percentage="Number(usedMemoPercent.toFixed(2))"
-            :stroke-width="18"
-            :color="colors"
-          >
-          </el-progress>
-        </template>
-      </WatchRow>
-
-      <WatchRow>
-        <template v-slot:icon>
-          <DownloadOne />
-        </template>
-        <template v-slot:content>
-          {{ bytesToMB(netData?.rx_sec).toFixed(2) }}MB
-        </template>
-      </WatchRow>
-
-      <WatchRow>
-        <template v-slot:icon>
-          <UploadOne />
-        </template>
-        <template v-slot:content>
-          {{ bytesToMB(netData?.rx_sec).toFixed(2) }}MB
-        </template>
-      </WatchRow>
+      <template v-if="memoShow">
+        <WatchRow>
+          <template v-slot:icon>
+            <Disk />
+          </template>
+          <template v-slot:content>
+            <el-progress
+                :text-inside="true"
+                :percentage="Number(usedMemoPercent.toFixed(2))"
+                :stroke-width="18"
+                :color="colors"
+            >
+            </el-progress>
+          </template>
+        </WatchRow>
+      </template>
+      <template v-if="netShow">
+        <WatchRow>
+          <template v-slot:icon>
+            <DownloadOne />
+          </template>
+          <template v-slot:content>
+            {{ bytesToMB(netData?.rx_sec).toFixed(2) }}MB
+          </template>
+        </WatchRow>
+        <WatchRow>
+          <template v-slot:icon>
+            <UploadOne />
+          </template>
+          <template v-slot:content>
+            {{ bytesToMB(netData?.tx_sec).toFixed(2) }}MB
+          </template>
+        </WatchRow>
+      </template>
     </div>
+    <el-drawer
+        v-model="drawer"
+        title="展示项"
+        size="50%"
+    >
+      <div>
+        <el-switch v-model="cpuShow" active-text="CPU"/>
+      </div>
+      <div>
+        <el-switch v-model="memoShow" active-text="运存"/>
+      </div>
+      <div>
+        <el-switch v-model="netShow" active-text="网络"/>
+      </div>
+
+    </el-drawer>
   </div>
 </template>
-
 <style scoped></style>

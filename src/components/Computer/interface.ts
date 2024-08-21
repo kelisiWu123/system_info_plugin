@@ -7,6 +7,9 @@ interface CpuData {
 interface GpuData{
   model:string;
   vram:number;
+  memoryTotal:number;
+  memoryUsed:number;
+
 }
 
 interface MemoData {

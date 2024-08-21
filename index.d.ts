@@ -12,7 +12,7 @@ declare global {
     services: {
       getCpuInfo: () => Promise<CpuData>
       getMemInfo: () => Promise<MemoData>
-      getGpuInfo: () => Promise<{model:string,vram:number}>
+      getGpuInfo: () => Promise<{model:string,vram:number,memoryTotal:number,memoryUsed:number}>
       getMemoryLayout: () => Promise<MemoLayoutData[]>
       getCpuFullLoad: () => Promise<number>
       getDiskData: () => Promise<DiskData[]>
