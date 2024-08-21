@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import VConsole from "vconsole";
+
 
 const cpuData = ref<CpuData>();
 const memoData = ref<MemoData>({
@@ -20,8 +20,6 @@ let watchMemoTimerId: NodeJS.Timeout;
 async function queryMemo() {
   memoData.value = await window.services.getMemInfo();
 }
-const vConsole = new VConsole();
-console.log(vConsole)
 watch(watchMemo, () => {
   console.log("这时有触发吗");
   if (watchMemo.value) {

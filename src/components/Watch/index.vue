@@ -178,4 +178,17 @@ watch(netShow,()=>{
     </el-drawer>
   </div>
 </template>
-<style scoped></style>
+<style>
+body {
+  /*-webkit-app-region: drag;*/
+  /*-webkit-user-select: none;*/
+  margin: 0px;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  opacity: 1;
+  border-radius: 5px;
+}
+</style>

@@ -8,21 +8,25 @@
 	"description": "computer hard ware details",
 	"author": "kelisiWu123",
 	"homepage": "https://github.com/QC2168",
+	"pluginSetting": {
+		"height": 800
+	},
 	"features": [
-		{
-			"code": "hardwareWatch",
-			"explain": "硬件监控",
-			"cmds": [
-				"hardwareWatch"
-			]
-		},
 		{
 			"code": "hardware",
 			"explain": "硬件信息",
 			"cmds": [
 				"hardware"
 			]
+		},
+		{
+			"code": "hardwareWatch",
+			"explain": "硬件监控",
+			"cmds": [
+				"hardwareWatch"
+			]
 		}
+
 
 	]
 }
