@@ -86,8 +86,8 @@ const {
       }
     },
 
-    creatSomething:()=>{
-      const watchWin = utools.createBrowserWindow('a_watch/index.html', {
+    creatSomething:(fileName)=>{
+      const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
         title:'watch',
         height:300,
         width:300,
@@ -120,7 +120,7 @@ window.exports = {
     args: {
       enter: (action) => {
         console.log(action)
-        window.services.creatSomething()
+        window.services.creatSomething('a_watch')
         utools.outPlugin()
       }
     }
@@ -130,7 +130,7 @@ window.exports = {
     args: {
       enter: (action) => {
         console.log(action)
-        window.services.creatSomething()
+        window.services.creatSomething("a_computer")
 
       }
     }

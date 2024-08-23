@@ -18,7 +18,7 @@ declare global {
       getDiskData: () => Promise<DiskData[]>
       getBoardData: () => Promise<BoardData>
       getNetworkInfo:()=> Promise<NetworkStateData>
-      creatSomething:()=>void
+      creatSomething: (aWatch: string)=>void
       closeWindow:()=>void
     }
   }

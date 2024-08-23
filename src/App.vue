@@ -1,7 +1,7 @@
 <script setup lang="ts">
 </script>
 <template>
-  <Watch/>
+  <Computer/>
 </template>
 <style scoped>
 
