@@ -2,6 +2,7 @@
 </script>
 <template>
   <Computer/>
+<!--  <watch/>-->
 </template>
 <style scoped>
 

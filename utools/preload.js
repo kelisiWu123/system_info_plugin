@@ -86,11 +86,11 @@ const {
       }
     },
 
-    creatSomething:(fileName)=>{
+    creatSomething:(fileName,height=300,width = 300)=>{
       const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
         title:'watch',
-        height:300,
-        width:300,
+        height:height,
+        width:width,
         // useContentSize: true,
         skipTaskbar: false,
         backgroundColor: 'rgba(255, 255, 255, 0.7)',
@@ -115,25 +115,24 @@ const {
 
 
 window.exports = {
-  "hardwareWatch": {
+  hardwareWatch: {
     mode: "none",
     args: {
       enter: (action) => {
-        console.log(action)
-        window.services.creatSomething('a_watch')
-        utools.outPlugin()
-      }
-    }
+        console.log(action);
+        window.services.creatSomething("a_watch");
+        utools.outPlugin();
+      },
+    },
   },
-  "hardware": {
+  hardware: {
     mode: "none",
     args: {
       enter: (action) => {
-        console.log(action)
-        window.services.creatSomething("a_computer")
-
-      }
-    }
+        console.log(action);
+        window.services.creatSomething("a_computer", 800, 450);
+      },
+    },
   },
-}
+};
 

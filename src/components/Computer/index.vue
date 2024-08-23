@@ -73,6 +73,7 @@ onMounted(() => {
 </script>
 
 <template>
+  <Bar/>
   <template v-if="!loading">
     <CpuCard :data="cpuData" />
     <BoardCard :data="boardData" />

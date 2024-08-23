@@ -1,9 +1,8 @@
 {
 	"logo": "logo.jpeg",
-	"main": "index.html",
-
 	"name": "your plugin ID",
 	"version": "1.0.0",
+	"preload": "preload.js",
 	"pluginName": "template",
 	"description": "computer hard ware details",
 	"author": "kelisiWu123",

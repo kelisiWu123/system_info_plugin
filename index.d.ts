@@ -8,18 +8,27 @@ export interface ProcessVersions {
 
 declare global {
   interface Window {
-    versions: ProcessVersions
+    versions: ProcessVersions;
     services: {
-      getCpuInfo: () => Promise<CpuData>
-      getMemInfo: () => Promise<MemoData>
-      getGpuInfo: () => Promise<{model:string,vram:number,memoryTotal:number,memoryUsed:number}>
-      getMemoryLayout: () => Promise<MemoLayoutData[]>
-      getCpuFullLoad: () => Promise<number>
-      getDiskData: () => Promise<DiskData[]>
-      getBoardData: () => Promise<BoardData>
-      getNetworkInfo:()=> Promise<NetworkStateData>
-      creatSomething: (aWatch: string)=>void
-      closeWindow:()=>void
-    }
+      getCpuInfo: () => Promise<CpuData>;
+      getMemInfo: () => Promise<MemoData>;
+      getGpuInfo: () => Promise<{
+        model: string;
+        vram: number;
+        memoryTotal: number;
+        memoryUsed: number;
+      }>;
+      getMemoryLayout: () => Promise<MemoLayoutData[]>;
+      getCpuFullLoad: () => Promise<number>;
+      getDiskData: () => Promise<DiskData[]>;
+      getBoardData: () => Promise<BoardData>;
+      getNetworkInfo: () => Promise<NetworkStateData>;
+      creatSomething: (
+        fileName: string,
+        height?: number,
+        width?: number,
+      ) => void;
+      closeWindow: () => void;
+    };
   }
 }
