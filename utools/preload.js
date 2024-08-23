@@ -59,7 +59,7 @@ const {
     },
     getCpuFullLoad: async ()=> {
       try {
-        const fs = await si.fsSize()
+        const fs = await si.disksIO()
         console.log(fs,'fz')
         const current = await si.currentLoad()
         const percent = Math.round(current.currentLoad)
@@ -85,10 +85,7 @@ const {
         console.error('Error getBoardData:')
       }
     },
-    closeWindow:()=>{
-      console.log('closeWindow')
-      ipcRenderer.sendTo(winId, 'closeWindow');
-    },
+
     creatSomething:()=>{
       const watchWin = utools.createBrowserWindow('a_watch/index.html', {
         title:'watch',

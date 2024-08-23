@@ -112,7 +112,10 @@ watch(netShow,()=>{
       <template v-if="cpuShow">
         <WatchRow>
           <template v-slot:icon>
-            <Cpu />
+            <el-tooltip placement="right" content="cpu使用率">
+              <Cpu />
+            </el-tooltip>
+
           </template>
           <template v-slot:content>
             <el-progress
@@ -128,7 +131,9 @@ watch(netShow,()=>{
       <template v-if="memoShow">
         <WatchRow>
           <template v-slot:icon>
-            <Disk />
+            <el-tooltip  placement="right" content="内存使用率">
+              <Disk />
+            </el-tooltip>
           </template>
           <template v-slot:content>
             <el-progress
@@ -144,7 +149,10 @@ watch(netShow,()=>{
       <template v-if="netShow">
         <WatchRow>
           <template v-slot:icon>
-            <DownloadOne />
+            <el-tooltip placement="right"  content="下载速率">
+              <DownloadOne />
+            </el-tooltip>
+
           </template>
           <template v-slot:content>
             {{ bytesToMB(netData?.rx_sec).toFixed(2) }}MB
@@ -152,7 +160,11 @@ watch(netShow,()=>{
         </WatchRow>
         <WatchRow>
           <template v-slot:icon>
-            <UploadOne />
+            <el-tooltip placement="right"  content="上传速率">
+              <UploadOne />
+            </el-tooltip>
+
+
           </template>
           <template v-slot:content>
             {{ bytesToMB(netData?.tx_sec).toFixed(2) }}MB
