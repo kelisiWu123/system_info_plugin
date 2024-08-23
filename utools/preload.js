@@ -59,11 +59,11 @@ const {
     },
     getCpuFullLoad: async ()=> {
       try {
-
-
+        const fs = await si.fsSize()
+        console.log(fs,'fz')
         const current = await si.currentLoad()
-
         const percent = Math.round(current.currentLoad)
+        console.log('getCpuFullLoad',percent)
         return percent
       }catch (e){
         console.error("Error getCpuFullLoad:");
@@ -116,4 +116,27 @@ const {
     },
 }
 
+
+window.exports = {
+  "hardwareWatch": {
+    mode: "none",
+    args: {
+      enter: (action) => {
+        console.log(action)
+        window.services.creatSomething()
+        utools.outPlugin()
+      }
+    }
+  },
+  "hardware": {
+    mode: "none",
+    args: {
+      enter: (action) => {
+        console.log(action)
+        window.services.creatSomething()
+
+      }
+    }
+  },
+}
 
