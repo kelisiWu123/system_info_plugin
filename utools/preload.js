@@ -91,7 +91,7 @@ const {
         title:'watch',
         height:height,
         width:width,
-        // useContentSize: true,
+        useContentSize: true,
         skipTaskbar: false,
         backgroundColor: 'rgba(255, 255, 255, 0.7)',
         //不能最大最小化
@@ -108,7 +108,7 @@ const {
           devTools: true
         }
       },()=>{
-
+        watchWin.webContents.openDevTools();
       })
     },
 }
@@ -130,7 +130,8 @@ window.exports = {
     args: {
       enter: (action) => {
         console.log(action);
-        window.services.creatSomething("a_computer", 800, 450);
+        window.services.creatSomething("a_computer", 600, 450);
+        utools.outPlugin();
       },
     },
   },

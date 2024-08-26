@@ -74,26 +74,35 @@ onMounted(() => {
 
 <template>
   <Bar/>
-  <template v-if="!loading">
-    <CpuCard :data="cpuData" />
-    <BoardCard :data="boardData" />
-    <GpuCard :data="gpuData" />
-    <MemoCard
-        :data="memoData"
-        :memoLayoutData="memoLayoutData"
-        :loading="loading"
-        :queryMemo="queryMemo"
-    />
-    <DiskCard :data="diskData" />
+  <div class="content">
+    <template v-if="!loading">
+      <CpuCard :data="cpuData" />
+      <BoardCard :data="boardData" />
+      <GpuCard :data="gpuData" />
+      <MemoCard
+          :data="memoData"
+          :memoLayoutData="memoLayoutData"
+          :loading="loading"
+          :queryMemo="queryMemo"
+      />
+      <DiskCard :data="diskData" />
 
-  </template>
-  <template v-else>
-    <div v-loading="loading"   >
-      <el-empty description="正在加载中" />
-    </div>
-  </template>
+    </template>
+    <template v-else>
+      <div v-loading="loading"   >
+        <el-empty description="正在加载中" />
+      </div>
+    </template>
+  </div>
+
 
 
 </template>
 
-<style scoped></style>
+<style scoped >
+.content{
+  height: 570px;
+  width: 100%;
+  overflow: auto;
+}
+</style>

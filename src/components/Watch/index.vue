@@ -192,15 +192,4 @@ watch(netShow,()=>{
 </template>
 <style>
 
-body {
-  /*-webkit-app-region: drag;*/
-  /*-webkit-user-select: none;*/
-  margin: 0;
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-
-  opacity: 1;
-  border-radius: 5px;
-}
 </style>
