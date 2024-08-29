@@ -1,7 +1,6 @@
 // 您可以在进行窗口交互
 // utools文档
 import si from 'systeminformation'
-
 const {
   ipcRenderer
 } = require('electron')
@@ -32,7 +31,6 @@ const {
         const data = await si.mem()
         return data
       }catch (e){
-        console.error("Error getMemInfo:");
       }
     },
     getMemoryLayout: async () =>{
@@ -40,7 +38,7 @@ const {
         const memoryLayout=  await  si.memLayout()
         return memoryLayout
       }catch (e){
-        console.error("Error getMemoryLayout:");
+
       }
 
     },
@@ -50,23 +48,17 @@ const {
         const [gpu] = graphics.controllers.filter((ctr) => {
           return ctr.vram > 1
         })
-        console.log(gpu,'gpu')
         return gpu
       }catch (e){
-        console.error("Error getGpuInfo:");
       }
 
     },
     getCpuFullLoad: async ()=> {
       try {
-        const fs = await si.disksIO()
-        console.log(fs,'fz')
         const current = await si.currentLoad()
         const percent = Math.round(current.currentLoad)
-        console.log('getCpuFullLoad',percent)
         return percent
       }catch (e){
-        console.error("Error getCpuFullLoad:");
       }
     },
     getDiskData: async ()=> {
@@ -74,7 +66,7 @@ const {
         const data = await si.diskLayout()
         return data
       }catch (e){
-        console.error('Error getDiskData:')
+
       }
     },
     getBoardData: async() =>{
@@ -82,7 +74,6 @@ const {
         const board = await si.baseboard()
         return board
       }catch (e){
-        console.error('Error getBoardData:')
       }
     },
 

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 </script>
 <template>
-<!--  <Computer/>-->
-  <watch/>
+  <Computer/>
+<!--  <watch/>-->
 </template>
 <style scoped>
 
