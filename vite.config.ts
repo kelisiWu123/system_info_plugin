@@ -12,7 +12,6 @@ import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
   rmSync('dist-electron', { recursive: true, force: true })
-
   const isServe = command === 'serve'
   const isBuild = command === 'build'
   const isStartElectron = mode === 'electron'
