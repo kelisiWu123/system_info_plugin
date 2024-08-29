@@ -1,12 +1,12 @@
 {
-	"logo": "logo.jpeg",
+	"logo": "logo.jpg",
 	"name": "your plugin ID",
 	"version": "1.0.0",
 	"preload": "preload.js",
 	"pluginName": "template",
 	"description": "computer hard ware details",
 	"author": "kelisiWu123",
-	"homepage": "https://github.com/QC2168",
+	"homepage": "https://github.com/kelisiWu123",
 	"pluginSetting": {
 		"height": 800,
 		"width": 450
