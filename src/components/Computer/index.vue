@@ -8,7 +8,7 @@ const memoData = ref<MemoData>({
   available:0,
   total:0
 });
-const gpuData = ref<GpuData>();
+const gpuData = ref<GpuData[]>();
 const boardData = ref<BoardData>()
 const loading = ref<boolean>(false);
 
@@ -55,7 +55,7 @@ async function init() {
     }
     if (gpuRes.status === "fulfilled") {
       gpuData.value = gpuRes.value;
-      // console.log(gpuData);
+      console.log(gpuData);
     }
     if (diskRes.status === "fulfilled") {
       diskData.value = diskRes.value;
@@ -101,7 +101,7 @@ onMounted(() => {
 
 <style scoped >
 .content{
-  height: 570px;
+  height: 100%;
   width: 100%;
   overflow: auto;
 }

@@ -9,6 +9,7 @@ interface GpuData{
     vram:number;
     memoryTotal:number;
     memoryUsed:number;
+    bus:string
 
 }
 

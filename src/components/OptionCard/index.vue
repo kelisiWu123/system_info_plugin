@@ -20,7 +20,7 @@ defineProps({
           {{title}}
         </div>
       </div>
-      <div style="width: 360px">
+      <div>
         <slot name="content">
 
         </slot>
