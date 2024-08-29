@@ -15,6 +15,7 @@ const {
         const cpuData = await si.cpu()
         return cpuData
       }catch(e) {
+        console.error("Error getCpuInfo:");
       }
     },
     getNetworkInfo: async ()=> {
@@ -23,7 +24,7 @@ const {
         console.log(networkInterfaces)
         return networkInterfaces;
       }catch (e){
-
+        console.error("Error getNetworkInfo:");
       }
 
     },
