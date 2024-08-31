@@ -76,8 +76,11 @@ onMounted(() => {
   <Bar/>
   <div class="content">
     <template v-if="!loading">
-      <CpuCard :data="cpuData" />
-      <BoardCard :data="boardData" />
+      <div style="display: flex">
+        <CpuCard :data="cpuData" />
+        <BoardCard :data="boardData" />
+      </div>
+
       <GpuCard :data="gpuData" />
       <MemoCard
           :data="memoData"

@@ -45,7 +45,7 @@ onBeforeUnmount(() => {
     </template>
     <template v-slot:content>
 
-        <el-descriptions title="使用情况" :column="4" border>
+        <el-descriptions  :column="4" border>
           <el-descriptions-item label="总内存">{{
             `${bytesToGB(data?.total || 0)} GB`
           }}</el-descriptions-item>
@@ -65,7 +65,7 @@ onBeforeUnmount(() => {
         </el-descriptions>
 
       <el-divider />
-        <el-descriptions title="硬件" border :column="4">
+        <el-descriptions direction="vertical"  border :column="4">
           <template v-for="(item, index) in memoLayoutData">
             <el-descriptions-item :label="`内存条`">{{
               index + 1

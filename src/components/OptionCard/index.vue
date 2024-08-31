@@ -8,17 +8,10 @@ defineProps({
 </script>
 
 <template>
-  <el-card shadow="never">
+  <div>
     <div style="display: flex;align-items: center;gap: 20px">
       <div style="display: flex;flex-direction: column">
-        <div style="width: 50px">
-          <slot name="icon">
-          </slot>
-        </div>
 
-        <div>
-          {{title}}
-        </div>
       </div>
       <div>
         <slot name="content">
@@ -28,7 +21,7 @@ defineProps({
     </div>
 
 
-  </el-card>
+  </div>
 </template>
 
 <style scoped>
