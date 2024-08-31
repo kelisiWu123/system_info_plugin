@@ -1,0 +1,51 @@
+{
+  "id": "4670261",
+  "name": "systemInfo",
+  "font_family": "iconfont",
+  "css_prefix_text": "icon-",
+  "description": "",
+  "glyphs": [
+    {
+      "icon_id": "5057044",
+      "name": "内存条",
+      "font_class": "neicuntiao",
+      "unicode": "e627",
+      "unicode_decimal": 58919
+    },
+    {
+      "icon_id": "6611471",
+      "name": "运存RAM",
+      "font_class": "yuncunRAM",
+      "unicode": "e6b9",
+      "unicode_decimal": 59065
+    },
+    {
+      "icon_id": "35765609",
+      "name": "主板",
+      "font_class": "zhuban",
+      "unicode": "ea9f",
+      "unicode_decimal": 60063
+    },
+    {
+      "icon_id": "35854732",
+      "name": "cpu",
+      "font_class": "cpu",
+      "unicode": "e694",
+      "unicode_decimal": 59028
+    },
+    {
+      "icon_id": "37541276",
+      "name": "磁盘-L",
+      "font_class": "cipan-L",
+      "unicode": "e633",
+      "unicode_decimal": 58931
+    },
+    {
+      "icon_id": "5173712",
+      "name": "显卡",
+      "font_class": "xianka",
+      "unicode": "e620",
+      "unicode_decimal": 58912
+    }
+  ]
+}

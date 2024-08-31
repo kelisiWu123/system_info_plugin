@@ -31,9 +31,11 @@ onUnmounted(() => {
   <OptionCard title="CPU">
     <template v-slot:icon> </template>
     <template v-slot:content>
-      <el-descriptions direction="vertical"  border :column="4">
-        <el-descriptions-item :rowspan="2" label="CPU">
-          <cpu theme="outline" size="24" fill="#333" />
+      <el-descriptions  size="small" direction="vertical"  border :column="4">
+        <el-descriptions-item :width="80" :rowspan="2">
+          <template v-slot:default>
+            <LabelIcon label="处理器" icon="icon-cpu"/>
+          </template>
         </el-descriptions-item>
         <el-descriptions-item :span="3" label="型号"
           >{{ data?.manufacturer }} {{ data?.brand }}</el-descriptions-item

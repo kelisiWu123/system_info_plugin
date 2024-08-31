@@ -44,44 +44,42 @@ onBeforeUnmount(() => {
       <memory-one theme="outline" size="24" fill="#333" />
     </template>
     <template v-slot:content>
-
-        <el-descriptions  :column="4" border>
-          <el-descriptions-item label="总内存">{{
-            `${bytesToGB(data?.total || 0)} GB`
-          }}</el-descriptions-item>
-          <el-descriptions-item label="可用"
-            ><span style="color: #67c23a">{{
-              `${bytesToGB(data?.available || 0)} GB`
-            }}</span></el-descriptions-item
-          >
-          <el-descriptions-item label="已用">{{
-            `${bytesToGB(data?.active || 0)} GB`
-          }}</el-descriptions-item>
-          <el-descriptions-item label="使用率"
-            ><span style="color: #ff4600"
-              >{{ ((data.active / data.total) * 100).toFixed(2) }}%</span
-            ></el-descriptions-item
-          >
-        </el-descriptions>
+      <el-descriptions :column="3" border>
+        <el-descriptions-item label="总内存"
+          >{{ `${bytesToGB(data?.total || 0)} GB` }}
+        </el-descriptions-item>
+        <el-descriptions-item label="可用"
+          ><span style="color: #67c23a">{{
+            `${bytesToGB(data?.available || 0)} GB`
+          }}</span></el-descriptions-item
+        >
+        <el-descriptions-item label="已用"
+          >{{ `${bytesToGB(data?.active || 0)} GB` }}
+        </el-descriptions-item>
+        <el-descriptions-item label="使用率"
+          ><span style="color: #ff4600"
+            >{{ ((data.active / data.total) * 100).toFixed(2) }}%</span
+          ></el-descriptions-item
+        >
+      </el-descriptions>
 
       <el-divider />
-        <el-descriptions direction="vertical"  border :column="4">
-          <template v-for="(item, index) in memoLayoutData">
-            <el-descriptions-item :label="`内存条`">{{
-              index + 1
-            }}</el-descriptions-item>
-            <el-descriptions-item label="频率">{{
-              item?.clockSpeed
-            }}</el-descriptions-item>
-            <el-descriptions-item label="类型">{{
-              item?.type
-            }}</el-descriptions-item>
-            <el-descriptions-item label="容量">{{
-              `${bytesToGB(item?.size || 0)} GB`
-            }}</el-descriptions-item>
-          </template>
-        </el-descriptions>
-
+      <el-descriptions direction="vertical" border :column="4">
+        <template v-for="(item, index) in memoLayoutData">
+          <el-descriptions-item :label="`内存条`"
+            >{{ index + 1 }}
+          </el-descriptions-item>
+          <el-descriptions-item label="频率"
+            >{{ item?.clockSpeed }}
+          </el-descriptions-item>
+          <el-descriptions-item label="类型"
+            >{{ item?.type }}
+          </el-descriptions-item>
+          <el-descriptions-item label="容量"
+            >{{ `${bytesToGB(item?.size || 0)} GB` }}
+          </el-descriptions-item>
+        </template>
+      </el-descriptions>
     </template>
   </OptionCard>
 </template>
