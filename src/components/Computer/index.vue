@@ -80,14 +80,17 @@ onMounted(() => {
         <CpuCard :data="cpuData" />
         <BoardCard :data="boardData" />
       </div>
+      <div style="display: flex">
+        <MemoCard
+            :data="memoData"
+            :memoLayoutData="memoLayoutData"
+            :loading="loading"
+            :queryMemo="queryMemo"
+        />
+        <GpuCard :data="gpuData" />
 
-      <GpuCard :data="gpuData" />
-      <MemoCard
-          :data="memoData"
-          :memoLayoutData="memoLayoutData"
-          :loading="loading"
-          :queryMemo="queryMemo"
-      />
+
+      </div>
       <DiskCard :data="diskData" />
 
     </template>

@@ -44,7 +44,15 @@ onBeforeUnmount(() => {
       <memory-one theme="outline" size="24" fill="#333" />
     </template>
     <template v-slot:content>
-      <el-descriptions :column="3" border>
+      <el-descriptions  direction="vertical" size="small" :column="3" border>
+        <el-descriptions-item
+            :width="80"
+            :rowspan="2"
+        ><template v-slot:default>
+          <LabelIcon label="运存" icon="icon-yuncunRAM
+"/>
+        </template>
+        </el-descriptions-item>
         <el-descriptions-item label="总内存"
           >{{ `${bytesToGB(data?.total || 0)} GB` }}
         </el-descriptions-item>
@@ -63,10 +71,13 @@ onBeforeUnmount(() => {
         >
       </el-descriptions>
 
-      <el-divider />
-      <el-descriptions direction="vertical" border :column="4">
+
+      <el-descriptions size="small" direction="vertical" border :column="5">
+        <el-descriptions-item :width="80"  :rowspan="memoLayoutData?.length">
+          <LabelIcon label="内存条"  icon="icon-neicuntiao"/>
+        </el-descriptions-item>
         <template v-for="(item, index) in memoLayoutData">
-          <el-descriptions-item :label="`内存条`"
+          <el-descriptions-item :label="`#`"
             >{{ index + 1 }}
           </el-descriptions-item>
           <el-descriptions-item label="频率"
