@@ -43,7 +43,7 @@ import si from 'systeminformation'
       try {
         const graphics = await si.graphics()
         const gpu= graphics.controllers.filter((ctr) => {
-          return ctr.vram >= 0
+          return ctr.vram >= 1
         })
         console.log(gpu)
         return gpu

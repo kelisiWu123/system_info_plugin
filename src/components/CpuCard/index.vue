@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Cpu } from "@icon-park/vue-next";
 import { onMounted, onUnmounted, ref } from "vue";
 
 defineProps({

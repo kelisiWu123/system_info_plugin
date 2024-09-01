@@ -75,11 +75,13 @@ onMounted(() => {
 <template>
   <Bar/>
   <div class="content">
+
     <template v-if="!loading">
-      <div style="display: flex">
+      <div style="display: flex;margin-bottom: 20px">
         <CpuCard :data="cpuData" />
         <BoardCard :data="boardData" />
       </div>
+
       <div style="display: flex">
         <MemoCard
             :data="memoData"
@@ -87,12 +89,15 @@ onMounted(() => {
             :loading="loading"
             :queryMemo="queryMemo"
         />
-        <GpuCard :data="gpuData" />
+        <div style="display: flex;flex-direction: column">
+          <div style="margin-bottom: 20px">
+            <GpuCard :data="gpuData" />
+          </div>
 
+          <DiskCard :data="diskData" />
+        </div>
 
       </div>
-      <DiskCard :data="diskData" />
-
     </template>
     <template v-else>
       <div v-loading="loading"   >
@@ -109,6 +114,9 @@ onMounted(() => {
 .content{
   height: 100%;
   width: 100%;
+  min-width: 700px;
   overflow: auto;
+  background-color: #ffffff;
+  padding: 20px 0;
 }
 </style>

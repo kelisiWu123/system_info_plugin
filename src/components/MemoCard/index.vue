@@ -44,7 +44,7 @@ onBeforeUnmount(() => {
       <memory-one theme="outline" size="24" fill="#333" />
     </template>
     <template v-slot:content>
-      <el-descriptions  direction="vertical" size="small" :column="3" border>
+      <el-descriptions style="margin-bottom: 20px"  direction="vertical" size="small" :column="3" border>
         <el-descriptions-item
             :width="80"
             :rowspan="2"
@@ -70,7 +70,6 @@ onBeforeUnmount(() => {
           ></el-descriptions-item
         >
       </el-descriptions>
-
 
       <el-descriptions size="small" direction="vertical" border :column="5">
         <el-descriptions-item :width="80"  :rowspan="memoLayoutData?.length">
