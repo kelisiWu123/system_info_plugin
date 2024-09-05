@@ -78,8 +78,8 @@ import si from 'systeminformation'
     creatSomething:(fileName,height=300,width = 300)=>{
       const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
         title:'watch',
-        height:height,
-        width:width,
+        // height:height,
+        // width:width,
         useContentSize: true,
         skipTaskbar: false,
         backgroundColor: 'rgba(255, 255, 255, 0.7)',

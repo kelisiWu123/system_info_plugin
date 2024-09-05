@@ -21,7 +21,7 @@ onMounted(()=>{
 
 <template>
 
-  <div class="container">
+  <div class="bar">
     <div class="btnSpace">
       <div tabindex="0" @click="closeWindow" class="btn" style="background-color: #fb625f;cursor: pointer"/>
       <div class="btn" style="background-color: #f9c57a"/>
@@ -35,9 +35,10 @@ onMounted(()=>{
 </template>
 
 <style scoped lang="less">
-.container {
+.bar {
+  flex:0;
   background-color: #d9d8d9;
-  padding: 0 10px;
+  padding:10px;
   height: 30px;
   display: flex;
   justify-content: space-between;

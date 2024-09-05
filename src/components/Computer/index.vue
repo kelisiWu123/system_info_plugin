@@ -73,50 +73,58 @@ onMounted(() => {
 </script>
 
 <template>
-  <Bar/>
-  <div class="content">
-
-    <template v-if="!loading">
-      <div style="display: flex;margin-bottom: 20px">
-        <CpuCard :data="cpuData" />
-        <BoardCard :data="boardData" />
-      </div>
-
-      <div style="display: flex">
-        <MemoCard
-            :data="memoData"
-            :memoLayoutData="memoLayoutData"
-            :loading="loading"
-            :queryMemo="queryMemo"
-        />
-        <div style="display: flex;flex-direction: column">
-          <div style="margin-bottom: 20px">
-            <GpuCard :data="gpuData" />
-          </div>
-
-          <DiskCard :data="diskData" />
+  <div class="container">
+    <Bar/>
+    <div class="content">
+      <template v-if="!loading">
+        <div style="display: flex;margin-bottom: 20px">
+          <CpuCard :data="cpuData" />
+          <BoardCard :data="boardData" />
         </div>
 
-      </div>
-    </template>
-    <template v-else>
-      <div v-loading="loading"   >
-        <el-empty description="正在加载中" />
-      </div>
-    </template>
+        <div style="display: flex">
+          <MemoCard
+              :data="memoData"
+              :memoLayoutData="memoLayoutData"
+              :loading="loading"
+              :queryMemo="queryMemo"
+          />
+          <div style="display: flex;flex-direction: column">
+            <div style="margin-bottom: 20px">
+              <GpuCard :data="gpuData" />
+            </div>
+
+            <DiskCard :data="diskData" />
+          </div>
+
+        </div>
+      </template>
+      <template v-else>
+        <div v-loading="loading"   >
+          <el-empty description="正在加载中" />
+        </div>
+      </template>
+    </div>
   </div>
+
 
 
 
 </template>
 
-<style scoped >
-.content{
+<style scoped lang="less">
+.container{
   height: 100%;
   width: 100%;
-  min-width: 700px;
-  overflow: auto;
   background-color: #ffffff;
-  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  .content{
+    flex:1;
+    overflow: auto;
+    flex-basis: 0;
+    min-width: 700px;
+  }
 }
+
 </style>
