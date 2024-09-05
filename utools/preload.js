@@ -1,9 +1,18 @@
 // 您可以在进行窗口交互
 // utools文档
 import si from 'systeminformation'
+const {ipcRenderer} = require('electron')
 // promises style - new since version 3
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
+
+
+let winId;
+ipcRenderer.on('init', (event) => {
+  winId = event.senderId;
+});
+
+
 
   window.services = {
     getCpuInfo: async ()=> {
@@ -55,6 +64,7 @@ import si from 'systeminformation'
       try {
         const current = await si.currentLoad()
         const percent = Math.round(current.currentLoad)
+        console.log(winId,'winId')
         return percent
       }catch (e){
       }
@@ -73,6 +83,12 @@ import si from 'systeminformation'
         return board
       }catch (e){
       }
+    },
+    getWinId:()=>{
+      console.log(winId,'winId')
+    },
+    alwaysOnTop:(flag)=>{
+      ipcRenderer.sendTo(winId,'alwaysOnTop',{flag})
     },
 
     creatSomething:(fileName,height=300,width = 300)=>{
@@ -98,6 +114,11 @@ import si from 'systeminformation'
         }
       },()=>{
         watchWin.webContents.openDevTools();
+        ipcRenderer.sendTo(watchWin.webContents.id, 'init');
+
+        ipcRenderer.on("alwaysOnTop",(event, {flag})=>{
+          watchWin.setAlwaysOnTop(flag)
+        })
       })
     },
 }

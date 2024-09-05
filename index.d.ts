@@ -24,6 +24,8 @@ declare global {
         width?: number,
       ) => void;
       closeWindow: () => void;
+      getWinId:()=>void;
+      alwaysOnTop:(flag:boolean)=>void
     };
   }
 }

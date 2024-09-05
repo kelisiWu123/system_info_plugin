@@ -63,9 +63,6 @@ const usedMemoPercent = computed(() => {
 
 })
 
-
-
-
 function openSetting (){
   drawer.value = true
 }
@@ -100,6 +97,14 @@ watch(netShow,()=>{
     clearInterval( timerId.net)
   }
 })
+
+const onTop = ref(true)
+watch(onTop,()=>{
+  if (onTop.value){
+    window.services.alwaysOnTop(onTop.value)
+  }
+})
+
 </script>
 
 <template>
@@ -185,6 +190,9 @@ watch(netShow,()=>{
       </div>
       <div>
         <el-switch v-model="netShow" active-text="网络"/>
+      </div>
+      <div>
+        <el-switch v-model="onTop" active-text="钉住"/>
       </div>
 
     </el-drawer>
