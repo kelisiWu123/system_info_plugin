@@ -98,7 +98,7 @@ watch(netShow,()=>{
   }
 })
 
-const onTop = ref(true)
+const onTop = ref(false)
 watch(onTop,()=>{
   if (onTop.value){
     window.services.alwaysOnTop(onTop.value)
@@ -183,16 +183,16 @@ watch(onTop,()=>{
         size="50%"
     >
       <div>
-        <el-switch v-model="cpuShow" active-text="CPU"/>
+        <el-switch size="small" v-model="cpuShow" active-text="CPU"/>
       </div>
       <div>
-        <el-switch v-model="memoShow" active-text="运存"/>
+        <el-switch size="small" v-model="memoShow" active-text="运存"/>
       </div>
       <div>
-        <el-switch v-model="netShow" active-text="网络"/>
+        <el-switch size="small" v-model="netShow" active-text="网络"/>
       </div>
       <div>
-        <el-switch v-model="onTop" active-text="钉住"/>
+        <el-switch size="small" v-model="onTop" active-text="钉住"/>
       </div>
 
     </el-drawer>
