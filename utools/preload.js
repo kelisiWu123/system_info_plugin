@@ -94,11 +94,11 @@ ipcRenderer.on('init', (event) => {
     creatSomething:(fileName,height=300,width = 300)=>{
       const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
         title:'watch',
-        // height:height,
-        // width:width,
+        height:height,
+        width:width,
         useContentSize: true,
         skipTaskbar: false,
-        backgroundColor: 'rgba(255, 255, 255, 0.7)',
+        backgroundColor: 'rgba(255, 255, 255, 0.3)',
         //不能最大最小化
         minimizable: false,
         maximizable: false,
@@ -130,7 +130,7 @@ window.exports = {
     args: {
       enter: (action) => {
         console.log(action);
-        window.services.creatSomething("a_watch");
+        window.services.creatSomething("a_watch",300,300);
         utools.outPlugin();
       },
     },
@@ -140,7 +140,7 @@ window.exports = {
     args: {
       enter: (action) => {
         console.log(action);
-        window.services.creatSomething("a_computer", 600, 450);
+        window.services.creatSomething("a_computer", 600, 550);
         utools.outPlugin();
       },
     },

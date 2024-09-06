@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import {onMounted} from "vue";
+
+import {onMounted, ref} from "vue";
 
 
 function closeWindow(): void {
@@ -17,15 +18,37 @@ onMounted(()=>{
     }
   })
 })
+
+const onTop = ref(false)
+function alwaysOnTop(){
+  window.services.alwaysOnTop(!onTop.value)
+}
 </script>
 
 <template>
 
   <div class="bar">
     <div class="btnSpace">
-      <div tabindex="0" @click="closeWindow" class="btn" style="background-color: #fb625f;cursor: pointer"/>
+      <el-tooltip
+          effect="light"
+          content="关闭窗口"
+          placement="top"
+      >
+        <div tabindex="0" @click="closeWindow" class="btn" style="background-color: #fb625f;cursor: pointer"/>
+      </el-tooltip>
+
       <div class="btn" style="background-color: #f9c57a"/>
-      <div class="btn" style="background-color: #8ac872"/>
+
+      <el-tooltip
+          effect="light"
+          content="窗口置顶"
+          placement="top"
+
+      >
+        <div tabindex="0"   @click="alwaysOnTop" class="btn" style="background-color: #8ac872"/>
+      </el-tooltip>
+
+
     </div>
     <div class="dragSpace">
 

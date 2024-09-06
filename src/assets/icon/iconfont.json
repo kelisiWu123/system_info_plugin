@@ -6,6 +6,13 @@
   "description": "",
   "glyphs": [
     {
+      "icon_id": "9671252",
+      "name": "钉子",
+      "font_class": "pinoff",
+      "unicode": "e611",
+      "unicode_decimal": 58897
+    },
+    {
       "icon_id": "5057044",
       "name": "内存条",
       "font_class": "neicuntiao",
