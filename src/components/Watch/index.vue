@@ -141,8 +141,6 @@ watch(onTop, () => {
           <template v-slot:content>
             <el-progress
               :percentage="Number(cpu_fullLoad)"
-              :stroke-width="18"
-              :text-inside="true"
               :color="colors"
             />
           </template>
@@ -158,9 +156,8 @@ watch(onTop, () => {
           </template>
           <template v-slot:content>
             <el-progress
-              :text-inside="true"
+
               :percentage="Number(usedMemoPercent.toFixed(2))"
-              :stroke-width="18"
               :color="colors"
             >
             </el-progress>
