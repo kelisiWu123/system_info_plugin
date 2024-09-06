@@ -210,7 +210,7 @@ watch(onTop, () => {
 .container {
   height: 100%;
   width: 100%;
-  background-color: #ffffff;
+  //background-color: #ffffff;
   display: flex;
   flex-direction: column;
 

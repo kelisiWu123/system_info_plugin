@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-import {onMounted, ref} from "vue";
+import {onMounted, ref, watch} from "vue";
 
 
 function closeWindow(): void {
@@ -20,8 +20,11 @@ onMounted(()=>{
 })
 
 const onTop = ref(false)
+watch(onTop,()=>{
+  window.services.alwaysOnTop(onTop.value)
+})
 function alwaysOnTop(){
-  window.services.alwaysOnTop(!onTop.value)
+  onTop.value = !onTop.value
 }
 </script>
 
