@@ -44,11 +44,11 @@ function alwaysOnTop(){
 
       <el-tooltip
           effect="light"
-          content="窗口置顶"
+          :content="onTop ? '取消置顶':'窗口置顶'"
           placement="top"
-
       >
-        <div tabindex="0"   @click="alwaysOnTop" class="btn" style="background-color: #8ac872"/>
+        <div tabindex="0"   @click="alwaysOnTop" :class="onTop ? 'btnAct':'btn'" style="background-color: #8ac872">
+        </div>
       </el-tooltip>
 
 
@@ -80,6 +80,9 @@ function alwaysOnTop(){
       height: 12px;
       width: 12px;
       border-radius: 100%;
+    }
+    .btnAct{
+      .btn;
       background-image: linear-gradient(rgba(255, 255, 255, 0) 0, rgba(255, 255, 255, 0) 50%, #fff 95%, #fff 100%);
       box-shadow: 0 2px 0 rgba(255, 255, 255, .8), inset 0 0 3px 1px rgba(0, 0, 0, .6), 0 -1px 1px 1px rgba(0, 0, 0, .4);
       -webkit-box-shadow: 0 2px 0 rgba(255, 255, 255, .8), inset 0 0 3px 1px rgba(0, 0, 0, .6), 0 -1px 1px 1px rgba(0, 0, 0, .4);
