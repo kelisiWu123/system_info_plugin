@@ -37,7 +37,7 @@ function alwaysOnTop(){
           content="关闭窗口"
           placement="top"
       >
-        <div tabindex="0" @click="closeWindow" class="btn" style="background-color: #fb625f;cursor: pointer"/>
+        <div tabindex="0" @click="closeWindow" class="btn" style="background-color: #fb625f;"/>
       </el-tooltip>
 
       <div class="btn" style="background-color: #f9c57a"/>
@@ -64,6 +64,7 @@ function alwaysOnTop(){
 .bar {
   flex:0;
   //background-color: #d9d8d9;
+  background-color: rgba(255, 255, 255, 0.5);
   padding:10px;
   height: 30px;
   display: flex;
@@ -80,6 +81,7 @@ function alwaysOnTop(){
       height: 12px;
       width: 12px;
       border-radius: 100%;
+      cursor: pointer;
     }
     .btnAct{
       .btn;

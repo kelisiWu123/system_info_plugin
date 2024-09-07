@@ -4,7 +4,7 @@ import {
   Disk,
   DownloadOne,
   UploadOne,
-  Setting,
+
 } from "@icon-park/vue-next";
 import {
   onMounted,
@@ -115,10 +115,6 @@ watch(netShow, () => {
   }
 });
 
-const onTop = ref(false);
-watch(onTop, () => {
-  window.services.alwaysOnTop(onTop.value);
-});
 
 
 </script>
@@ -131,7 +127,7 @@ watch(onTop, () => {
         style="position: fixed; bottom: 20px; right: 20px"
         @click="openSetting"
       >
-        <span @click="openSetting" style="cursor: pointer" class="iconfont icon-setting"/>
+        <span style="cursor: pointer" class="iconfont icon-setting"/>
       </div>
       <template v-if="cpuShow">
         <WatchRow>
@@ -190,7 +186,7 @@ watch(onTop, () => {
         </WatchRow>
       </template>
     </div>
-    <el-drawer v-model="drawer" :with-header="false" size="50%">
+    <el-drawer v-model="drawer" :with-header="false" size="80%">
       <div>
         <el-switch size="small" v-model="cpuShow" active-text="CPU" />
       </div>
@@ -200,9 +196,7 @@ watch(onTop, () => {
       <div>
         <el-switch size="small" v-model="netShow" active-text="网络" />
       </div>
-      <div>
-        <el-switch size="small" v-model="onTop" active-text="钉住" />
-      </div>
+
     </el-drawer>
   </div>
 </template>
