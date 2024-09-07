@@ -51,6 +51,7 @@ ipcRenderer.on('init', (event) => {
     getGpuInfo: async ()=> {
       try {
         const graphics = await si.graphics()
+        console.log(graphics)
         const gpu= graphics.controllers.filter((ctr) => {
           return ctr.vram >= 1
         })

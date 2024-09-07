@@ -140,7 +140,8 @@ watch(netShow, () => {
             <el-progress
               :percentage="Number(cpu_fullLoad.toFixed(0))"
               :color="colors"
-              :show-text="false"
+              :stroke-width="18"
+              :text-inside ="true"
             />
           </template>
         </WatchRow>
@@ -157,9 +158,9 @@ watch(netShow, () => {
             <el-progress
               :percentage="Number(usedMemoPercent.toFixed(0))"
               :color="colors"
-              :show-text="false"
-            >
-            </el-progress>
+              :stroke-width="18"
+              :text-inside ="true"
+           />
           </template>
         </WatchRow>
       </template>
@@ -207,7 +208,9 @@ watch(netShow, () => {
   //background-color: #ffffff;
   display: flex;
   flex-direction: column;
-
+  .progressText{
+    color: #1989fa;
+  }
   .content {
     flex: 1;
     overflow: auto;
