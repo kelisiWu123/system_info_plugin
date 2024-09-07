@@ -119,6 +119,8 @@ const onTop = ref(false);
 watch(onTop, () => {
   window.services.alwaysOnTop(onTop.value);
 });
+
+
 </script>
 
 <template>
@@ -129,7 +131,7 @@ watch(onTop, () => {
         style="position: fixed; bottom: 20px; right: 20px"
         @click="openSetting"
       >
-        <el-button :icon="Setting"></el-button>
+        <span @click="openSetting" style="cursor: pointer" class="iconfont icon-setting"/>
       </div>
       <template v-if="cpuShow">
         <WatchRow>
@@ -188,7 +190,7 @@ watch(onTop, () => {
         </WatchRow>
       </template>
     </div>
-    <el-drawer v-model="drawer" title="展示项" size="50%">
+    <el-drawer v-model="drawer" :with-header="false" size="50%">
       <div>
         <el-switch size="small" v-model="cpuShow" active-text="CPU" />
       </div>
