@@ -22,10 +22,12 @@ declare global {
         fileName: string,
         height?: number,
         width?: number,
+        backgroundColor?:number
       ) => void;
       closeWindow: () => void;
       getWinId:()=>void;
-      alwaysOnTop:(flag:boolean)=>void
+      alwaysOnTop:(flag:boolean)=>void;
+      getSysEnv:()=>{[key:string]:string}
     };
   }
 }

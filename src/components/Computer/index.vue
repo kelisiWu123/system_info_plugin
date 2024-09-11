@@ -116,7 +116,7 @@ onMounted(() => {
 .container{
   height: 100%;
   width: 100%;
-  background-color: #ffffff;
+  //background-color: #ffffff;
   display: flex;
   flex-direction: column;
   .content{
@@ -124,6 +124,7 @@ onMounted(() => {
     overflow: auto;
     flex-basis: 0;
     min-width: 700px;
+    padding-block: 10px;
   }
 }
 

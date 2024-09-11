@@ -17,12 +17,12 @@ defineProps({
     </template>
     <template v-slot:content>
       <el-descriptions direction="vertical" :column="4" border size="small">
+        <el-descriptions-item :width="80" :rowspan="(data || []).length * 2">
+          <template v-slot:default>
+            <LabelIcon label="磁盘" icon="icon-cipan-L"></LabelIcon>
+          </template>
+        </el-descriptions-item>
         <template v-for="item in data">
-          <el-descriptions-item :width="80" :rowspan="(data || []).length * 2">
-            <template v-slot:default>
-              <LabelIcon label="磁盘" icon="icon-cipan-L"></LabelIcon>
-            </template>
-          </el-descriptions-item>
           <el-descriptions-item :span="3" label="名称"
             >{{ item?.name }}
           </el-descriptions-item>

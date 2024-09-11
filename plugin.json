@@ -12,20 +12,20 @@
 		"width": 450
 	},
 	"features": [
-
-		{
-			"code": "hardwareWatch",
-			"explain": "硬件监控",
-			"cmds": [
-				"硬件监控"
-			]
-		},
 		{
 			"code": "hardware",
 			"explain": "硬件信息",
 			"cmds": [
 				"硬件信息"
 			]
+		},
+		{
+			"code": "hardwareWatch",
+			"explain": "硬件监控",
+			"cmds": [
+				"硬件监控"
+			]
 		}
+
 	]
 }

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 </script>
 <template>
-<!--  <Computer/>-->
+  <Computer/>
 <!--  <el-button @click="clickK">查看id</el-button>-->
-  <watch/>
+<!--  <watch/>-->
 </template>
 
 <style scoped>

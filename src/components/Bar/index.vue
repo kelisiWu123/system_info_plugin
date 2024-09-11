@@ -63,8 +63,8 @@ function alwaysOnTop(){
 <style scoped lang="less">
 .bar {
   flex:0;
-  //background-color: #d9d8d9;
-  background-color: rgba(255, 255, 255, 0.5);
+  background-color: #d9d8d9;
+  //background-color: rgba(255, 255, 255, 0.5);
   padding:10px;
   height: 30px;
   display: flex;
