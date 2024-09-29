@@ -1,7 +1,7 @@
 // 您可以在进行窗口交互
 // utools文档
 import si from 'systeminformation'
-const {ipcRenderer} = require('electron')
+const {ipcRenderer, ipcMain} = require('electron')
 // promises style - new since version 3
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
@@ -11,7 +11,9 @@ let winId;
 ipcRenderer.on('init', (event) => {
   winId = event.senderId;
 });
-
+// ipcMain.on('closeWin',(event)=>{
+//   console.log(event);
+// })
 
 
   window.services = {
@@ -25,7 +27,7 @@ ipcRenderer.on('init', (event) => {
     getNetworkInfo: async ()=> {
       try {
         const [networkInterfaces] = await si.networkStats()
-        console.log(networkInterfaces)
+       
         return networkInterfaces;
       }catch (e){
 
@@ -36,7 +38,7 @@ ipcRenderer.on('init', (event) => {
       try {
         const data = await si.mem()
 
-        console.log(data,'memo');
+    
         return data
       }catch (e){
       }
@@ -45,7 +47,7 @@ ipcRenderer.on('init', (event) => {
       try {
         const memoryLayout=  await  si.memLayout()
 
-        console.log(memoryLayout,'memoryLayout');
+        
         return memoryLayout
       }catch (e){
 
@@ -55,7 +57,7 @@ ipcRenderer.on('init', (event) => {
     getGpuInfo: async ()=> {
       try {
         const graphics = await si.graphics()
-        console.log(graphics)
+  
         const gpu= graphics.controllers.filter((ctr) => {
           return ctr.vram >= 1
         })
@@ -97,10 +99,11 @@ ipcRenderer.on('init', (event) => {
       console.log(winId,'winId')
     },
     alwaysOnTop:(flag)=>{
+     
       ipcRenderer.sendTo(winId,'alwaysOnTop',{flag})
     },
     closeWinddow:()=>{
-      ipcRenderer.sendTo(winId,'close-window')
+      ipcRenderer.send('closeWin')
     },
     creatSomething:(fileName,height=300,width = 300,backgroundColor = 0.3)=>{
       const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
@@ -128,6 +131,7 @@ ipcRenderer.on('init', (event) => {
         ipcRenderer.sendTo(watchWin.webContents.id, 'init');
 
         ipcRenderer.on("alwaysOnTop",(event, {flag})=>{
+           console.log('preload --- flag',flag);
           watchWin.setAlwaysOnTop(flag)
         })
         ipcRenderer.on("close-window",()=>{

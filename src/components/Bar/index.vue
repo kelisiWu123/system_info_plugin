@@ -1,13 +1,14 @@
 <script setup lang="ts">
 
+import VConsole from "vconsole";
 import {onMounted, ref, watch} from "vue";
 
 
 function closeWindow(): void {
   window.services.closeWindow()
 }
-// const vsConsole = new VConsole();
-// console.log(vsConsole);
+const vsConsole = new VConsole();
+console.log(vsConsole);
 onMounted(()=>{
   addEventListener('keyup',(evt)=>{
     switch (evt.key){
