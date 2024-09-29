@@ -28,6 +28,7 @@ declare global {
       getWinId:()=>void;
       alwaysOnTop:(flag:boolean)=>void;
       getSysEnv:()=>{[key:string]:string}
+      closeWindow:()=>void
     };
   }
 }

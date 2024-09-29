@@ -4,7 +4,7 @@ import {onMounted, ref, watch} from "vue";
 
 
 function closeWindow(): void {
-  window.close()
+  window.services.closeWindow()
 }
 // const vsConsole = new VConsole();
 // console.log(vsConsole);

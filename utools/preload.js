@@ -35,6 +35,8 @@ ipcRenderer.on('init', (event) => {
     getMemInfo:async ()=> {
       try {
         const data = await si.mem()
+
+        console.log(data,'memo');
         return data
       }catch (e){
       }
@@ -42,6 +44,8 @@ ipcRenderer.on('init', (event) => {
     getMemoryLayout: async () =>{
       try {
         const memoryLayout=  await  si.memLayout()
+
+        console.log(memoryLayout,'memoryLayout');
         return memoryLayout
       }catch (e){
 
@@ -65,7 +69,6 @@ ipcRenderer.on('init', (event) => {
       try {
         const current = await si.currentLoad()
         const percent = Math.round(current.currentLoad)
-        console.log(winId,'winId')
         return percent
       }catch (e){
       }
@@ -96,8 +99,9 @@ ipcRenderer.on('init', (event) => {
     alwaysOnTop:(flag)=>{
       ipcRenderer.sendTo(winId,'alwaysOnTop',{flag})
     },
-
-
+    closeWinddow:()=>{
+      ipcRenderer.sendTo(winId,'close-window')
+    },
     creatSomething:(fileName,height=300,width = 300,backgroundColor = 0.3)=>{
       const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
         title:'watch',
@@ -125,6 +129,9 @@ ipcRenderer.on('init', (event) => {
 
         ipcRenderer.on("alwaysOnTop",(event, {flag})=>{
           watchWin.setAlwaysOnTop(flag)
+        })
+        ipcRenderer.on("close-window",()=>{
+          watchWin.close()
         })
       })
     },
