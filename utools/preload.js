@@ -1,7 +1,7 @@
 // 您可以在进行窗口交互
 // utools文档
 import si from 'systeminformation'
-const {ipcRenderer, ipcMain} = require('electron')
+const {ipcRenderer} = require('electron')
 // promises style - new since version 3
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
@@ -9,6 +9,7 @@ const {ipcRenderer, ipcMain} = require('electron')
 
 let winId;
 ipcRenderer.on('init', (event) => {
+  console.log('init事件触发', event.senderId)
   winId = event.senderId;
 });
 // ipcMain.on('closeWin',(event)=>{
@@ -96,16 +97,16 @@ ipcRenderer.on('init', (event) => {
       return sysEnv
     },
     getWinId:()=>{
-      console.log(winId,'winId')
+      return winId
     },
     alwaysOnTop:(flag)=>{
-     
       ipcRenderer.sendTo(winId,'alwaysOnTop',{flag})
     },
     closeWinddow:()=>{
       ipcRenderer.send('closeWin')
     },
     creatSomething:(fileName,height=300,width = 300,backgroundColor = 0.3)=>{
+      console.log('create some thing 触发');
       const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
         title:'watch',
         height:height,
@@ -129,7 +130,7 @@ ipcRenderer.on('init', (event) => {
       },()=>{
         watchWin.webContents.openDevTools();
         ipcRenderer.sendTo(watchWin.webContents.id, 'init');
-
+        console.log(watchWin.webContents.id,'sss')
         ipcRenderer.on("alwaysOnTop",(event, {flag})=>{
            console.log('preload --- flag',flag);
           watchWin.setAlwaysOnTop(flag)

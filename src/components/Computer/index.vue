@@ -14,13 +14,14 @@ const loading = ref<boolean>(false);
 
 let memoLayoutData = ref<MemoLayoutData[]>([]);
 let diskData = ref<DiskData[]>([]);
-
+let winId = ref<string>()
 let watchMemoTimerId: NodeJS.Timeout;
 
 onMounted(()=>{
   watchMemoTimerId = setInterval(() => {
     queryMemo();
   }, 2000);
+  winId.value = window.services.getWinId()
 })
 onUnmounted(()=>{
   clearInterval(watchMemoTimerId)
@@ -76,6 +77,7 @@ onMounted(() => {
   <div class="container">
     <Bar/>
     <div class="content">
+    winID{{winId}}
       <template v-if="!loading">
         <div style="display: flex;margin-bottom: 20px">
           <CpuCard :data="cpuData" />

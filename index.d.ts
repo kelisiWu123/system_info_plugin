@@ -25,7 +25,7 @@ declare global {
         backgroundColor?:number
       ) => void;
       closeWindow: () => void;
-      getWinId:()=>void;
+      getWinId:()=>string;
       alwaysOnTop:(flag:boolean)=>void;
       getSysEnv:()=>{[key:string]:string}
       closeWindow:()=>void
