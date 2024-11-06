@@ -9,10 +9,12 @@ defineProps({
 })
 
 const formatMemory = (bytes: number) => {
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+  if (!bytes) return '0 GB'
+  return (bytes / 1024).toFixed(1) + ' GB'
 }
 
 const getMemoryUsage = (gpu: GpuData) => {
+  if (!gpu?.memoryUsed || !gpu?.memoryTotal) return 0
   return Math.round((gpu.memoryUsed / gpu.memoryTotal) * 100)
 }
 
@@ -37,13 +39,13 @@ const format = (percentage: number) => `${percentage}%`
         <div v-for="(gpu, index) in data" :key="index" class="gpu-item">
           <div class="gpu-name">
             <span class="label">显卡 {{ index + 1 }}</span>
-            <span class="value">{{ gpu.name }}</span>
+            <span class="value">{{ gpu.model }}</span>
           </div>
 
           <div class="info-grid">
             <div class="info-item">
-              <div class="label">显存</div>
-              <div class="value">{{ formatMemory(gpu.memoryTotal) }}</div>
+              <div class="label">显存大小</div>
+              <div class="value">{{ formatMemory(gpu.vram) }}</div>
             </div>
 
             <div class="info-item">
@@ -54,13 +56,13 @@ const format = (percentage: number) => `${percentage}%`
             </div>
 
             <div class="info-item">
-              <div class="label">核心频率</div>
-              <div class="value">{{ gpu.clockCore }} MHz</div>
+              <div class="label">总线接口</div>
+              <div class="value">{{ gpu.bus }}</div>
             </div>
 
             <div class="info-item">
-              <div class="label">显存频率</div>
-              <div class="value">{{ gpu.clockMemory }} MHz</div>
+              <div class="label">已用显存</div>
+              <div class="value">{{ formatMemory(gpu.memoryUsed) }}</div>
             </div>
           </div>
         </div>

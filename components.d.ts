@@ -12,9 +12,14 @@ declare module 'vue' {
     Computer: typeof import('./src/components/Computer/index.vue')['default']
     CpuCard: typeof import('./src/components/CpuCard/index.vue')['default']
     DiskCard: typeof import('./src/components/DiskCard/index.vue')['default']
-    ElDescriptions: typeof import('element-plus/es')['ElDescriptions']
-    ElDescriptionsItem: typeof import('element-plus/es')['ElDescriptionsItem']
+    ElCard: typeof import('element-plus/es')['ElCard']
+    ElCollapse: typeof import('element-plus/es')['ElCollapse']
+    ElCollapseItem: typeof import('element-plus/es')['ElCollapseItem']
     ElEmpty: typeof import('element-plus/es')['ElEmpty']
+    ElIcon: typeof import('element-plus/es')['ElIcon']
+    ElProgress: typeof import('element-plus/es')['ElProgress']
+    ElScrollbar: typeof import('element-plus/es')['ElScrollbar']
+    ElSkeleton: typeof import('element-plus/es')['ElSkeleton']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     GpuCard: typeof import('./src/components/GpuCard/index.vue')['default']
     LabelIcon: typeof import('./src/components/LabelIcon/index.vue')['default']
@@ -24,8 +29,5 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     Watch: typeof import('./src/components/Watch/index.vue')['default']
     WatchRow: typeof import('./src/components/Watch/WatchRow/index.vue')['default']
-  }
-  export interface ComponentCustomProperties {
-    vLoading: typeof import('element-plus/es')['ElLoadingDirective']
   }
 }
