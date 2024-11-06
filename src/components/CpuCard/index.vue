@@ -52,7 +52,7 @@ onUnmounted(() => {
 
       <div class="info-item">
         <div class="label">核心数</div>
-        <div class="value">{{ data?.physicalCores }} 物理核心</div>
+        <div class="value">{{ data?.physicalCores }} 物理核心 / {{ data?.cores }} 逻辑核心</div>
       </div>
 
       <div class="info-item">
@@ -63,8 +63,8 @@ onUnmounted(() => {
       </div>
 
       <div class="info-item">
-        <div class="label">最大频率</div>
-        <div class="value">{{ data?.speedMax }} GHz</div>
+        <div class="label">基准频率</div>
+        <div class="value">{{ data?.speed?.toFixed(2) }} GHz</div>
       </div>
     </div>
   </div>
@@ -106,6 +106,10 @@ onUnmounted(() => {
         font-size: 14px;
         color: var(--el-text-color-primary);
         font-weight: 500;
+
+        :deep(.el-progress) {
+          margin-top: 4px;
+        }
       }
     }
   }
