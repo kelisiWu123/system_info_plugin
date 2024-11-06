@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from 'vue'
 
 defineProps({
   data: {
@@ -8,49 +8,106 @@ defineProps({
   },
   title: {
     type: String,
-    default: "",
+    default: '',
   },
-});
-const cpu_fullLoad = ref<number>(0);
+})
+
+const cpu_fullLoad = ref<number>(0)
+
 const getCpuFullLoad = async () => {
-  cpu_fullLoad.value = await window.services.getCpuFullLoad();
-};
-let cpuTimerId: NodeJS.Timeout;
+  cpu_fullLoad.value = await window.services.getCpuFullLoad()
+}
+
+const getCpuLoadColor = (percentage: number) => {
+  if (percentage < 60) return '#67C23A'
+  if (percentage < 80) return '#E6A23C'
+  return '#F56C6C'
+}
+
+const format = (percentage: number) => `${percentage}%`
+
+let cpuTimerId: NodeJS.Timeout
 onMounted(() => {
   cpuTimerId = setInterval(() => {
-    getCpuFullLoad();
-  }, 1000);
-});
+    getCpuFullLoad()
+  }, 1000)
+})
 onUnmounted(() => {
-  clearInterval(cpuTimerId);
-});
+  clearInterval(cpuTimerId)
+})
 </script>
 
 <template>
-  <OptionCard title="CPU">
-    <template v-slot:icon> </template>
-    <template v-slot:content>
-      <el-descriptions  size="small" direction="vertical"  border :column="4">
-        <el-descriptions-item :width="80" :rowspan="2">
-          <template v-slot:default>
-            <LabelIcon label="处理器" icon="icon-cpu"/>
-          </template>
-        </el-descriptions-item>
-        <el-descriptions-item :span="3" label="型号"
-          >{{ data?.manufacturer }} {{ data?.brand }}</el-descriptions-item
-        >
-        <el-descriptions-item label="核心">{{
-          data?.physicalCores
-        }}</el-descriptions-item>
-        <el-descriptions-item label="线程">{{
-          data?.performanceCores
-        }}</el-descriptions-item>
-        <el-descriptions-item label="使用率"
-          ><span style="color: #ff4600">{{ cpu_fullLoad }}%</span>
-        </el-descriptions-item>
-      </el-descriptions>
-    </template>
-  </OptionCard>
+  <div class="cpu-card">
+    <div class="card-header">
+      <el-icon><Cpu /></el-icon>
+      <span class="title">处理器信息</span>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="label">处理器</div>
+        <div class="value">{{ data?.manufacturer }} {{ data?.brand }}</div>
+      </div>
+
+      <div class="info-item">
+        <div class="label">核心数</div>
+        <div class="value">{{ data?.physicalCores }} 物理核心</div>
+      </div>
+
+      <div class="info-item">
+        <div class="label">CPU使用率</div>
+        <div class="value">
+          <el-progress :percentage="cpu_fullLoad" :color="getCpuLoadColor(cpu_fullLoad)" :format="format" />
+        </div>
+      </div>
+
+      <div class="info-item">
+        <div class="label">最大频率</div>
+        <div class="value">{{ data?.speedMax }} GHz</div>
+      </div>
+    </div>
+  </div>
 </template>
 
-<style scoped></style>
+<style scoped lang="less">
+.cpu-card {
+  .card-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+
+    .el-icon {
+      font-size: 20px;
+      color: var(--el-color-primary);
+      margin-right: 8px;
+    }
+
+    .title {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--el-text-color-primary);
+    }
+  }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+
+    .info-item {
+      .label {
+        font-size: 12px;
+        color: var(--el-text-color-secondary);
+        margin-bottom: 4px;
+      }
+
+      .value {
+        font-size: 14px;
+        color: var(--el-text-color-primary);
+        font-weight: 500;
+      }
+    }
+  }
+}
+</style>
