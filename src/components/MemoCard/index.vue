@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { bytesToGB } from '../../utils.ts'
 import { onBeforeUnmount, onMounted, computed } from 'vue'
-import { MemoryOne } from '@icon-park/vue-next'
+import { Memory, GraphicDesign } from '@icon-park/vue-next'
 
 const props = defineProps({
   data: {
@@ -13,8 +12,13 @@ const props = defineProps({
     } satisfies MemoData,
   },
   memoLayoutData: {
-    type: Object as () => MemoLayoutData[] | undefined,
-    default: undefined,
+    type: Array as () => MemoLayoutData[],
+    default: () => [],
+    required: true,
+  },
+  gpuData: {
+    type: Array as () => GpuData[],
+    default: () => [],
   },
   title: {
     type: String,
@@ -52,69 +56,104 @@ const progressColor = computed(() => {
 function formatMemory(bytes: number) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
 }
+
+const formatGpuMemory = (bytes: number) => {
+  if (!bytes) return '0 GB'
+  return (bytes / 1024).toFixed(1) + ' GB'
+}
 </script>
 <template>
   <div class="memo-card">
-    <div class="card-header">
-      <el-icon><MemoryOne /></el-icon>
-      <span class="title">内存信息</span>
-    </div>
+    <div class="section memory-section">
+      <div class="section-header">
+        <Memory theme="outline" size="20" fill="var(--el-color-primary)" :strokeWidth="3" />
+        <span class="title">内存信息</span>
+      </div>
 
-    <div class="memory-usage">
-      <el-progress type="dashboard" :percentage="usagePercentage" :color="progressColor" :width="80">
-        <template #default="{ percentage }">
-          <div class="progress-label">
-            <span class="value">{{ percentage }}%</span>
-            <span class="label">使用率</span>
+      <div class="memory-usage">
+        <el-progress type="dashboard" :percentage="usagePercentage" :color="progressColor" :width="80">
+          <template #default="{ percentage }">
+            <div class="progress-label">
+              <span class="value">{{ percentage }}%</span>
+              <span class="label">使用率</span>
+            </div>
+          </template>
+        </el-progress>
+
+        <div class="memory-stats">
+          <div class="stat-item">
+            <span class="label">总内存</span>
+            <span class="value">{{ formatMemory(props.data.total) }}</span>
           </div>
-        </template>
-      </el-progress>
+          <div class="stat-item">
+            <span class="label">已使用</span>
+            <span class="value">{{ formatMemory(props.data.active) }}</span>
+          </div>
+          <div class="stat-item">
+            <span class="label">可用</span>
+            <span class="value">{{ formatMemory(props.data.available) }}</span>
+          </div>
+        </div>
+      </div>
 
-      <div class="memory-stats">
-        <div class="stat-item">
-          <span class="label">总内存</span>
-          <span class="value">{{ formatMemory(props.data.total) }}</span>
-        </div>
-        <div class="stat-item">
-          <span class="label">已使用</span>
-          <span class="value">{{ formatMemory(props.data.active) }}</span>
-        </div>
-        <div class="stat-item">
-          <span class="label">可用</span>
-          <span class="value">{{ formatMemory(props.data.available) }}</span>
-        </div>
+      <div class="memory-details" v-if="props.memoLayoutData?.length">
+        <el-collapse>
+          <el-collapse-item title="内存详细信息">
+            <div class="detail-item" v-for="(item, index) in props.memoLayoutData" :key="index">
+              <div class="label">插槽 {{ index + 1 }}</div>
+              <div class="value">{{ item.manufacturer }} {{ formatMemory(item.size) }} {{ item.type }} {{ item.clockSpeed }}MHz</div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
       </div>
     </div>
 
-    <div class="memory-details" v-if="props.memoLayoutData.length">
-      <el-collapse>
-        <el-collapse-item title="内存详细信息">
-          <div class="detail-item" v-for="(item, index) in props.memoLayoutData" :key="index">
-            <div class="label">插槽 {{ index + 1 }}</div>
-            <div class="value">{{ item.manufacturer }} {{ formatMemory(item.size) }} {{ item.type }} {{ item.clockSpeed }}MHz</div>
+    <div class="section gpu-section">
+      <div class="section-header">
+        <GraphicDesign theme="outline" size="20" fill="var(--el-color-primary)" :strokeWidth="3" />
+        <span class="title">显卡信息</span>
+      </div>
+
+      <div class="gpu-list">
+        <template v-if="gpuData && gpuData.length">
+          <div v-for="(gpu, index) in gpuData" :key="index" class="gpu-item">
+            <div class="gpu-info">
+              <div class="gpu-name">{{ gpu.model }}</div>
+              <div class="gpu-details">
+                <span class="detail-item">{{ gpu.bus }}</span>
+                <span class="divider">|</span>
+                <span class="detail-item">{{ formatGpuMemory(gpu.vram) }} 显存</span>
+              </div>
+            </div>
           </div>
-        </el-collapse-item>
-      </el-collapse>
+        </template>
+        <el-empty v-else description="未检测到显卡设备" />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped lang="less">
 .memo-card {
-  .card-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 16px;
+  .section {
+    margin-bottom: 20px;
 
-    .el-icon {
-      font-size: 20px;
-      color: var(--el-color-primary);
-      margin-right: 8px;
+    &:last-child {
+      margin-bottom: 0;
     }
 
-    .title {
-      font-size: 16px;
-      font-weight: 500;
+    .section-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--el-border-color-lighter);
+
+      .title {
+        font-size: 16px;
+        font-weight: 500;
+        margin-left: 8px;
+      }
     }
   }
 
@@ -164,7 +203,46 @@ function formatMemory(bytes: number) {
     }
   }
 
+  .gpu-section {
+    .gpu-list {
+      .gpu-item {
+        padding: 12px;
+        background: var(--el-bg-color-page);
+        border-radius: 8px;
+
+        &:not(:last-child) {
+          margin-bottom: 12px;
+        }
+
+        .gpu-info {
+          .gpu-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--el-text-color-primary);
+            margin-bottom: 4px;
+          }
+
+          .gpu-details {
+            font-size: 12px;
+            color: var(--el-text-color-secondary);
+
+            .detail-item {
+              display: inline-block;
+            }
+
+            .divider {
+              margin: 0 8px;
+              color: var(--el-border-color);
+            }
+          }
+        }
+      }
+    }
+  }
+
   .memory-details {
+    margin-top: 16px;
+
     :deep(.el-collapse-item__header) {
       font-size: 13px;
       color: var(--el-text-color-secondary);

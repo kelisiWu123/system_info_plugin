@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { bytesToGB } from '../../utils.ts'
 import { HardDisk } from '@icon-park/vue-next'
 
 defineProps({

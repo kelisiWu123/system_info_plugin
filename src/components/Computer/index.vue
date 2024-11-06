@@ -88,19 +88,14 @@ onMounted(() => {
               <CpuCard :data="cpuData" />
             </el-card>
 
-            <!-- 内存信息卡片 -->
+            <!-- 内存和显卡信息卡片 -->
             <el-card class="info-card mb-2" shadow="hover">
-              <MemoCard :data="memoData" :memoLayoutData="memoLayoutData" :loading="loading" :queryMemo="queryMemo" />
+              <MemoCard :data="memoData" :memoLayoutData="memoLayoutData" :gpuData="gpuData" :loading="loading" :queryMemo="queryMemo" />
             </el-card>
 
             <!-- 主板信息卡片 -->
             <el-card class="info-card mb-2" shadow="hover">
               <BoardCard :data="boardData" />
-            </el-card>
-
-            <!-- GPU信息卡片 -->
-            <el-card class="info-card mb-2" shadow="hover">
-              <GpuCard :data="gpuData" />
             </el-card>
 
             <!-- 硬盘信息卡片 -->
