@@ -12,6 +12,7 @@ declare module 'vue' {
     Computer: typeof import('./src/components/Computer/index.vue')['default']
     CpuCard: typeof import('./src/components/CpuCard/index.vue')['default']
     DiskCard: typeof import('./src/components/DiskCard/index.vue')['default']
+    ElButton: typeof import('element-plus/es')['ElButton']
     ElCard: typeof import('element-plus/es')['ElCard']
     ElCollapse: typeof import('element-plus/es')['ElCollapse']
     ElCollapseItem: typeof import('element-plus/es')['ElCollapseItem']

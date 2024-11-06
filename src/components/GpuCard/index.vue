@@ -12,19 +12,6 @@ const formatMemory = (bytes: number) => {
   if (!bytes) return '0 GB'
   return (bytes / 1024).toFixed(1) + ' GB'
 }
-
-const getMemoryUsage = (gpu: GpuData) => {
-  if (!gpu?.memoryUsed || !gpu?.memoryTotal) return 0
-  return Math.round((gpu.memoryUsed / gpu.memoryTotal) * 100)
-}
-
-const getUsageColor = (percentage: number) => {
-  if (percentage < 60) return '#67C23A'
-  if (percentage < 80) return '#E6A23C'
-  return '#F56C6C'
-}
-
-const format = (percentage: number) => `${percentage}%`
 </script>
 
 <template>
@@ -49,20 +36,8 @@ const format = (percentage: number) => `${percentage}%`
             </div>
 
             <div class="info-item">
-              <div class="label">显存使用率</div>
-              <div class="value">
-                <el-progress :percentage="getMemoryUsage(gpu)" :color="getUsageColor(getMemoryUsage(gpu))" :format="format" />
-              </div>
-            </div>
-
-            <div class="info-item">
               <div class="label">总线接口</div>
               <div class="value">{{ gpu.bus }}</div>
-            </div>
-
-            <div class="info-item">
-              <div class="label">已用显存</div>
-              <div class="value">{{ formatMemory(gpu.memoryUsed) }}</div>
             </div>
           </div>
         </div>
@@ -132,10 +107,6 @@ const format = (percentage: number) => `${percentage}%`
             font-size: 14px;
             color: var(--el-text-color-primary);
             font-weight: 500;
-          }
-
-          :deep(.el-progress) {
-            margin-top: 4px;
           }
         }
       }

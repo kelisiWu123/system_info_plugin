@@ -1,116 +1,100 @@
 // 您可以在进行窗口交互
 // utools文档
 import si from 'systeminformation'
-const {ipcRenderer} = require('electron')
+const { ipcRenderer } = require('electron')
 // promises style - new since version 3
 
 // https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
 
-
-let winId;
+let winId
 ipcRenderer.on('init', (event) => {
   console.log('init事件触发', event.senderId)
-  winId = event.senderId;
-});
+  winId = event.senderId
+})
 // ipcMain.on('closeWin',(event)=>{
 //   console.log(event);
 // })
 
+window.services = {
+  getCpuInfo: async () => {
+    try {
+      const cpuData = await si.cpu()
+      return cpuData
+    } catch (e) {}
+  },
+  getNetworkInfo: async () => {
+    try {
+      const [networkInterfaces] = await si.networkStats()
 
-  window.services = {
-    getCpuInfo: async ()=> {
-      try {
-        const cpuData = await si.cpu()
-        return cpuData
-      }catch(e) {
-      }
-    },
-    getNetworkInfo: async ()=> {
-      try {
-        const [networkInterfaces] = await si.networkStats()
-       
-        return networkInterfaces;
-      }catch (e){
+      return networkInterfaces
+    } catch (e) {}
+  },
+  getMemInfo: async () => {
+    try {
+      const data = await si.mem()
 
-      }
+      return data
+    } catch (e) {}
+  },
+  getMemoryLayout: async () => {
+    try {
+      const memoryLayout = await si.memLayout()
 
-    },
-    getMemInfo:async ()=> {
-      try {
-        const data = await si.mem()
+      return memoryLayout
+    } catch (e) {}
+  },
+  getGpuInfo: async () => {
+    try {
+      const graphics = await si.graphics()
 
-    
-        return data
-      }catch (e){
-      }
-    },
-    getMemoryLayout: async () =>{
-      try {
-        const memoryLayout=  await  si.memLayout()
+      const gpu = graphics.controllers.filter((ctr) => {
+        return ctr.vram >= 1
+      })
+      console.log(gpu)
+      return gpu
+    } catch (e) {}
+  },
+  getCpuFullLoad: async () => {
+    try {
+      const current = await si.currentLoad()
+      const percent = Math.round(current.currentLoad)
+      return percent
+    } catch (e) {}
+  },
+  getDiskData: async () => {
+    try {
+      const data = await si.diskLayout()
+      return data
+    } catch (e) {}
+  },
+  getBoardData: async () => {
+    try {
+      const board = await si.baseboard()
+      return board
+    } catch (e) {}
+  },
 
-        
-        return memoryLayout
-      }catch (e){
-
-      }
-
-    },
-    getGpuInfo: async ()=> {
-      try {
-        const graphics = await si.graphics()
-  
-        const gpu= graphics.controllers.filter((ctr) => {
-          return ctr.vram >= 1
-        })
-        console.log(gpu)
-        return gpu
-      }catch (e){
-      }
-
-    },
-    getCpuFullLoad: async ()=> {
-      try {
-        const current = await si.currentLoad()
-        const percent = Math.round(current.currentLoad)
-        return percent
-      }catch (e){
-      }
-    },
-    getDiskData: async ()=> {
-      try {
-        const data = await si.diskLayout()
-        return data
-      }catch (e){
-
-      }
-    },
-    getBoardData: async() =>{
-      try {
-        const board = await si.baseboard()
-        return board
-      }catch (e){
-      }
-    },
-
-    getSysEnv:async ()=>{
-      const sysEnv = await si.versions()
-      return sysEnv
-    },
-    getWinId:()=>{
-      return winId
-    },
-    alwaysOnTop:(flag)=>{
-      ipcRenderer.sendTo(winId,'alwaysOnTop',{flag})
-    },
-    closeWinddow:()=>{
-      ipcRenderer.send('closeWin')
-    },
-    creatSomething:(fileName,height=300,width = 300,backgroundColor = 0.3)=>{
-      console.log('create some thing 触发');
-      const watchWin = utools.createBrowserWindow(`${fileName}/index.html`, {
-        title:'watch',
-        height:height,
-        width:width,
+  getSysEnv: async () => {
+    const sysEnv = await si.versions()
+    return sysEnv
+  },
+  getWinId: () => {
+    return winId
+  },
+  alwaysOnTop: (flag) => {
+    ipcRenderer.sendTo(winId, 'alwaysOnTop', { flag })
+  },
+  closeWinddow: () => {
+    ipcRenderer.send('closeWin')
+  },
+  creatSomething: (fileName, height = 300, width = 300, backgroundColor = 0.3) => {
+    console.log('create some thing 触发')
+    const watchWin = utools.createBrowserWindow(
+      `${fileName}/index.html`,
+      {
+        title: 'watch',
+        height: height,
+        width: width,
         useContentSize: true,
         skipTaskbar: false,
         backgroundColor: `rgba(255, 255, 255, ${backgroundColor})`,
@@ -125,44 +109,44 @@ ipcRenderer.on('init', (event) => {
         alwaysOnTop: false,
         webPreferences: {
           preload: 'preload.js',
-          devTools: true
-        }
-      },()=>{
-        watchWin.webContents.openDevTools();
-        ipcRenderer.sendTo(watchWin.webContents.id, 'init');
-        console.log(watchWin.webContents.id,'sss')
-        ipcRenderer.on("alwaysOnTop",(event, {flag})=>{
-           console.log('preload --- flag',flag);
+          devTools: true,
+        },
+      },
+      () => {
+        watchWin.webContents.openDevTools()
+        ipcRenderer.sendTo(watchWin.webContents.id, 'init')
+        console.log(watchWin.webContents.id, 'sss')
+        ipcRenderer.on('alwaysOnTop', (event, { flag }) => {
+          console.log('preload --- flag', flag)
           watchWin.setAlwaysOnTop(flag)
         })
-        ipcRenderer.on("close-window",()=>{
+        ipcRenderer.on('close-window', () => {
           watchWin.close()
         })
-      })
-    },
+      }
+    )
+  },
 }
-
 
 window.exports = {
   hardwareWatch: {
-    mode: "none",
+    mode: 'none',
     args: {
       enter: (action) => {
-        console.log(action);
-        window.services.creatSomething("a_watch",200,200);
-        utools.outPlugin();
+        console.log(action)
+        window.services.creatSomething('a_watch', 200, 200)
+        utools.outPlugin()
       },
     },
   },
   hardware: {
-    mode: "none",
+    mode: 'none',
     args: {
       enter: (action) => {
-        console.log(action);
-        window.services.creatSomething("a_computer", 550, 700,1);
-        utools.outPlugin();
+        console.log(action)
+        window.services.creatSomething('a_computer', 550, 700, 1)
+        utools.outPlugin()
       },
     },
   },
-};
-
+}
