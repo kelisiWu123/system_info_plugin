@@ -84,7 +84,7 @@ window.services = {
   alwaysOnTop: (flag) => {
     ipcRenderer.sendTo(winId, 'alwaysOnTop', { flag })
   },
-  closeWinddow: () => {
+  closeWindow: () => {
     ipcRenderer.send('closeWin')
   },
   creatSomething: (fileName, height = 300, width = 300, backgroundColor = 0.3) => {

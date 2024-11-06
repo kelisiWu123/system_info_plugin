@@ -101,10 +101,29 @@ function alwaysOnTop() {
         }
 
         &.active {
-          background-image: linear-gradient(rgba(255, 255, 255, 0) 0, rgba(255, 255, 255, 0) 50%, rgba(255, 255, 255, 0.3) 95%, rgba(255, 255, 255, 0.3) 100%);
+          background-image: linear-gradient(rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.3) 100%);
           box-shadow:
-            0 1px 1px rgba(0, 0, 0, 0.1),
-            inset 0 0 1px rgba(0, 0, 0, 0.2);
+            inset 0 0 0 1px rgba(255, 255, 255, 0.4),
+            inset 0 0 3px rgba(0, 0, 0, 0.3),
+            0 1px 2px rgba(0, 0, 0, 0.2);
+          border-color: rgba(0, 0, 0, 0.2);
+
+          &::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 6px;
+            height: 6px;
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 50%;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+          }
+
+          &:hover::after {
+            background-color: rgba(255, 255, 255, 0.7);
+          }
         }
       }
     }
