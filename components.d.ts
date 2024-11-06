@@ -9,6 +9,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     Bar: typeof import('./src/components/Bar/index.vue')['default']
     BoardCard: typeof import('./src/components/BoardCard/index.vue')['default']
+    CardHeader: typeof import('./src/components/CardHeader/index.vue')['default']
     Computer: typeof import('./src/components/Computer/index.vue')['default']
     CpuCard: typeof import('./src/components/CpuCard/index.vue')['default']
     DiskCard: typeof import('./src/components/DiskCard/index.vue')['default']

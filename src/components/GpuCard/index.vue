@@ -17,7 +17,7 @@ const formatMemory = (bytes: number) => {
 <template>
   <div class="gpu-card">
     <div class="card-header">
-      <GraphicDesign theme="outline" size="20" fill="var(--el-color-primary)" :strokeWidth="3" />
+      <GraphicDesign theme="outline" size="20" fill="var(--el-color-primary)" :strokeWidth="3" class="header-icon" />
       <span class="title">显卡信息</span>
     </div>
 
@@ -54,9 +54,7 @@ const formatMemory = (bytes: number) => {
     align-items: center;
     margin-bottom: 16px;
 
-    .el-icon {
-      font-size: 20px;
-      color: var(--el-color-primary);
+    .header-icon {
       margin-right: 8px;
     }
 

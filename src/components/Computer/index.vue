@@ -9,7 +9,7 @@ const memoData = ref<MemoData>({
 })
 const gpuData = ref<GpuData[]>()
 const boardData = ref<BoardData>()
-const loading = ref<boolean>(false)
+const loading = ref<boolean>(true)
 
 let memoLayoutData = ref<MemoLayoutData[]>([])
 let diskData = ref<DiskData[]>([])
@@ -30,7 +30,6 @@ async function queryMemo() {
 }
 
 async function init() {
-  loading.value = true
   try {
     const [cpuRes, memoRes, memoLayoutRes, gpuRes, diskRes, boardRes] = await Promise.allSettled([
       window.services.getCpuInfo(),
@@ -40,7 +39,7 @@ async function init() {
       window.services.getDiskData(),
       window.services.getBoardData(),
     ])
-    loading.value = false
+
     if (cpuRes.status === 'fulfilled') {
       cpuData.value = cpuRes.value
     }
@@ -49,11 +48,9 @@ async function init() {
     }
     if (memoLayoutRes.status === 'fulfilled') {
       memoLayoutData.value = memoLayoutRes.value
-      // console.log(memoLayoutData);
     }
     if (gpuRes.status === 'fulfilled') {
       gpuData.value = gpuRes.value
-      console.log(gpuData)
     }
     if (diskRes.status === 'fulfilled') {
       diskData.value = diskRes.value
@@ -61,9 +58,10 @@ async function init() {
     if (boardRes.status === 'fulfilled') {
       boardData.value = boardRes.value
     }
-  } catch {
-    loading.value = false
+  } catch (error) {
+    console.error('初始化数据失败:', error)
   }
+  loading.value = false
 }
 onMounted(() => {
   init()
@@ -76,36 +74,6 @@ onMounted(() => {
     <div class="content">
       <el-scrollbar>
         <div class="main-container">
-          <el-skeleton :loading="loading" animated>
-            <template #default>
-              <!-- CPU信息卡片 -->
-              <el-card class="info-card mb-2" shadow="hover">
-                <CpuCard :data="cpuData" />
-              </el-card>
-
-              <!-- 内存信息卡片 -->
-              <el-card class="info-card mb-2" shadow="hover">
-                <MemoCard :data="memoData" :memoLayoutData="memoLayoutData" :loading="loading" :queryMemo="queryMemo" />
-              </el-card>
-
-              <!-- 主板信息卡片 -->
-              <el-card class="info-card mb-2" shadow="hover">
-                <BoardCard :data="boardData" />
-              </el-card>
-
-              <!-- GPU信息卡片 -->
-              <el-card class="info-card mb-2" shadow="hover">
-                <GpuCard :data="gpuData" />
-              </el-card>
-
-              <!-- 硬盘信息卡片 -->
-              <el-card class="info-card" shadow="hover">
-                <DiskCard :data="diskData" />
-              </el-card>
-            </template>
-          </el-skeleton>
-
-          <!-- 加载状态 -->
           <div v-if="loading" class="loading-container">
             <el-empty description="正在加载中">
               <template #image>
@@ -113,6 +81,33 @@ onMounted(() => {
               </template>
             </el-empty>
           </div>
+
+          <template v-else>
+            <!-- CPU信息卡片 -->
+            <el-card class="info-card mb-2" shadow="hover">
+              <CpuCard :data="cpuData" />
+            </el-card>
+
+            <!-- 内存信息卡片 -->
+            <el-card class="info-card mb-2" shadow="hover">
+              <MemoCard :data="memoData" :memoLayoutData="memoLayoutData" :loading="loading" :queryMemo="queryMemo" />
+            </el-card>
+
+            <!-- 主板信息卡片 -->
+            <el-card class="info-card mb-2" shadow="hover">
+              <BoardCard :data="boardData" />
+            </el-card>
+
+            <!-- GPU信息卡片 -->
+            <el-card class="info-card mb-2" shadow="hover">
+              <GpuCard :data="gpuData" />
+            </el-card>
+
+            <!-- 硬盘信息卡片 -->
+            <el-card class="info-card" shadow="hover">
+              <DiskCard :data="diskData" />
+            </el-card>
+          </template>
         </div>
       </el-scrollbar>
     </div>
