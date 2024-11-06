@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { HardDisk } from '@icon-park/vue-next'
+import CardHeader from '../CardHeader/index.vue'
 
 defineProps({
   data: {
@@ -34,10 +35,7 @@ const getUsageColor = (percentage: number) => {
 
 <template>
   <div class="disk-card">
-    <div class="card-header">
-      <HardDisk theme="outline" size="20" fill="var(--el-color-primary)" :strokeWidth="3" />
-      <span class="title">硬盘信息</span>
-    </div>
+    <CardHeader :icon="HardDisk" title="硬盘信息" />
 
     <div class="disk-list">
       <template v-if="data && data.length">
@@ -70,24 +68,6 @@ const getUsageColor = (percentage: number) => {
 
 <style scoped lang="less">
 .disk-card {
-  .card-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 16px;
-
-    .el-icon {
-      font-size: 20px;
-      color: var(--el-color-primary);
-      margin-right: 8px;
-    }
-
-    .title {
-      font-size: 16px;
-      font-weight: 500;
-      color: var(--el-text-color-primary);
-    }
-  }
-
   .disk-list {
     .disk-item {
       &:not(:last-child) {

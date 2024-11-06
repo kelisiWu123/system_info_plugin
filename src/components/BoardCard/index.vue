@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { Chip } from '@icon-park/vue-next'
+import CardHeader from '../CardHeader/index.vue'
+
 defineProps({
   data: {
     type: Object as () => BoardData | undefined,
@@ -9,10 +12,7 @@ defineProps({
 
 <template>
   <div class="board-card">
-    <div class="card-header">
-      <el-icon><Monitor /></el-icon>
-      <span class="title">主板信息</span>
-    </div>
+    <CardHeader :icon="Chip" title="主板信息" />
 
     <div class="info-grid">
       <div class="info-item">
@@ -40,24 +40,6 @@ defineProps({
 
 <style scoped lang="less">
 .board-card {
-  .card-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 16px;
-
-    .el-icon {
-      font-size: 20px;
-      color: var(--el-color-primary);
-      margin-right: 8px;
-    }
-
-    .title {
-      font-size: 16px;
-      font-weight: 500;
-      color: var(--el-text-color-primary);
-    }
-  }
-
   .info-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);

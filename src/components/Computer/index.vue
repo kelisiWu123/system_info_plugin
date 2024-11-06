@@ -111,9 +111,9 @@ onMounted(() => {
 
 <style scoped lang="less">
 .container {
-  height: 100vh;
+  height: 100%;
   width: 100%;
-  background-color: var(--el-bg-color);
+  background: linear-gradient(180deg, #ffffff 0%, var(--apple-gray) 100%);
   display: flex;
   flex-direction: column;
 
@@ -122,40 +122,48 @@ onMounted(() => {
     overflow: hidden;
 
     .main-container {
-      padding: 10px;
-      max-width: 450px;
+      max-width: 700px;
       margin: 0 auto;
-    }
-
-    .info-card {
-      border-radius: 8px;
-      transition: all 0.2s ease;
-
-      :deep(.el-card__body) {
-        padding: 10px;
-      }
-
-      &:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-      }
-    }
-
-    .mb-2 {
-      margin-bottom: 10px;
-    }
-
-    .loading-container {
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       padding: 20px;
 
-      .loading-icon {
-        font-size: 24px;
-        color: var(--el-color-primary);
-        animation: rotating 2s linear infinite;
+      .info-card {
+        background: var(--card-bg) !important;
+        backdrop-filter: blur(20px);
+        border: none !important;
+        border-radius: var(--el-border-radius-base);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        margin-bottom: 16px;
+        box-shadow:
+          0 1px 3px rgba(0, 0, 0, 0.02),
+          0 1px 2px rgba(0, 0, 0, 0.04);
+
+        &:hover {
+          transform: translateY(-2px);
+          box-shadow:
+            0 4px 12px rgba(0, 0, 0, 0.05),
+            0 2px 4px rgba(0, 0, 0, 0.08);
+        }
+
+        &:last-child {
+          margin-bottom: 0;
+        }
+
+        :deep(.el-card__body) {
+          padding: 20px;
+        }
+      }
+
+      .loading-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 200px;
+
+        .loading-icon {
+          font-size: 24px;
+          color: var(--el-color-primary);
+          animation: rotating 2s linear infinite;
+        }
       }
     }
   }

@@ -163,12 +163,10 @@ watch(netShow, () => {
       </template>
     </div>
 
-    <!-- 设置按钮 -->
     <div class="settings-button" @click="openSetting">
       <span class="iconfont icon-setting" />
     </div>
 
-    <!-- 设置抽屉 -->
     <el-drawer v-model="drawer" :with-header="false" size="200px" class="settings-drawer">
       <div class="settings-content">
         <div class="setting-item">
@@ -197,6 +195,7 @@ watch(netShow, () => {
   .content {
     flex: 1;
     padding: 12px;
+    padding-bottom: 40px;
     overflow: auto;
 
     :deep(.el-progress) {
@@ -214,25 +213,29 @@ watch(netShow, () => {
 
   .settings-button {
     position: fixed;
-    bottom: 16px;
-    right: 16px;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
+    bottom: 12px;
+    right: 12px;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
     background: var(--el-color-primary);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0.8;
+    z-index: 10;
 
     &:hover {
+      opacity: 1;
       transform: rotate(30deg);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     }
 
     .icon-setting {
       color: white;
-      font-size: 18px;
+      font-size: 14px;
     }
   }
 

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { Cpu } from '@icon-park/vue-next'
+import CardHeader from '../CardHeader/index.vue'
 
 defineProps({
   data: {
@@ -39,10 +41,7 @@ onUnmounted(() => {
 
 <template>
   <div class="cpu-card">
-    <div class="card-header">
-      <el-icon><Cpu /></el-icon>
-      <span class="title">处理器信息</span>
-    </div>
+    <CardHeader :icon="Cpu" title="处理器信息" />
 
     <div class="info-grid">
       <div class="info-item">
@@ -72,24 +71,6 @@ onUnmounted(() => {
 
 <style scoped lang="less">
 .cpu-card {
-  .card-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 16px;
-
-    .el-icon {
-      font-size: 20px;
-      color: var(--el-color-primary);
-      margin-right: 8px;
-    }
-
-    .title {
-      font-size: 16px;
-      font-weight: 500;
-      color: var(--el-text-color-primary);
-    }
-  }
-
   .info-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
