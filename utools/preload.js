@@ -144,7 +144,7 @@ window.exports = {
     args: {
       enter: (action) => {
         console.log(action)
-        window.services.creatSomething('a_computer', 550, 700, 1)
+        window.services.creatSomething('a_computer', 500, 660, 1)
         utools.outPlugin()
       },
     },
