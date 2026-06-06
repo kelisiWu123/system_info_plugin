@@ -1,151 +1,52 @@
-// 您可以在进行窗口交互
-// utools文档
-import si from 'systeminformation'
-const { ipcRenderer } = require('electron')
-// promises style - new since version 3
+import { systemService } from './services/system'
+import { setupWindowBridge, windowService } from './services/window'
 
-// https://www.u.tools/docs/developer/api.html#%E7%AA%97%E5%8F%A3%E4%BA%A4%E4%BA%92
+setupWindowBridge()
 
-let winId
-ipcRenderer.on('init', (event) => {
-  console.log('init事件触发', event.senderId)
-  winId = event.senderId
-})
-// ipcMain.on('closeWin',(event)=>{
-//   console.log(event);
-// })
+const windowPresets = {
+  a_watch: {
+    prod: { height: 430, width: 628, backgroundColor: 0.04 },
+    dev: { height: 462, width: 660, backgroundColor: 0.04 },
+  },
+  a_computer: {
+    prod: { height: 860, width: 1380, backgroundColor: 1 },
+    dev: { height: 900, width: 1440, backgroundColor: 1 },
+  },
+}
+
+function openPresetWindow(name) {
+  const presetGroup = windowPresets[name] || {}
+  const preset = utools.isDev() ? presetGroup.dev || presetGroup.prod : presetGroup.prod || presetGroup.dev
+
+  if (!preset) {
+    window.services.createWindow(name)
+    utools.outPlugin()
+    return
+  }
+
+  window.services.createWindow(name, preset.height, preset.width, preset.backgroundColor)
+  utools.outPlugin()
+}
 
 window.services = {
-  getCpuInfo: async () => {
-    try {
-      const cpuData = await si.cpu()
-      return cpuData
-    } catch (e) {}
-  },
-  getNetworkInfo: async () => {
-    try {
-      const [networkInterfaces] = await si.networkStats()
-
-      return networkInterfaces
-    } catch (e) {}
-  },
-  getMemInfo: async () => {
-    try {
-      const data = await si.mem()
-
-      return data
-    } catch (e) {}
-  },
-  getMemoryLayout: async () => {
-    try {
-      const memoryLayout = await si.memLayout()
-
-      return memoryLayout
-    } catch (e) {}
-  },
-  getGpuInfo: async () => {
-    try {
-      const graphics = await si.graphics()
-
-      const gpu = graphics.controllers.filter((ctr) => {
-        return ctr.vram >= 1
-      })
-      console.log(gpu)
-      return gpu
-    } catch (e) {}
-  },
-  getCpuFullLoad: async () => {
-    try {
-      const current = await si.currentLoad()
-      const percent = Math.round(current.currentLoad)
-      return percent
-    } catch (e) {}
-  },
-  getDiskData: async () => {
-    try {
-      const data = await si.diskLayout()
-      return data
-    } catch (e) {}
-  },
-  getBoardData: async () => {
-    try {
-      const board = await si.baseboard()
-      return board
-    } catch (e) {}
-  },
-
-  getSysEnv: async () => {
-    const sysEnv = await si.versions()
-    return sysEnv
-  },
-  getWinId: () => {
-    return winId
-  },
-  alwaysOnTop: (flag) => {
-    ipcRenderer.sendTo(winId, 'alwaysOnTop', { flag })
-  },
-  closeWindow: () => {
-    ipcRenderer.send('closeWin')
-  },
-  creatSomething: (fileName, height = 300, width = 300, backgroundColor = 0.3) => {
-    console.log('create some thing 触发')
-    const watchWin = utools.createBrowserWindow(
-      `${fileName}/index.html`,
-      {
-        title: 'watch',
-        height: height,
-        width: width,
-        useContentSize: true,
-        skipTaskbar: false,
-        backgroundColor: `rgba(255, 255, 255, ${backgroundColor})`,
-        //不能最大最小化
-        minimizable: false,
-        maximizable: false,
-        fullscreenable: false,
-        //背景透明，防止放大缩小时出现白框})
-        transparent: true,
-        // backgroundColor: '#424242',
-        frame: false,
-        alwaysOnTop: false,
-        webPreferences: {
-          preload: 'preload.js',
-          devTools: true,
-        },
-      },
-      () => {
-        watchWin.webContents.openDevTools()
-        ipcRenderer.sendTo(watchWin.webContents.id, 'init')
-        console.log(watchWin.webContents.id, 'sss')
-        ipcRenderer.on('alwaysOnTop', (event, { flag }) => {
-          console.log('preload --- flag', flag)
-          watchWin.setAlwaysOnTop(flag)
-        })
-        ipcRenderer.on('close-window', () => {
-          watchWin.close()
-        })
-      }
-    )
-  },
+  ...systemService,
+  ...windowService,
 }
 
 window.exports = {
   hardwareWatch: {
     mode: 'none',
     args: {
-      enter: (action) => {
-        console.log(action)
-        window.services.creatSomething('a_watch', 200, 200)
-        utools.outPlugin()
+      enter: () => {
+        openPresetWindow('a_watch')
       },
     },
   },
   hardware: {
     mode: 'none',
     args: {
-      enter: (action) => {
-        console.log(action)
-        window.services.creatSomething('a_computer', 500, 660, 1)
-        utools.outPlugin()
+      enter: () => {
+        openPresetWindow('a_computer')
       },
     },
   },

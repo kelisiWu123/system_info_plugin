@@ -61,6 +61,27 @@ const formatGpuMemory = (bytes: number) => {
   if (!bytes) return '0 GB'
   return (bytes / 1024).toFixed(1) + ' GB'
 }
+
+const formatGpuValue = (value: number | null | undefined, unit = '') => {
+  if (value === null || value === undefined) return '未暴露'
+  return `${Number(value).toFixed(value % 1 === 0 ? 0 : 1)}${unit}`
+}
+
+const gpuMemoryUsage = (gpu: GpuData) => {
+  const total = gpu.memoryTotal || gpu.vram || 0
+  const used = gpu.memoryUsed || 0
+
+  if (!total || !used) return 0
+  return Math.min(100, Math.round((used / total) * 100))
+}
+
+const gpuLoadColor = (percentage: number) => {
+  if (percentage < 55) return '#8fff65'
+  if (percentage < 80) return '#ffb020'
+  return '#ff3f3f'
+}
+
+const gpuName = (gpu: GpuData) => gpu.name || gpu.model || '未知显卡'
 </script>
 <template>
   <div class="memo-card">
@@ -117,12 +138,55 @@ const formatGpuMemory = (bytes: number) => {
       <div class="gpu-list">
         <template v-if="gpuData && gpuData.length">
           <div v-for="(gpu, index) in gpuData" :key="index" class="gpu-item">
-            <div class="gpu-info">
-              <div class="gpu-name">{{ gpu.model }}</div>
-              <div class="gpu-details">
-                <span class="detail-item">{{ gpu.bus }}</span>
-                <span class="divider">|</span>
-                <span class="detail-item">{{ formatGpuMemory(gpu.vram) }} 显存</span>
+            <div class="gpu-topline">
+              <div class="gpu-title">
+                <span class="gpu-index">GPU {{ index + 1 }}</span>
+                <span class="gpu-name">{{ gpuName(gpu) }}</span>
+              </div>
+              <div class="gpu-temp">{{ formatGpuValue(gpu.temperatureGpu, ' ℃') }}</div>
+            </div>
+
+            <div class="gpu-bars">
+              <div class="gpu-bar">
+                <div class="bar-label">
+                  <span>GPU Load</span>
+                  <span>{{ formatGpuValue(gpu.utilizationGpu, '%') }}</span>
+                </div>
+                <el-progress :percentage="gpu.utilizationGpu || 0" :color="gpuLoadColor(gpu.utilizationGpu || 0)" :show-text="false" />
+              </div>
+              <div class="gpu-bar">
+                <div class="bar-label">
+                  <span>Memory</span>
+                  <span>{{ formatGpuMemory(gpu.memoryUsed || 0) }} / {{ formatGpuMemory(gpu.memoryTotal || gpu.vram) }}</span>
+                </div>
+                <el-progress :percentage="gpuMemoryUsage(gpu)" :color="gpuLoadColor(gpuMemoryUsage(gpu))" :show-text="false" />
+              </div>
+            </div>
+
+            <div class="gpu-metrics">
+              <div class="metric">
+                <span class="metric-label">显存类型</span>
+                <span class="metric-value">{{ gpu.vramDynamic ? '动态共享' : '独立显存' }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">功耗</span>
+                <span class="metric-value">{{ formatGpuValue(gpu.powerDraw, ' W') }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">核心频率</span>
+                <span class="metric-value">{{ formatGpuValue(gpu.clockCore, ' MHz') }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">显存频率</span>
+                <span class="metric-value">{{ formatGpuValue(gpu.clockMemory, ' MHz') }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">总线</span>
+                <span class="metric-value">{{ gpu.bus || gpu.pciBus || '未知' }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">驱动</span>
+                <span class="metric-value">{{ gpu.driverVersion || '未知' }}</span>
               </div>
             </div>
           </div>
@@ -207,33 +271,117 @@ const formatGpuMemory = (bytes: number) => {
     .gpu-list {
       .gpu-item {
         padding: 12px;
-        background: var(--el-bg-color-page);
-        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 6px;
+        background:
+          linear-gradient(180deg, rgba(255, 45, 45, 0.11), rgba(255, 255, 255, 0.018)),
+          rgba(255, 255, 255, 0.035);
 
         &:not(:last-child) {
           margin-bottom: 12px;
         }
 
-        .gpu-info {
-          .gpu-name {
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--el-text-color-primary);
-            margin-bottom: 4px;
-          }
+        .gpu-topline {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
 
-          .gpu-details {
-            font-size: 12px;
-            color: var(--el-text-color-secondary);
+        .gpu-title {
+          min-width: 0;
+        }
 
-            .detail-item {
-              display: inline-block;
-            }
+        .gpu-index {
+          display: block;
+          margin-bottom: 3px;
+          color: #ff5a5a;
+          font-family: 'SF Mono', Consolas, 'Cascadia Mono', monospace;
+          font-size: 11px;
+          font-weight: 850;
+          text-transform: uppercase;
+        }
 
-            .divider {
-              margin: 0 8px;
-              color: var(--el-border-color);
-            }
+        .gpu-name {
+          display: block;
+          overflow: hidden;
+          color: var(--el-text-color-primary);
+          font-size: 14px;
+          font-weight: 800;
+          line-height: 1.25;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .gpu-temp {
+          flex: 0 0 auto;
+          min-width: 58px;
+          padding: 5px 8px;
+          border: 1px solid rgba(255, 45, 45, 0.35);
+          border-radius: 4px;
+          background: rgba(255, 45, 45, 0.14);
+          color: #ffffff;
+          font-family: 'SF Mono', Consolas, 'Cascadia Mono', monospace;
+          font-size: 14px;
+          font-weight: 850;
+          text-align: center;
+        }
+
+        .gpu-bars {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+
+        .bar-label {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 5px;
+          color: var(--el-text-color-secondary);
+          font-size: 11px;
+          font-weight: 750;
+        }
+
+        .gpu-metrics {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .metric {
+          min-width: 0;
+          padding: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.055);
+          border-radius: 4px;
+          background: rgba(0, 0, 0, 0.18);
+        }
+
+        .metric-label {
+          display: block;
+          margin-bottom: 3px;
+          color: var(--el-text-color-secondary);
+          font-size: 11px;
+          font-weight: 700;
+        }
+
+        .metric-value {
+          display: block;
+          overflow: hidden;
+          color: var(--el-text-color-primary);
+          font-family: 'SF Mono', Consolas, 'Cascadia Mono', monospace;
+          font-size: 12px;
+          font-weight: 800;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        @media (max-width: 520px) {
+          .gpu-bars,
+          .gpu-metrics {
+            grid-template-columns: 1fr;
           }
         }
       }

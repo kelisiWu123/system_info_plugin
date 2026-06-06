@@ -36,14 +36,30 @@ if (!app.requestSingleInstanceLock()) {
 // process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
 
 let win: BrowserWindow | null = null
+let watchPreviewWin: BrowserWindow | null = null
 // Here, you can also use other preload
 const preload = join(__dirname, '../preload/preload.js')
 const url = process.env.VITE_DEV_SERVER_URL
 const indexHtml = join(process.env.DIST, 'index.html')
 
-async function createWindow() {
+function loadWindow(window: BrowserWindow, hash: string) {
+    if (url) {
+        window.loadURL(`${url}#${hash}`)
+        return
+    }
+
+    window.loadFile(indexHtml, { hash })
+}
+
+function createMainWindow() {
     win = new BrowserWindow({
         title: 'Main window',
+        width: 1440,
+        height: 900,
+        minWidth: 1180,
+        minHeight: 760,
+        frame: false,
+        backgroundColor: '#0f1722',
         webPreferences: {
             preload,
             // Warning: Enable nodeIntegration and disable contextIsolation is not secure in production
@@ -55,12 +71,10 @@ async function createWindow() {
         },
     })
 
+    loadWindow(win, 'computer')
+
     if (url) { // electron-vite-vue#298
-        win.loadURL(url)
-        // Open devTool if the app is not packaged
         win.webContents.openDevTools({ mode: 'detach' })
-    } else {
-        win.loadFile(indexHtml)
     }
 
     // Test actively push message to the Electron-Renderer
@@ -69,17 +83,59 @@ async function createWindow() {
     })
 
     // Make all links open with the browser, not with the application
-    win.webContents.setWindowOpenHandler(({ url }) => {
-        if (url.startsWith('https:')) shell.openExternal(url)
+    win.webContents.setWindowOpenHandler(({ url: externalUrl }) => {
+        if (externalUrl.startsWith('https:')) shell.openExternal(externalUrl)
         return { action: 'deny' }
     })
     // win.webContents.on('will-navigate', (event, url) => { }) #344
+
+    win.on('closed', () => {
+        win = null
+    })
+}
+
+function createWatchPreviewWindow() {
+    watchPreviewWin = new BrowserWindow({
+        title: 'Watch preview',
+        width: 380,
+        height: 320,
+        useContentSize: true,
+        skipTaskbar: false,
+        backgroundColor: '#14FFFFFF',
+        transparent: true,
+        frame: false,
+        resizable: false,
+        maximizable: false,
+        minimizable: false,
+        fullscreenable: false,
+        webPreferences: {
+            preload,
+            nodeIntegration: true,
+            contextIsolation: false,
+            nodeIntegrationInWorker: true,
+        },
+    })
+
+    loadWindow(watchPreviewWin, 'watch')
+
+    watchPreviewWin.on('closed', () => {
+        watchPreviewWin = null
+    })
+}
+
+async function createWindow() {
+    createMainWindow()
+
+    if (url) {
+        createWatchPreviewWindow()
+    }
 }
 
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
     win = null
+    watchPreviewWin = null
     if (process.platform !== 'darwin') app.quit()
 })
 
@@ -97,6 +153,24 @@ app.on('activate', () => {
         allWindows[0].focus()
     } else {
         createWindow()
+    }
+})
+
+ipcMain.on('window-action', (event, action) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!targetWindow) return
+
+    if (action === 'minimize') {
+        targetWindow.minimize()
+        return
+    }
+
+    if (action === 'toggle-maximize') {
+        if (targetWindow.isMaximized()) {
+            targetWindow.unmaximize()
+        } else {
+            targetWindow.maximize()
+        }
     }
 })
 

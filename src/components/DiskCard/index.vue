@@ -4,7 +4,7 @@ import CardHeader from '../CardHeader/index.vue'
 
 defineProps({
   data: {
-    type: Array as () => DiskData[],
+    type: Array as () => DiskLayoutData[],
     default: () => [],
   },
 })
@@ -22,14 +22,16 @@ const formatSize = (bytes: number) => {
   return `${size.toFixed(1)} ${units[unitIndex]}`
 }
 
-const getDiskUsage = (disk: DiskData) => {
-  return Math.round((disk.used / disk.size) * 100)
+const getDiskTitle = (disk: DiskLayoutData) => {
+  return disk.name || disk.vendor || disk.device || '未知硬盘'
 }
 
-const getUsageColor = (percentage: number) => {
-  if (percentage < 60) return '#67C23A'
-  if (percentage < 80) return '#E6A23C'
-  return '#F56C6C'
+const getDiskMeta = (disk: DiskLayoutData) => {
+  return [disk.vendor, disk.device].filter(Boolean).join(' / ')
+}
+
+const formatTemperature = (value: number | null) => {
+  return typeof value === 'number' && value > 0 ? `${value.toFixed(1)} °C` : '未暴露'
 }
 </script>
 
@@ -41,27 +43,35 @@ const getUsageColor = (percentage: number) => {
       <template v-if="data && data.length">
         <div v-for="(disk, index) in data" :key="index" class="disk-item">
           <div class="disk-name">
-            <span class="label">{{ disk.name }}</span>
-            <span class="mount">{{ disk.mount }}</span>
-          </div>
-
-          <div class="disk-usage">
-            <el-progress :percentage="getDiskUsage(disk)" :color="getUsageColor(getDiskUsage(disk))" :format="(val) => `${formatSize(disk.used)} / ${formatSize(disk.size)} (${val}%)`" />
+            <span class="label">{{ getDiskTitle(disk) }}</span>
+            <span v-if="getDiskMeta(disk)" class="mount">{{ getDiskMeta(disk) }}</span>
           </div>
 
           <div class="disk-info">
             <div class="info-item">
-              <span class="label">类型</span>
-              <span class="value">{{ disk.type }}</span>
+              <span class="label">容量</span>
+              <span class="value">{{ formatSize(disk.size) }}</span>
             </div>
             <div class="info-item">
-              <span class="label">剩余空间</span>
-              <span class="value">{{ formatSize(disk.available) }}</span>
+              <span class="label">接口</span>
+              <span class="value">{{ disk.interfaceType || '未知' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">类型</span>
+              <span class="value">{{ disk.type || '未知' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">温度</span>
+              <span class="value">{{ formatTemperature(disk.temperature) }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">序列号</span>
+              <span class="value">{{ disk.serialNum || '未暴露' }}</span>
             </div>
           </div>
         </div>
       </template>
-      <el-empty v-else description="未检测到硬盘设备" />
+      <el-empty v-else description="未检测到物理硬盘" />
     </div>
   </div>
 </template>
@@ -94,15 +104,14 @@ const getUsageColor = (percentage: number) => {
         }
       }
 
-      .disk-usage {
-        margin-bottom: 8px;
-      }
-
       .disk-info {
         display: flex;
-        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px 16px;
 
         .info-item {
+          min-width: 120px;
+
           .label {
             font-size: 12px;
             color: var(--el-text-color-secondary);
