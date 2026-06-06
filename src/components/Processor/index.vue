@@ -1,0 +1,1315 @@
+<script setup lang="ts">
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
+import { clampPercent, formatUptime } from '../../utils'
+
+const props = defineProps<{
+  active?: boolean
+}>()
+
+type MetricHistoryKey = 'load' | 'temp' | 'speed' | 'voltage' | 'power' | 'fan'
+
+interface MonitorCard {
+  id: string
+  label: string
+  value: string
+  unit?: string
+  accent: string
+  percent: number
+  trend: number[]
+  footerLeft?: string
+  footerRight?: string
+  unsupported?: boolean
+}
+
+interface CoreRow {
+  id: string
+  label: string
+  type: string
+  speed: number | null
+  load: number | null
+  temperature: number | null
+}
+
+const stressState = ref<'idle' | 'pending'>('idle')
+const {
+  loading,
+  lastSyncedAt,
+  cpuData,
+  cpuTemperature,
+  cpuPower,
+  cpuVoltage,
+  cpuFan,
+  cpuCurrentSpeed,
+  cpuLoadData,
+  boardData,
+  biosData,
+  osInfo,
+  timeInfo,
+} = hardwareStore
+
+const metricHistory: Record<MetricHistoryKey, number[]> = {
+  load: hardwareStore.metricHistory.cpuLoad,
+  temp: hardwareStore.metricHistory.cpuTemp,
+  speed: hardwareStore.metricHistory.cpuSpeed,
+  voltage: hardwareStore.metricHistory.cpuVoltage,
+  power: hardwareStore.metricHistory.cpuPower,
+  fan: hardwareStore.metricHistory.cpuFan,
+}
+
+const subscribed = ref(false)
+
+function cleanText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function joinParts(parts: Array<string | number | null | undefined>, separator = ' ') {
+  return parts
+    .map((part) => (typeof part === 'number' ? String(part) : cleanText(part)))
+    .filter(Boolean)
+    .join(separator)
+}
+
+function safeNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function getHistoryMin(values: number[]) {
+  if (!values.length) return 0
+  return Math.min(...values)
+}
+
+function getHistoryMax(values: number[], fallback = 0) {
+  if (!values.length) return fallback
+  return Math.max(fallback, ...values)
+}
+
+function ringStyle(percent: number, accent: string) {
+  const bounded = Math.max(0, Math.min(100, percent))
+  return {
+    background: `conic-gradient(${accent} 0deg ${(bounded / 100) * 360}deg, rgba(255, 255, 255, 0.08) ${(bounded / 100) * 360}deg 360deg)`,
+  }
+}
+
+function sparklinePoints(values: number[]) {
+  const source = values.length ? values : [0, 0, 0, 0, 0, 0]
+  const min = Math.min(...source)
+  const max = Math.max(...source)
+  const range = Math.max(1, max - min)
+  const step = source.length > 1 ? 116 / (source.length - 1) : 116
+
+  return source
+    .map((value, index) => {
+      const x = Number((index * step).toFixed(2))
+      const y = Number((34 - ((value - min) / range) * 24).toFixed(2))
+      return `${x},${y}`
+    })
+    .join(' ')
+}
+
+function formatSyncTime(value?: number) {
+  if (!value) return '--:--:--'
+  return new Date(value).toLocaleString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+}
+
+function formatCacheSize(value: number) {
+  if (!value) return '--'
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} MB`
+  return `${value} KB`
+}
+
+function formatFrequency(value: number | null, digits = 2) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(digits)} GHz` : '--'
+}
+
+function formatTemperature(value: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)}°C` : '暂不支持'
+}
+
+function formatPower(value: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} W` : '暂不支持'
+}
+
+function formatVoltage(value: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(2)} V` : '暂不支持'
+}
+
+function formatFan(value: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} RPM` : '暂不支持'
+}
+
+function parseVoltageString(value?: string) {
+  const normalized = Number.parseFloat(cleanText(value))
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : null
+}
+
+function parseFlagHighlights(flags?: string) {
+  const list = cleanText(flags)
+    .split(/\s+/)
+    .map((item) => item.toUpperCase())
+    .filter(Boolean)
+
+  const preferred = ['SSE4.2', 'AVX2', 'AVX512F', 'AES', 'VT-X', 'VT-D', 'SMEP', 'SHA', 'FMA3']
+  const picked = preferred.filter((item) => list.includes(item))
+  const fallback = list.slice(0, 4)
+  return (picked.length ? picked : fallback).join(', ') || '--'
+}
+
+function vendorBadgeData(brand: string) {
+  const lower = brand.toLowerCase()
+
+  if (lower.includes('intel')) {
+    const tierMatch = brand.match(/i[3579]/i)
+    return {
+      top: 'intel',
+      middle: 'CORE',
+      bottom: tierMatch ? tierMatch[0].toLowerCase() : 'cpu',
+    }
+  }
+
+  if (lower.includes('amd') || lower.includes('ryzen')) {
+    const tierMatch = brand.match(/(ryzen\s+\d|ai\s+\d+)/i)
+    return {
+      top: 'amd',
+      middle: 'RYZEN',
+      bottom: tierMatch ? tierMatch[0].replace(/\s+/g, ' ') : 'cpu',
+    }
+  }
+
+  return {
+    top: 'cpu',
+    middle: 'PROCESSOR',
+    bottom: 'info',
+  }
+}
+
+function coreTypeLabel(index: number, total: number, performanceCores?: number, efficiencyCores?: number) {
+  const perf = performanceCores || 0
+  const eff = efficiencyCores || 0
+
+  if (perf > 0 && eff > 0 && perf + eff <= total) {
+    if (index < perf) return 'P-Core'
+    if (index < perf + eff) return 'E-Core'
+  }
+
+  return 'Core'
+}
+
+async function writeClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textarea)
+
+  if (!copied) {
+    throw new Error('execCommand copy failed')
+  }
+}
+
+const cpuTemperatureValue = computed(() => {
+  if (typeof cpuTemperature.value?.value === 'number') return cpuTemperature.value.value
+  if (typeof cpuTemperature.value?.main === 'number') return cpuTemperature.value.main
+  return null
+})
+
+const cpuPowerValue = computed(() => safeNumber(cpuPower.value?.value))
+const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? parseVoltageString(cpuData.value?.voltage))
+const cpuFanValue = computed(() => safeNumber(cpuFan.value?.value))
+const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
+const currentSpeedValue = computed(() => safeNumber(cpuCurrentSpeed.value.avg))
+const currentSpeedMax = computed(() => safeNumber(cpuCurrentSpeed.value.max) || safeNumber(cpuData.value?.speedMax) || 0)
+
+const healthState = computed(() => {
+  const temperature = cpuTemperatureValue.value
+  const load = cpuLoadPercent.value
+
+  if (typeof temperature === 'number' && temperature >= 90) {
+    return {
+      title: '负载偏高',
+      subtitle: 'CPU 当前温度接近上限，需要关注散热',
+      accent: 'var(--accent-orange)',
+    }
+  }
+
+  if (load >= 85) {
+    return {
+      title: '负载繁忙',
+      subtitle: 'CPU 当前正在执行高负载任务',
+      accent: 'var(--accent-yellow)',
+    }
+  }
+
+  return {
+    title: '运行良好',
+    subtitle: 'CPU 当前状态正常',
+    accent: 'var(--accent-green)',
+  }
+})
+
+const vendorBadge = computed(() => vendorBadgeData(cpuData.value?.brand || ''))
+
+const primarySpecs = computed(() => [
+  {
+    label: '核心 / 线程',
+    value: joinParts([
+      cpuData.value?.physicalCores ? `${cpuData.value.physicalCores} 核` : '',
+      cpuData.value?.cores ? `${cpuData.value.cores} 线程` : '',
+    ], ' / ') || '--',
+  },
+  {
+    label: 'P-Core / E-Core',
+    value:
+      cpuData.value?.performanceCores || cpuData.value?.efficiencyCores
+        ? joinParts([
+            cpuData.value?.performanceCores ? `${cpuData.value.performanceCores}P` : '',
+            cpuData.value?.efficiencyCores ? `${cpuData.value.efficiencyCores}E` : '',
+          ], ' + ')
+        : '--',
+  },
+  {
+    label: '基础频率',
+    value: formatFrequency(safeNumber(cpuData.value?.speed)),
+  },
+  {
+    label: '最大频率',
+    value: formatFrequency(safeNumber(cpuData.value?.speedMax)),
+  },
+  {
+    label: '插槽',
+    value: cleanText(cpuData.value?.socket) || '--',
+  },
+  {
+    label: '电压 / 当前功耗',
+    value: joinParts([formatVoltage(cpuVoltageValue.value), formatPower(cpuPowerValue.value)], ' / '),
+  },
+])
+
+const quickStats = computed(() => [
+  {
+    id: 'temp',
+    label: '温度',
+    value: formatTemperature(cpuTemperatureValue.value),
+    accent: 'var(--accent-blue)',
+    trend: metricHistory.temp,
+  },
+  {
+    id: 'power',
+    label: '功耗',
+    value: formatPower(cpuPowerValue.value),
+    accent: 'var(--accent-orange)',
+    trend: metricHistory.power,
+  },
+  {
+    id: 'load',
+    label: '使用率',
+    value: `${Math.round(cpuLoadPercent.value)}%`,
+    accent: 'var(--accent-blue)',
+    trend: metricHistory.load,
+  },
+])
+
+const monitorCards = computed<MonitorCard[]>(() => [
+  {
+    id: 'load',
+    label: 'CPU 使用率',
+    value: `${Math.round(cpuLoadPercent.value)}%`,
+    accent: 'var(--accent-blue)',
+    percent: cpuLoadPercent.value,
+    trend: metricHistory.load,
+    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.load))}%`,
+    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.load, cpuLoadPercent.value))}%`,
+  },
+  {
+    id: 'temp',
+    label: 'CPU 温度',
+    value: formatTemperature(cpuTemperatureValue.value),
+    accent: 'var(--accent-green)',
+    percent: clampPercent(((cpuTemperatureValue.value || 0) / 100) * 100),
+    trend: metricHistory.temp,
+    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.temp))}°C`,
+    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.temp, cpuTemperatureValue.value || 0))}°C`,
+    unsupported: cpuTemperature.value?.source === 'unsupported' && cpuTemperatureValue.value === null,
+  },
+  {
+    id: 'speed',
+    label: '当前频率',
+    value: formatFrequency(currentSpeedValue.value),
+    unit: currentSpeedValue.value ? 'GHz' : '',
+    accent: 'var(--accent-blue)',
+    percent: currentSpeedMax.value > 0 ? clampPercent(((currentSpeedValue.value || 0) / currentSpeedMax.value) * 100) : 0,
+    trend: metricHistory.speed,
+    footerLeft: `基准 ${formatFrequency(safeNumber(cpuData.value?.speed))}`,
+    footerRight: `睿频 ${formatFrequency(safeNumber(cpuData.value?.speedMax))}`,
+  },
+  {
+    id: 'voltage',
+    label: '核心电压',
+    value: formatVoltage(cpuVoltageValue.value),
+    unit: cpuVoltageValue.value ? 'V' : '',
+    accent: 'var(--accent-purple)',
+    percent: cpuVoltageValue.value ? clampPercent((cpuVoltageValue.value / Math.max(cpuVoltageValue.value, safeNumber(cpuVoltage.value?.max) || 1.6)) * 100) : 0,
+    trend: metricHistory.voltage,
+    footerLeft: `最低 ${getHistoryMin(metricHistory.voltage).toFixed(2)} V`,
+    footerRight: `最高 ${getHistoryMax(metricHistory.voltage, cpuVoltageValue.value || 0).toFixed(2)} V`,
+    unsupported: cpuVoltageValue.value === null,
+  },
+  {
+    id: 'power',
+    label: '当前功耗',
+    value: formatPower(cpuPowerValue.value),
+    unit: cpuPowerValue.value ? 'W' : '',
+    accent: 'var(--accent-orange)',
+    percent: cpuPowerValue.value ? clampPercent((cpuPowerValue.value / Math.max(cpuPowerValue.value, 125)) * 100) : 0,
+    trend: metricHistory.power,
+    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.power))} W`,
+    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.power, cpuPowerValue.value || 0))} W`,
+    unsupported: cpuPowerValue.value === null,
+  },
+  {
+    id: 'fan',
+    label: '风扇转速',
+    value: formatFan(cpuFanValue.value),
+    unit: cpuFanValue.value ? 'RPM' : '',
+    accent: '#46d4eb',
+    percent: cpuFanValue.value ? clampPercent((cpuFanValue.value / Math.max(cpuFanValue.value, cpuFan.value?.max || 1800)) * 100) : 0,
+    trend: metricHistory.fan,
+    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.fan))} RPM`,
+    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.fan, cpuFanValue.value || 0))} RPM`,
+    unsupported: cpuFanValue.value === null,
+  },
+])
+
+const allCoreRows = computed<CoreRow[]>(() => {
+  const speedCores = cpuCurrentSpeed.value.cores || []
+  const loadCores = cpuLoadData.value.cpus || []
+  const temperatureCores = cpuTemperature.value?.cores || []
+  const total = Math.max(
+    speedCores.length,
+    loadCores.length,
+    temperatureCores.length,
+    cpuData.value?.physicalCores || 0,
+    0
+  )
+
+  return Array.from({ length: total }, (_, index) => ({
+    id: `core-${index}`,
+    label: `${coreTypeLabel(index, total, cpuData.value?.performanceCores, cpuData.value?.efficiencyCores)} ${index}`,
+    type: coreTypeLabel(index, total, cpuData.value?.performanceCores, cpuData.value?.efficiencyCores),
+    speed: safeNumber(speedCores[index]) ?? currentSpeedValue.value,
+    load: safeNumber(loadCores[index]?.load),
+    temperature: safeNumber(temperatureCores[index]) ?? cpuTemperatureValue.value,
+  }))
+})
+
+const performanceCoreRows = computed(() => allCoreRows.value.filter((item) => item.type === 'P-Core'))
+const efficiencyCoreRows = computed(() => allCoreRows.value.filter((item) => item.type === 'E-Core'))
+const genericCoreRows = computed(() => allCoreRows.value.filter((item) => item.type === 'Core'))
+
+const detailSpecs = computed(() => [
+  {
+    label: 'L1 缓存',
+    value: formatCacheSize((cpuData.value?.cache?.l1d || 0) + (cpuData.value?.cache?.l1i || 0)),
+  },
+  {
+    label: 'L2 缓存',
+    value: formatCacheSize(cpuData.value?.cache?.l2 || 0),
+  },
+  {
+    label: 'L3 缓存',
+    value: formatCacheSize(cpuData.value?.cache?.l3 || 0),
+  },
+  {
+    label: '指令集',
+    value: parseFlagHighlights(cpuData.value?.flags),
+  },
+  {
+    label: '虚拟化',
+    value: cpuData.value?.virtualization ? '已启用' : '未启用',
+  },
+  {
+    label: '处理器组',
+    value: cpuData.value?.processors ? `${cpuData.value.processors} 个` : '--',
+  },
+  {
+    label: '核心架构',
+    value:
+      cpuData.value?.performanceCores || cpuData.value?.efficiencyCores
+        ? joinParts([
+            cpuData.value?.performanceCores ? 'P-Core' : '',
+            cpuData.value?.efficiencyCores ? 'E-Core' : '',
+            '混合架构',
+          ])
+        : '统一架构',
+  },
+  {
+    label: '微架构',
+    value: cleanText(cpuData.value?.family) || cleanText(cpuData.value?.vendor) || '--',
+  },
+  {
+    label: '制造商',
+    value: cleanText(cpuData.value?.manufacturer) || '--',
+  },
+])
+
+const platformSpecs = computed(() => [
+  {
+    label: '主板',
+    value: joinParts([boardData.value?.manufacturer, boardData.value?.model]) || '--',
+  },
+  {
+    label: 'BIOS 版本',
+    value: joinParts([biosData.value?.version, biosData.value?.releaseDate ? `(${biosData.value.releaseDate})` : '']) || '--',
+  },
+  {
+    label: '处理器插槽',
+    value: cleanText(cpuData.value?.socket) || '--',
+  },
+  {
+    label: '制造商 / Vendor',
+    value: joinParts([cpuData.value?.manufacturer, cpuData.value?.vendor], ' / ') || '--',
+  },
+  {
+    label: '操作系统',
+    value: joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release, osInfo.value?.arch]) || '--',
+  },
+  {
+    label: '运行时间',
+    value: formatUptime(timeInfo.value?.uptime || 0),
+  },
+])
+
+const processorReportText = computed(() => {
+  const lines = [
+    '处理器页面报告',
+    `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    '',
+    `处理器：${cpuData.value?.brand || '--'}`,
+    `家族信息：${joinParts([cpuData.value?.family, cpuData.value?.vendor], ' / ') || '--'}`,
+    `核心 / 线程：${joinParts([cpuData.value?.physicalCores ? `${cpuData.value.physicalCores} 核` : '', cpuData.value?.cores ? `${cpuData.value.cores} 线程` : ''], ' / ') || '--'}`,
+    `当前温度：${formatTemperature(cpuTemperatureValue.value)}`,
+    `当前功耗：${formatPower(cpuPowerValue.value)}`,
+    `当前电压：${formatVoltage(cpuVoltageValue.value)}`,
+    `当前频率：${formatFrequency(currentSpeedValue.value)}`,
+    `当前负载：${Math.round(cpuLoadPercent.value)}%`,
+    `风扇转速：${formatFan(cpuFanValue.value)}`,
+    '',
+    ...detailSpecs.value.map((item) => `${item.label}：${item.value}`),
+    '',
+    ...platformSpecs.value.map((item) => `${item.label}：${item.value}`),
+  ]
+
+  return lines.join('\n')
+})
+
+function exportReport() {
+  const blob = new Blob([processorReportText.value], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `processor-report-${new Date().toISOString().slice(0, 10)}.txt`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+async function copyProcessorInfo() {
+  try {
+    await writeClipboard(processorReportText.value)
+    return true
+  } catch (error) {
+    console.error('复制处理器信息失败:', error)
+    return false
+  }
+}
+
+function startStressTest() {
+  stressState.value = 'pending'
+  window.setTimeout(() => {
+    stressState.value = 'idle'
+  }, 1800)
+  return false
+}
+
+defineExpose({
+  exportReport,
+  copyProcessorInfo,
+  startStressTest,
+})
+
+async function ensureStoreActive() {
+  if (subscribed.value) return
+
+  subscribed.value = true
+  await activateHardwareStore()
+}
+
+function releaseStore() {
+  if (!subscribed.value) return
+
+  deactivateHardwareStore()
+  subscribed.value = false
+}
+
+watch(
+  () => props.active,
+  async (active) => {
+    if (active === false) {
+      releaseStore()
+      return
+    }
+
+    await ensureStoreActive()
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  releaseStore()
+})
+</script>
+
+<template>
+  <div class="processor-page">
+    <div v-if="loading" class="processor-empty">正在同步处理器数据...</div>
+
+    <template v-else>
+      <section class="processor-hero">
+        <article class="hero-card">
+          <div class="hero-card__head">
+            <div class="cpu-badge">
+              <span>{{ vendorBadge.top }}</span>
+              <strong>{{ vendorBadge.middle }}</strong>
+              <em>{{ vendorBadge.bottom }}</em>
+            </div>
+
+            <div class="hero-card__title">
+              <h2>{{ cpuData?.brand || '读取中' }}</h2>
+              <p>{{ joinParts([cpuData?.family, cpuData?.vendor], ' | ') || '等待处理器识别' }}</p>
+            </div>
+          </div>
+
+          <div class="hero-specs">
+            <div v-for="item in primarySpecs" :key="item.label" class="hero-spec">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="health-card">
+          <div class="health-card__badge" :style="{ color: healthState.accent }">●</div>
+          <div class="health-card__copy">
+            <h3>{{ healthState.title }}</h3>
+            <p>{{ healthState.subtitle }}</p>
+          </div>
+
+          <div class="quick-stats">
+            <div v-for="item in quickStats" :key="item.id" class="quick-stat">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <svg class="quick-stat__sparkline" viewBox="0 0 116 34" preserveAspectRatio="none" aria-hidden="true">
+                <polyline :points="sparklinePoints(item.trend)" :stroke="item.accent" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="health-card__footer">更新时间：{{ formatSyncTime(lastSyncedAt) }}</div>
+        </article>
+      </section>
+
+      <section class="monitor-panel">
+        <div class="panel-title">
+          <div>
+            <h3>实时监控</h3>
+            <p>聚焦 CPU 负载、温度、频率、电压和风扇转速</p>
+          </div>
+          <button type="button" class="panel-action">监控设置</button>
+        </div>
+
+        <div class="monitor-grid">
+          <article v-for="card in monitorCards" :key="card.id" class="monitor-card">
+            <div class="monitor-card__label">{{ card.label }}</div>
+            <div class="monitor-card__ring" :style="ringStyle(card.percent, card.accent)">
+              <div class="monitor-card__ring-inner">
+                <strong>{{ card.value }}</strong>
+                <span v-if="card.unit">{{ card.unit }}</span>
+              </div>
+            </div>
+            <svg class="monitor-card__sparkline" viewBox="0 0 116 34" preserveAspectRatio="none" aria-hidden="true">
+              <polyline :points="sparklinePoints(card.trend)" :stroke="card.accent" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <div class="monitor-card__foot" :class="{ 'monitor-card__foot--single': card.unsupported }">
+              <span>{{ card.unsupported ? '当前机器暂不支持' : card.footerLeft }}</span>
+              <span v-if="!card.unsupported">{{ card.footerRight }}</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="processor-grid">
+        <article class="processor-panel">
+          <div class="processor-panel__title">
+            <h3>核心频率详情</h3>
+            <p>{{ allCoreRows.length }} 个核心监测项</p>
+          </div>
+
+          <div class="core-table">
+            <div class="core-table__head">
+              <span>核心</span>
+              <span>类型</span>
+              <span>频率</span>
+              <span>使用率</span>
+              <span>温度</span>
+            </div>
+
+            <div class="core-table__body">
+              <div v-for="row in allCoreRows" :key="row.id" class="core-table__row">
+                <span>{{ row.label }}</span>
+                <span>
+                  <em :class="['core-badge', `core-badge--${row.type.toLowerCase().replace(/[^a-z]/g, '')}`]">{{ row.type }}</em>
+                </span>
+                <span>{{ formatFrequency(row.speed) }}</span>
+                <span>{{ typeof row.load === 'number' ? `${Math.round(row.load)}%` : '--' }}</span>
+                <span>{{ formatTemperature(row.temperature) }}</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="processor-panel">
+          <div class="processor-panel__title">
+            <h3>核心状态总览</h3>
+            <p>按核心类型查看瞬时频率与负载</p>
+          </div>
+
+          <div class="processor-panel__body processor-panel__body--stack">
+            <div v-if="performanceCoreRows.length" class="core-group">
+              <div class="core-group__label">P-Core ({{ performanceCoreRows.length }})</div>
+              <div class="core-chip-grid">
+                <article v-for="row in performanceCoreRows" :key="row.id" class="core-chip core-chip--performance">
+                  <strong>{{ row.label.replace('P-Core ', 'P') }}</strong>
+                  <span>{{ formatFrequency(row.speed) }}</span>
+                  <em>{{ typeof row.load === 'number' ? `${Math.round(row.load)}%` : '--' }}</em>
+                </article>
+              </div>
+            </div>
+
+            <div v-if="efficiencyCoreRows.length" class="core-group">
+              <div class="core-group__label core-group__label--green">E-Core ({{ efficiencyCoreRows.length }})</div>
+              <div class="core-chip-grid">
+                <article v-for="row in efficiencyCoreRows" :key="row.id" class="core-chip core-chip--efficiency">
+                  <strong>{{ row.label.replace('E-Core ', 'E') }}</strong>
+                  <span>{{ formatFrequency(row.speed) }}</span>
+                  <em>{{ typeof row.load === 'number' ? `${Math.round(row.load)}%` : '--' }}</em>
+                </article>
+              </div>
+            </div>
+
+            <div v-if="genericCoreRows.length" class="core-group">
+              <div class="core-group__label">CPU Core ({{ genericCoreRows.length }})</div>
+              <div class="core-chip-grid">
+                <article v-for="row in genericCoreRows" :key="row.id" class="core-chip">
+                  <strong>{{ row.label.replace('Core ', 'C') }}</strong>
+                  <span>{{ formatFrequency(row.speed) }}</span>
+                  <em>{{ typeof row.load === 'number' ? `${Math.round(row.load)}%` : '--' }}</em>
+                </article>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="processor-panel">
+          <div class="processor-panel__title">
+            <h3>详细规格</h3>
+            <p>静态规格与指令能力</p>
+          </div>
+
+          <div class="processor-panel__body">
+            <div class="detail-specs">
+              <div v-for="item in detailSpecs" :key="item.label" class="detail-spec">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="platform-panel">
+        <div class="processor-panel__title">
+          <h3>平台信息</h3>
+          <p>当前主板、BIOS、插槽与系统信息</p>
+        </div>
+
+        <div class="platform-grid">
+          <div v-for="item in platformSpecs" :key="item.label" class="platform-spec">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </div>
+      </section>
+    </template>
+  </div>
+</template>
+
+<style scoped lang="less">
+.processor-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.processor-empty {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(19, 28, 40, 0.94), rgba(16, 24, 35, 0.96));
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.processor-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: 12px;
+}
+
+.hero-card,
+.health-card,
+.monitor-panel,
+.processor-panel,
+.platform-panel {
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
+    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  box-shadow: var(--panel-shadow);
+}
+
+.hero-card {
+  padding: 18px 20px 16px;
+}
+
+.hero-card__head {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+.cpu-badge {
+  display: grid;
+  gap: 3px;
+  align-content: space-between;
+  width: 88px;
+  min-height: 82px;
+  padding: 10px;
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(45, 106, 255, 0.96), rgba(34, 63, 164, 0.88));
+  color: #f5f8ff;
+  box-shadow: 0 18px 36px rgba(10, 30, 78, 0.34);
+
+  span {
+    font-size: 12px;
+    text-transform: lowercase;
+    letter-spacing: 0.06em;
+    opacity: 0.88;
+  }
+
+  strong {
+    font-size: 17px;
+    letter-spacing: 0.05em;
+  }
+
+  em {
+    justify-self: end;
+    font-style: normal;
+    font-size: 15px;
+    font-weight: 700;
+  }
+}
+
+.hero-card__title {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  h2 {
+    margin: 0;
+    color: #f5f7fb;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+}
+
+.hero-specs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 18px;
+  border-top: 1px solid rgba(86, 101, 126, 0.18);
+}
+
+.hero-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 12px 10px 0;
+  border-bottom: 1px solid rgba(86, 101, 126, 0.12);
+
+  span {
+    color: var(--text-subtle);
+    font-size: 13px;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 700;
+  }
+}
+
+.health-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px 14px;
+  padding: 18px 20px 16px;
+}
+
+.health-card__badge {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.health-card__copy {
+  h3 {
+    margin: 0;
+    color: #eef4ff;
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+}
+
+.quick-stats {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(86, 101, 126, 0.16);
+}
+
+.quick-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  span {
+    color: var(--text-subtle);
+    font-size: 13px;
+  }
+
+  strong {
+    color: #f7f9fd;
+    font-size: 18px;
+    font-weight: 700;
+  }
+}
+
+.quick-stat__sparkline {
+  width: 100%;
+  height: 30px;
+}
+
+.health-card__footer {
+  grid-column: 1 / -1;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+.monitor-panel,
+.platform-panel {
+  padding: 16px 18px 18px;
+}
+
+.panel-title,
+.processor-panel__title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+
+  h3 {
+    margin: 0;
+    color: #f4f7fd;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: var(--text-subtle);
+    font-size: 13px;
+  }
+}
+
+.panel-action {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(84, 104, 132, 0.34);
+  border-radius: 10px;
+  background: rgba(20, 29, 42, 0.7);
+  color: #e7eefb;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.monitor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  border-left: 1px solid rgba(86, 101, 126, 0.18);
+}
+
+.monitor-card:first-child {
+  border-left: 0;
+}
+
+.monitor-card__label {
+  color: #e5ebf6;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.monitor-card__ring {
+  display: grid;
+  place-items: center;
+  width: 106px;
+  height: 106px;
+  margin: 0 auto;
+  border-radius: 50%;
+}
+
+.monitor-card__ring-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: rgba(17, 25, 36, 0.96);
+
+  strong {
+    color: #f5f7fb;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  span {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+}
+
+.monitor-card__sparkline {
+  width: 100%;
+  height: 34px;
+}
+
+.monitor-card__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.monitor-card__foot--single {
+  justify-content: center;
+  text-align: center;
+}
+
+.processor-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 0.8fr;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.processor-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 420px;
+  padding: 16px 18px 18px;
+}
+
+.processor-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.processor-panel__body--stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.core-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.core-table__head,
+.core-table__row {
+  display: grid;
+  grid-template-columns: 1.35fr 0.9fr 0.9fr 0.8fr 0.8fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.core-table__head {
+  padding: 0 2px 12px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  border-bottom: 1px solid rgba(86, 101, 126, 0.18);
+}
+
+.core-table__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  overflow: auto;
+  padding-top: 12px;
+}
+
+.core-table__row {
+  padding: 8px 2px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+}
+
+.core-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.core-badge--pcore {
+  border: 1px solid rgba(68, 150, 255, 0.34);
+  background: rgba(31, 60, 105, 0.34);
+  color: #70beff;
+}
+
+.core-badge--ecore {
+  border: 1px solid rgba(132, 219, 97, 0.3);
+  background: rgba(41, 80, 30, 0.34);
+  color: #98dd6f;
+}
+
+.core-badge--core {
+  border: 1px solid rgba(120, 138, 171, 0.26);
+  background: rgba(32, 44, 61, 0.4);
+  color: #d4dceb;
+}
+
+.core-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  & + .core-group {
+    margin-top: 14px;
+  }
+}
+
+.core-group__label {
+  color: #69b9ff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.core-group__label--green {
+  color: #97da6f;
+}
+
+.core-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.core-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 10px 8px;
+  border: 1px solid rgba(84, 104, 132, 0.28);
+  border-radius: 10px;
+  background: rgba(18, 29, 44, 0.72);
+
+  strong {
+    color: #f3f6fb;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  span {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  em {
+    color: var(--text-subtle);
+    font-style: normal;
+    font-size: 12px;
+  }
+}
+
+.core-chip--performance {
+  border-color: rgba(68, 150, 255, 0.32);
+}
+
+.core-chip--efficiency {
+  border-color: rgba(132, 219, 97, 0.28);
+}
+
+.detail-specs {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-spec,
+.platform-spec {
+  display: grid;
+  grid-template-columns: 122px minmax(0, 1fr);
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+
+  span {
+    color: var(--text-subtle);
+    font-size: 13px;
+  }
+
+  strong {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+}
+
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 22px;
+}
+
+.platform-spec {
+  grid-template-columns: 106px minmax(0, 1fr);
+}
+
+@media (max-width: 1320px) {
+  .processor-hero,
+  .processor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .processor-panel {
+    height: auto;
+  }
+
+  .processor-panel__body,
+  .core-table__body {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .monitor-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .platform-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .hero-specs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-stats,
+  .monitor-grid,
+  .core-chip-grid,
+  .platform-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .core-table__head,
+  .core-table__row,
+  .detail-spec,
+  .platform-spec {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+</style>
