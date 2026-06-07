@@ -16,6 +16,10 @@ export default defineConfig(({ command, mode }) => {
   const isBuild = command === 'build'
   const isStartElectron = mode === 'electron'
   const sourcemap = isServe || !!process.env.VSCODE_DEBUG
+  const externalPackages = [
+    ...Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
+    ...Object.keys('optionalDependencies' in pkg ? pkg.optionalDependencies : {}),
+  ]
   return {
     resolve: {
       alias: {
@@ -62,7 +66,7 @@ export default defineConfig(({ command, mode }) => {
               // we can use `external` to exclude them to ensure they work correctly.
               // Others need to put them in `dependencies` to ensure they are collected into `app.asar` after the app is built.
               // Of course, this is not absolute, just this way is relatively simple. :)
-              external: Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
+              external: externalPackages,
             },
           },
           plugins: [
@@ -85,7 +89,7 @@ export default defineConfig(({ command, mode }) => {
             minify: isBuild,
             outDir: 'dist-electron/preload',
             rollupOptions: {
-              external: Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
+              external: externalPackages,
             },
           },
           plugins: [
