@@ -35,6 +35,20 @@ declare global {
     total: number
     available: number
     active: number
+    free?: number
+    used?: number
+    rawActive?: number
+    rawAvailable?: number
+    normalizedPlatform?: string
+    swaptotal?: number
+    swapused?: number
+    swapfree?: number
+    pressure?: {
+      level: 'normal' | 'warning' | 'critical' | 'unknown'
+      rawLevel: number | null
+      availablePercent: number | null
+      source: 'sysctl-memorystatus' | 'fallback'
+    }
   }
   type MemoLayoutData = Systeminformation.MemLayoutData
   type BoardData = Systeminformation.BaseboardData
@@ -47,11 +61,9 @@ declare global {
     value?: number | null
     source?:
       | 'systeminformation'
-      | 'hwmon-helper'
       | 'LibreHardwareMonitor'
       | 'OpenHardwareMonitor'
       | 'unsupported'
-      | 'embeddedLibreHardwareMonitor'
     hardwareName?: string
     sensorName?: string
     identifier?: string

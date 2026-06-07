@@ -164,12 +164,26 @@ function parseFlagHighlights(flags?: string) {
 function vendorBadgeData(brand: string) {
   const lower = brand.toLowerCase()
 
+  const appleChipMatch = brand.match(/\b(M[1-9](?:\s+(?:Pro|Max|Ultra))?)\b/i)
+
+  if (lower.includes('apple') || appleChipMatch) {
+    return {
+      top: 'apple',
+      middle: appleChipMatch?.[1]?.toUpperCase() || 'APPLE',
+      bottom: 'soc',
+      variant: 'apple',
+      compact: true,
+    }
+  }
+
   if (lower.includes('intel')) {
     const tierMatch = brand.match(/i[3579]/i)
     return {
       top: 'intel',
       middle: 'CORE',
       bottom: tierMatch ? tierMatch[0].toLowerCase() : 'cpu',
+      variant: 'intel',
+      compact: false,
     }
   }
 
@@ -178,14 +192,18 @@ function vendorBadgeData(brand: string) {
     return {
       top: 'amd',
       middle: 'RYZEN',
-      bottom: tierMatch ? tierMatch[0].replace(/\s+/g, ' ') : 'cpu',
+      bottom: tierMatch ? tierMatch[0].replace(/\s+/g, ' ').toLowerCase() : 'cpu',
+      variant: 'amd',
+      compact: false,
     }
   }
 
   return {
     top: 'cpu',
-    middle: 'PROCESSOR',
+    middle: 'CHIP',
     bottom: 'info',
+    variant: 'generic',
+    compact: true,
   }
 }
 
@@ -591,7 +609,7 @@ onUnmounted(() => {
       <section class="processor-hero">
         <article class="hero-card">
           <div class="hero-card__head">
-            <div class="cpu-badge">
+            <div :class="['cpu-badge', `cpu-badge--${vendorBadge.variant}`, { 'cpu-badge--compact': vendorBadge.compact }]">
               <span>{{ vendorBadge.top }}</span>
               <strong>{{ vendorBadge.middle }}</strong>
               <em>{{ vendorBadge.bottom }}</em>
@@ -815,7 +833,7 @@ onUnmounted(() => {
 .hero-card__head {
   display: flex;
   gap: 18px;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .cpu-badge {
@@ -829,17 +847,29 @@ onUnmounted(() => {
   background: linear-gradient(160deg, rgba(45, 106, 255, 0.96), rgba(34, 63, 164, 0.88));
   color: #f5f8ff;
   box-shadow: 0 18px 36px rgba(10, 30, 78, 0.34);
+  overflow: hidden;
 
   span {
+    display: block;
+    min-width: 0;
     font-size: 12px;
     text-transform: lowercase;
     letter-spacing: 0.06em;
+    line-height: 1;
     opacity: 0.88;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   strong {
+    display: block;
+    min-width: 0;
     font-size: 17px;
-    letter-spacing: 0.05em;
+    line-height: 1.05;
+    letter-spacing: 0.03em;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   em {
@@ -847,13 +877,49 @@ onUnmounted(() => {
     font-style: normal;
     font-size: 15px;
     font-weight: 700;
+    line-height: 1;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+}
+
+.cpu-badge--compact {
+  gap: 4px;
+
+  strong {
+    font-size: 15px;
+    letter-spacing: 0.01em;
+  }
+
+  em {
+    justify-self: start;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.86;
+  }
+}
+
+.cpu-badge--apple {
+  background: linear-gradient(160deg, rgba(76, 112, 255, 0.96), rgba(42, 61, 154, 0.9));
+
+  strong {
+    font-size: 18px;
+    letter-spacing: 0;
+  }
+}
+
+.cpu-badge--generic {
+  background: linear-gradient(160deg, rgba(49, 92, 180, 0.92), rgba(35, 55, 120, 0.88));
 }
 
 .hero-card__title {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 
   h2 {
     margin: 0;
@@ -861,12 +927,14 @@ onUnmounted(() => {
     font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
   }
 
   p {
     margin: 0;
     color: var(--text-muted);
     font-size: 14px;
+    overflow-wrap: anywhere;
   }
 }
 

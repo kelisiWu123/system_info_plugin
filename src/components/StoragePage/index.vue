@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
-import { clampPercent, formatBytes } from '../../utils'
+import { clampPercent, formatBytes, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes } from '../../utils'
 
 const props = defineProps<{
   active?: boolean
@@ -42,6 +42,7 @@ interface PhysicalDiskRow {
 
 interface VolumeRow {
   label: string
+  subtitle: string
   mount: string
   type: string
   size: number
@@ -56,10 +57,12 @@ const {
   diskLayoutData,
   diskData,
   storageUsage,
+  osInfo,
 } = hardwareStore
 
 const subscribed = ref(false)
 const selectedDiskId = ref('')
+const isDarwin = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -67,6 +70,33 @@ function cleanText(value: unknown) {
 
 function safeNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function getMountBasename(value: string) {
+  const normalized = value.replace(/[\\/]+$/, '')
+  if (!normalized || normalized === '/' || /^[A-Za-z]:$/.test(normalized)) return normalized || value
+  const segments = normalized.split(/[\\/]/).filter(Boolean)
+  return segments.at(-1) || normalized
+}
+
+function getVolumeDisplayName(volume: { name?: unknown; mount?: unknown; fs?: unknown }) {
+  const name = cleanText(volume.name)
+  if (name) return name
+
+  const mount = cleanText(volume.mount)
+  if (mount) return getMountBasename(mount)
+
+  return cleanText(volume.fs) || '--'
+}
+
+function getVolumeSubtitle(volume: { mount?: unknown; fs?: unknown }, displayName: string) {
+  const mount = cleanText(volume.mount)
+  if (mount && mount !== displayName) return mount
+
+  const fs = cleanText(volume.fs)
+  if (fs && fs !== displayName && fs !== mount) return fs
+
+  return ''
 }
 
 function formatSyncTime(value?: number) {
@@ -145,9 +175,7 @@ async function writeClipboard(text: string) {
 }
 
 const physicalDisks = computed<PhysicalDiskRow[]>(() =>
-  diskLayoutData.value
-    .filter((disk) => (disk.size || 0) > 0)
-    .map((disk, index) => {
+  getPhysicalDiskLayout(diskLayoutData.value).map((disk, index) => {
       const health = formatHealthText(disk)
       const nvmeHealth = disk.smartData?.nvme_smart_health_information_log
       const smartRows = (disk.smartData?.ata_smart_attributes?.table || []).slice(0, 8).map((row) => ({
@@ -181,17 +209,20 @@ const physicalDisks = computed<PhysicalDiskRow[]>(() =>
 )
 
 const volumeRows = computed<VolumeRow[]>(() =>
-  diskData.value
-    .filter((volume) => volume.size > 0)
-    .map((volume) => ({
-      label: cleanText(volume.fs) || cleanText(volume.mount) || cleanText(volume.name) || '--',
-      mount: cleanText(volume.mount) || '--',
-      type: cleanText(volume.type) || '--',
-      size: volume.size || 0,
-      used: volume.used || 0,
-      available: volume.available || 0,
-      use: typeof volume.used === 'number' && volume.size > 0 ? clampPercent((volume.used / volume.size) * 100) : 0,
-    }))
+  getDisplayStorageVolumes(diskData.value, cleanText(osInfo.value?.platform).toLowerCase())
+    .map((volume) => {
+      const label = getVolumeDisplayName(volume)
+      return {
+        label,
+        subtitle: getVolumeSubtitle(volume, label),
+        mount: cleanText(volume.mount) || '--',
+        type: cleanText(volume.type) || '--',
+        size: volume.size || 0,
+        used: volume.used || 0,
+        available: volume.available || 0,
+        use: typeof volume.used === 'number' && volume.size > 0 ? clampPercent((volume.used / volume.size) * 100) : 0,
+      }
+    })
 )
 
 const interfaceTypes = computed(() => {
@@ -202,20 +233,22 @@ const interfaceTypes = computed(() => {
   return [...set]
 })
 
-const totalPhysicalCapacity = computed(() => physicalDisks.value.reduce((sum, disk) => sum + disk.capacity, 0))
-const mountedVolumeCapacity = computed(() => volumeRows.value.reduce((sum, volume) => sum + volume.size, 0))
+const totalPhysicalCapacity = computed(() => getPhysicalDiskTotalBytes(diskLayoutData.value))
 const mountedVolumeUsed = computed(() => volumeRows.value.reduce((sum, volume) => sum + volume.used, 0))
 const mountedVolumeAvailable = computed(() => volumeRows.value.reduce((sum, volume) => sum + volume.available, 0))
 
 const selectedDisk = computed(() => physicalDisks.value.find((disk) => disk.id === selectedDiskId.value) || physicalDisks.value[0])
 
 const selectedDiskMountedUsage = computed(() => {
-  if (!selectedDisk.value || physicalDisks.value.length !== 1) return null
+  if (isDarwin.value || !selectedDisk.value || physicalDisks.value.length !== 1) return null
+  const total = selectedDisk.value.capacity
+  const used = total > 0 ? Math.min(mountedVolumeUsed.value, total) : mountedVolumeUsed.value
+  const available = total > 0 ? Math.max(total - used, 0) : mountedVolumeAvailable.value
   return {
-    total: mountedVolumeCapacity.value,
-    used: mountedVolumeUsed.value,
-    available: mountedVolumeAvailable.value,
-    percent: mountedVolumeCapacity.value > 0 ? clampPercent((mountedVolumeUsed.value / mountedVolumeCapacity.value) * 100) : 0,
+    total,
+    used,
+    available,
+    percent: total > 0 ? clampPercent((used / total) * 100) : 0,
   }
 })
 
@@ -240,7 +273,7 @@ const overviewCards = computed<OverviewCard[]>(() => {
     {
       label: '总容量',
       value: formatBytes(totalPhysicalCapacity.value),
-      subvalue: `挂载卷已用 ${formatBytes(mountedVolumeUsed.value)}`,
+      subvalue: isDarwin.value ? 'macOS 暂不显示已用存储' : `挂载卷已用 ${formatBytes(mountedVolumeUsed.value)}`,
       tone: 'purple',
     },
     {
@@ -286,7 +319,7 @@ const storageReportText = computed(() => {
     `物理磁盘：${physicalDisks.value.length}`,
     `挂载卷：${volumeRows.value.length}`,
     `物理总容量：${formatBytes(totalPhysicalCapacity.value)}`,
-    `挂载卷已用：${formatBytes(mountedVolumeUsed.value)}`,
+    isDarwin.value ? '挂载卷已用：macOS 暂不显示' : `挂载卷已用：${formatBytes(mountedVolumeUsed.value)}`,
     '',
     '[物理磁盘]',
     ...physicalDisks.value.map((disk) =>
@@ -463,9 +496,9 @@ onUnmounted(() => {
         <div class="storage-usage-panel">
           <div class="storage-usage-ring" :style="selectedDiskRingStyle">
             <div class="storage-usage-ring__inner">
-              <span>{{ selectedDiskMountedUsage ? '挂载卷已用' : '卷占用' }}</span>
-              <strong>{{ selectedDiskMountedUsage ? formatBytes(selectedDiskMountedUsage.used) : '--' }}</strong>
-              <small>{{ selectedDiskMountedUsage ? formatPercent(selectedDiskMountedUsage.percent) : '未映射' }}</small>
+              <span>{{ isDarwin ? '卷聚合' : selectedDiskMountedUsage ? '挂载卷已用' : '卷占用' }}</span>
+              <strong>{{ isDarwin ? '暂不显示' : selectedDiskMountedUsage ? formatBytes(selectedDiskMountedUsage.used) : '--' }}</strong>
+              <small>{{ isDarwin ? 'macOS' : selectedDiskMountedUsage ? formatPercent(selectedDiskMountedUsage.percent) : '未映射' }}</small>
             </div>
           </div>
 
@@ -475,12 +508,12 @@ onUnmounted(() => {
               <strong>{{ formatBytes(selectedDisk.capacity) }}</strong>
             </div>
             <div>
-              <span>挂载卷总量</span>
-              <strong>{{ formatBytes(selectedDiskMountedUsage?.total || 0) }}</strong>
+              <span>{{ isDarwin ? '挂载卷数量' : '卷已用空间' }}</span>
+              <strong>{{ isDarwin ? `${volumeRows.length} 个` : selectedDiskMountedUsage ? formatBytes(selectedDiskMountedUsage.used) : '--' }}</strong>
             </div>
             <div>
-              <span>挂载卷可用</span>
-              <strong>{{ selectedDiskMountedUsage ? formatBytes(selectedDiskMountedUsage.available) : '--' }}</strong>
+              <span>{{ isDarwin ? '当前状态' : '估算剩余空间' }}</span>
+              <strong>{{ isDarwin ? 'macOS 暂不显示已用存储' : selectedDiskMountedUsage ? formatBytes(selectedDiskMountedUsage.available) : '--' }}</strong>
             </div>
           </div>
         </div>
@@ -498,15 +531,18 @@ onUnmounted(() => {
               <span>卷</span>
               <span>文件系统</span>
               <span>容量</span>
-              <span>已用</span>
+              <span>{{ isDarwin ? '状态' : '已用' }}</span>
               <span>可用</span>
             </div>
 
             <div v-for="volume in volumeRows" :key="volume.mount" class="storage-volume-row">
-              <strong>{{ volume.label }}</strong>
+              <div class="storage-volume-row__name" :title="volume.subtitle || volume.label">
+                <strong>{{ volume.label }}</strong>
+                <span v-if="volume.subtitle">{{ volume.subtitle }}</span>
+              </div>
               <span>{{ volume.type }}</span>
               <span>{{ formatBytes(volume.size) }}</span>
-              <span>{{ formatBytes(volume.used) }} ({{ formatPercent(volume.use) }})</span>
+              <span>{{ isDarwin ? '已挂载' : `${formatBytes(volume.used)} (${formatPercent(volume.use)})` }}</span>
               <span>{{ formatBytes(volume.available) }}</span>
             </div>
           </div>
@@ -561,12 +597,12 @@ onUnmounted(() => {
               <strong>{{ formatBytes(totalPhysicalCapacity) }}</strong>
             </div>
             <div class="storage-detail-item">
-              <span>挂载卷总量</span>
-              <strong>{{ formatBytes(mountedVolumeCapacity) }}</strong>
+              <span>{{ isDarwin ? '挂载卷数量' : '已识别卷已用' }}</span>
+              <strong>{{ isDarwin ? `${volumeRows.length} 个` : formatBytes(storageUsage.used) }}</strong>
             </div>
             <div class="storage-detail-item">
-              <span>挂载卷已用</span>
-              <strong>{{ formatBytes(storageUsage.used) }}</strong>
+              <span>{{ isDarwin ? '当前状态' : '估算剩余空间' }}</span>
+              <strong>{{ isDarwin ? 'macOS 暂不显示已用存储' : formatBytes(Math.max(totalPhysicalCapacity - storageUsage.used, 0)) }}</strong>
             </div>
           </div>
         </section>
@@ -945,6 +981,36 @@ onUnmounted(() => {
   color: #e4ebf8;
   font-size: 13px;
   border-top: 1px solid rgba(58, 72, 94, 0.26);
+}
+
+.storage-volume-row > *,
+.storage-volume-table__header > * {
+  min-width: 0;
+}
+
+.storage-volume-row__name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+
+  strong,
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    color: #f4f7fd;
+    font-weight: 700;
+  }
+
+  span {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
 }
 
 .storage-smart-table__header,

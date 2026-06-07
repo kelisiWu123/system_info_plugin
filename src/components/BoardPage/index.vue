@@ -90,6 +90,13 @@ function buildMemorySlots() {
   })
 }
 
+function formatBoardMissingState() {
+  if (loading.value) return '主板信息读取中'
+  const platform = cleanText(osInfo.value?.platform).toLowerCase()
+  if (platform === 'darwin') return '当前平台未提供主板型号'
+  return '未识别主板信息'
+}
+
 function makePlaceholderRows(message: string): BoardListRow[] {
   return [{ label: '当前版本', primary: message }]
 }
@@ -113,7 +120,7 @@ async function writeClipboard(text: string) {
   if (!copied) throw new Error('execCommand copy failed')
 }
 
-const boardName = computed(() => joinParts([boardData.value?.manufacturer, boardData.value?.model]) || '主板信息读取中')
+const boardName = computed(() => joinParts([boardData.value?.manufacturer, boardData.value?.model]) || formatBoardMissingState())
 const chipsetName = computed(() => inferChipset())
 const memorySlots = computed(() => buildMemorySlots())
 const installedMemoryModules = computed(() => memoLayoutData.value.filter((item) => item.size > 0))

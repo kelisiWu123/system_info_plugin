@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { clampPercent } from '../utils'
+import { clampPercent, getDisplayMemoryUsagePercent, getDisplayStorageVolumes, getPhysicalDiskTotalBytes } from '../utils'
 
 export type FetchStatus = 'pending' | 'ok' | 'missing' | 'error'
 
@@ -40,6 +40,20 @@ const emptyMemoData: MemoData = {
   active: 0,
   available: 0,
   total: 0,
+  free: 0,
+  used: 0,
+  rawActive: 0,
+  rawAvailable: 0,
+  normalizedPlatform: '',
+  swaptotal: 0,
+  swapused: 0,
+  swapfree: 0,
+  pressure: {
+    level: 'unknown',
+    rawLevel: null,
+    availablePercent: null,
+    source: 'fallback',
+  },
 }
 
 const emptyCurrentLoadData: CurrentLoadData = {
@@ -217,6 +231,7 @@ function gpuSelectionScore(gpu: GpuData) {
 
   if (haystack.includes('nvidia') || haystack.includes('geforce') || haystack.includes('rtx') || haystack.includes('gtx')) score += 400
   if (haystack.includes('amd') || haystack.includes('radeon') || haystack.includes('rx ')) score += 320
+  if (haystack.includes('apple')) score += 280
   if (haystack.includes('intel')) score -= 180
   if (haystack.includes('uhd') || haystack.includes('iris') || haystack.includes('vega')) score -= 90
   if (memory >= 4096) score += 220
@@ -233,14 +248,16 @@ const primaryGpu = computed(() => {
 })
 
 const usedMemoPercent = computed(() => {
-  if (!memoData.value.total) return 0
-  return clampPercent((memoData.value.active / memoData.value.total) * 100)
+  return getDisplayMemoryUsagePercent(memoData.value)
 })
 
 const storageUsage = computed(() => {
-  const list = diskData.value.filter((item) => item.size > 0)
-  const total = list.reduce((sum, item) => sum + item.size, 0)
-  const used = list.reduce((sum, item) => sum + item.used, 0)
+  const platform = osInfo.value?.platform?.toLowerCase?.() || ''
+  const list = getDisplayStorageVolumes(diskData.value, platform)
+  const physicalTotal = getPhysicalDiskTotalBytes(diskLayoutData.value)
+  const total = physicalTotal > 0 ? physicalTotal : list.reduce((sum, item) => sum + item.size, 0)
+  const rawUsed = list.reduce((sum, item) => sum + item.used, 0)
+  const used = total > 0 ? Math.min(rawUsed, total) : rawUsed
   const percent = total > 0 ? clampPercent((used / total) * 100) : 0
   return { total, used, percent }
 })

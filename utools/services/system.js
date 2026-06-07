@@ -1,13 +1,14 @@
 import si from 'systeminformation'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
-const HWMON_HELPER_TIMEOUT_MS = 3000
-const HWMON_HELPER_RELATIVE_PATH = ['native', 'hwmon-helper', 'bin', 'win32-x64', 'hwmon-helper.exe']
-const HWMON_HELPER_PACKAGED_PATH = ['bin', 'win32-x64', 'hwmon-helper.exe']
+const MAC_MEMORY_PRESSURE_FALLBACK = {
+  level: 'unknown',
+  rawLevel: null,
+  availablePercent: null,
+  source: 'fallback',
+}
 
 const emptyNetworkStats = {
   rx_sec: 0,
@@ -422,116 +423,6 @@ function buildCpuTemperatureResult(base, source, sensorName, value) {
   }
 }
 
-function resolveHwmonHelperPath() {
-  if (typeof process === 'undefined' || process.platform !== 'win32') return undefined
-
-  const overridePath = process.env.HWMON_HELPER_PATH
-  if (overridePath && existsSync(overridePath)) {
-    return overridePath
-  }
-
-  const candidates = []
-
-  if (process.resourcesPath) {
-    candidates.push(join(process.resourcesPath, ...HWMON_HELPER_PACKAGED_PATH))
-  }
-
-  candidates.push(resolve(process.cwd(), ...HWMON_HELPER_RELATIVE_PATH))
-
-  return candidates.find((candidate) => existsSync(candidate))
-}
-
-function normalizeHelperSensor(sensor) {
-  if (!sensor || typeof sensor !== 'object') return undefined
-
-  const value = roundTemperature(toNumber(sensor.value))
-  return {
-    name: typeof sensor.name === 'string' ? sensor.name : '',
-    identifier: typeof sensor.identifier === 'string' ? sensor.identifier : '',
-    hardwareName: typeof sensor.hardwareName === 'string' ? sensor.hardwareName : undefined,
-    value,
-  }
-}
-
-function normalizeHwmonHelperResult(result) {
-  if (!result || typeof result !== 'object') return undefined
-
-  const rawCpuTemperatureValue = toNumber(result.cpuTemperature?.value)
-  const cpuTemperatureValue = rawCpuTemperatureValue && rawCpuTemperatureValue > 0
-    ? roundTemperature(rawCpuTemperatureValue)
-    : null
-  const allCpuTemperatureSensors = Array.isArray(result.allCpuTemperatureSensors)
-    ? result.allCpuTemperatureSensors.map(normalizeHelperSensor).filter(Boolean)
-    : []
-  const sensorValues = allCpuTemperatureSensors
-    .map((sensor) => sensor.value)
-    .filter((value) => typeof value === 'number')
-
-  return {
-    main: cpuTemperatureValue,
-    value: cpuTemperatureValue,
-    cores: [],
-    max: sensorValues.length ? Math.max(...sensorValues) : cpuTemperatureValue,
-    socket: [],
-    chipset: null,
-    source: 'hwmon-helper',
-    unit: result.unit === '°C' ? '°C' : '°C',
-    confidence: ['high', 'medium', 'low', 'unsupported'].includes(result.confidence)
-      ? result.confidence
-      : cpuTemperatureValue === null
-        ? 'unsupported'
-        : undefined,
-    hardwareName: typeof result.hardwareName === 'string' ? result.hardwareName : undefined,
-    sensorName: typeof result.sensorName === 'string' ? result.sensorName : undefined,
-    identifier: typeof result.identifier === 'string' ? result.identifier : undefined,
-    allCpuTemperatureSensors,
-    errorCode: typeof result.errorCode === 'string' ? result.errorCode : undefined,
-    message: typeof result.message === 'string' ? result.message : undefined,
-  }
-}
-
-function buildHelperFailureResult(errorCode, message) {
-  return {
-    main: null,
-    value: null,
-    cores: [],
-    max: null,
-    socket: [],
-    chipset: null,
-    source: 'hwmon-helper',
-    unit: '°C',
-    confidence: 'unsupported',
-    errorCode,
-    message,
-    allCpuTemperatureSensors: [],
-  }
-}
-
-async function getHwmonHelperCpuTemperature() {
-  const helperPath = resolveHwmonHelperPath()
-  if (!helperPath) {
-    return buildHelperFailureResult('HELPER_NOT_FOUND', 'hwmon-helper.exe 未找到')
-  }
-
-  try {
-    const { stdout } = await execFileAsync(helperPath, [], {
-      windowsHide: true,
-      timeout: HWMON_HELPER_TIMEOUT_MS,
-    })
-    const output = stdout.trim()
-    if (!output) {
-      return buildHelperFailureResult('HELPER_EMPTY_OUTPUT', 'hwmon-helper.exe 未输出结果')
-    }
-    const normalized = normalizeHwmonHelperResult(JSON.parse(output))
-    return normalized || buildHelperFailureResult('HELPER_INVALID_JSON', 'hwmon-helper.exe 返回了无法识别的结果')
-  } catch (error) {
-    if (error?.killed) {
-      return buildHelperFailureResult('HELPER_TIMEOUT', `hwmon-helper.exe 超时 (${HWMON_HELPER_TIMEOUT_MS}ms)`)
-    }
-    return buildHelperFailureResult('HELPER_EXEC_FAILED', error instanceof Error ? error.message : 'hwmon-helper.exe 调用失败')
-  }
-}
-
 function pickBestCpuTemperatureSensor(sensors) {
   if (!sensors.length) return undefined
   return [...sensors].sort((a, b) => scoreCpuTemperatureSensor(b) - scoreCpuTemperatureSensor(a))[0]
@@ -736,11 +627,6 @@ async function getCpuTemperature() {
       return buildCpuTemperatureResult(temperature, 'systeminformation', systemInfoValue.sensorName, systemInfoValue.value)
     }
 
-    const helperTemperature = await getHwmonHelperCpuTemperature()
-    if (helperTemperature && helperTemperature.value !== null) {
-      return helperTemperature
-    }
-
     const libreTemperature = await getHardwareMonitorCpuTemperatureFromNamespace('root\\LibreHardwareMonitor')
     if (libreTemperature && libreTemperature.value !== null) {
       return libreTemperature
@@ -753,7 +639,6 @@ async function getCpuTemperature() {
 
     const diagnostics = [
       'systeminformation 未提供有效 CPU 温度',
-      helperTemperature?.errorCode ? `hwmon-helper: ${helperTemperature.errorCode}` : 'hwmon-helper: 未命中',
       libreTemperature?.value === null ? 'LibreHardwareMonitor WMI: 无可用温度' : 'LibreHardwareMonitor WMI: 未命中',
       openTemperature?.value === null ? 'OpenHardwareMonitor WMI: 无可用温度' : 'OpenHardwareMonitor WMI: 未命中',
     ]
@@ -763,7 +648,6 @@ async function getCpuTemperature() {
         ...temperature,
         errorCode: 'CPU_TEMPERATURE_UNAVAILABLE',
         message: diagnostics.join(' | '),
-        allCpuTemperatureSensors: helperTemperature?.allCpuTemperatureSensors || [],
         confidence: 'unsupported',
       },
       'unsupported',
@@ -827,12 +711,135 @@ function normalizeDiskUsage(disk) {
   }
 }
 
+async function readSysctlNumber(name) {
+  try {
+    const { stdout } = await execFileAsync('/usr/sbin/sysctl', ['-n', name], {
+      timeout: 1000,
+      windowsHide: true,
+    })
+
+    const value = Number(String(stdout).trim())
+    return Number.isFinite(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
+function mapMacMemoryPressureLevel(rawLevel) {
+  switch (rawLevel) {
+    case 1:
+      return 'normal'
+    case 2:
+      return 'warning'
+    case 4:
+      return 'critical'
+    default:
+      return 'unknown'
+  }
+}
+
+async function getMacMemoryPressure() {
+  if (process.platform !== 'darwin') {
+    return MAC_MEMORY_PRESSURE_FALLBACK
+  }
+
+  const [rawLevel, availablePercent] = await Promise.all([
+    // macOS memory pressure level.
+    // Common values used by Firefox/Chromium style implementations:
+    // 1 = normal, 2 = warning, 4 = critical.
+    // This is more suitable for macOS user-facing memory status than
+    // systeminformation.mem().available, which is only an estimated
+    // potentially available value.
+    readSysctlNumber('kern.memorystatus_vm_pressure_level'),
+    readSysctlNumber('kern.memorystatus_level'),
+  ])
+
+  return {
+    level: mapMacMemoryPressureLevel(rawLevel),
+    rawLevel,
+    availablePercent,
+    source: rawLevel == null ? 'fallback' : 'sysctl-memorystatus',
+  }
+}
+
+function normalizeMemoryInfo(memory, pressure = MAC_MEMORY_PRESSURE_FALLBACK) {
+  const total = Number.isFinite(memory?.total) ? memory.total : 0
+  const free = Number.isFinite(memory?.free) ? memory.free : 0
+  const used = Number.isFinite(memory?.used) ? memory.used : 0
+  const active = Number.isFinite(memory?.active) ? memory.active : 0
+  const available = Number.isFinite(memory?.available) ? memory.available : 0
+  const swaptotal = Number.isFinite(memory?.swaptotal) ? memory.swaptotal : 0
+  const swapused = Number.isFinite(memory?.swapused) ? memory.swapused : 0
+  const swapfree = Number.isFinite(memory?.swapfree) ? memory.swapfree : 0
+  const platform = typeof process !== 'undefined' ? process.platform : ''
+
+  if (platform === 'darwin') {
+    return {
+      ...memory,
+      total,
+      free,
+      used,
+      rawActive: active,
+      rawAvailable: available,
+      swaptotal,
+      swapused,
+      swapfree,
+      active,
+      available,
+      normalizedPlatform: 'darwin',
+      pressure,
+    }
+  }
+
+  return {
+    ...memory,
+    total,
+    free,
+    used,
+    rawActive: active,
+    rawAvailable: available,
+    swaptotal,
+    swapused,
+    swapfree,
+    active: active > 0 ? active : used,
+    available: available > 0 ? available : free,
+    normalizedPlatform: platform || 'unknown',
+    pressure,
+  }
+}
+
 async function readGpuInfo() {
   return readSystemInfo('graphics', [], async () => {
     const graphics = await si.graphics()
     const fallbackTelemetry = await getHardwareMonitorGpuTelemetry()
+    const isMacOS = typeof process !== 'undefined' && process.platform === 'darwin'
+
+    function hasGpuIdentity(controller) {
+      return Boolean(
+        (typeof controller.model === 'string' && controller.model.trim())
+        || (typeof controller.name === 'string' && controller.name.trim())
+        || (typeof controller.vendor === 'string' && controller.vendor.trim())
+      )
+    }
+
+    function isLikelyGpuController(controller) {
+      if (!hasGpuIdentity(controller)) return false
+
+      const haystack = `${controller.vendor || ''} ${controller.model || ''} ${controller.name || ''} ${controller.bus || ''}`.toLowerCase()
+
+      if (haystack.includes('displaylink') || haystack.includes('virtual display') || haystack.includes('vmware') || haystack.includes('parallels')) {
+        return false
+      }
+
+      if (isMacOS) {
+        return true
+      }
+
+      return (controller.vram || 0) >= 1 || Boolean(controller.bus) || Boolean(controller.driverVersion)
+    }
+
     return graphics.controllers
-      .filter((controller) => (controller.vram || 0) >= 1)
+      .filter(isLikelyGpuController)
       .map((controller) => ({
         ...controller,
         vram: controller.vram || 0,
@@ -921,7 +928,28 @@ export const systemService = {
 
   getBoardTelemetry: () => readSystemInfo('boardTelemetry', createEmptyBoardTelemetry(), getBoardTelemetry),
 
-  getMemInfo: () => readSystemInfo('mem', { active: 0, available: 0, total: 0 }, () => si.mem()),
+  getMemInfo: () => readSystemInfo(
+    'mem',
+    {
+      active: 0,
+      available: 0,
+      total: 0,
+      free: 0,
+      used: 0,
+      rawActive: 0,
+      rawAvailable: 0,
+      normalizedPlatform: '',
+      swaptotal: 0,
+      swapused: 0,
+      swapfree: 0,
+      pressure: MAC_MEMORY_PRESSURE_FALLBACK,
+    },
+    async () => {
+      const memory = await si.mem()
+      const pressure = await getMacMemoryPressure()
+      return normalizeMemoryInfo(memory, pressure)
+    }
+  ),
 
   getMemoryLayout: () => readSystemInfo('memLayout', [], () => si.memLayout()),
 

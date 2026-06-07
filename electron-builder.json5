@@ -14,15 +14,6 @@
     "dist",
     "dist-electron"
   ],
-  "extraResources": [
-    {
-      "from": "native/hwmon-helper/bin/win32-x64",
-      "to": "bin/win32-x64",
-      "filter": [
-        "**/*"
-      ]
-    }
-  ],
   "mac": {
     "target": [
       "dmg"

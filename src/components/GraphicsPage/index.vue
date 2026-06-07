@@ -182,6 +182,60 @@ function inferHealthState(gpu: GpuData | undefined) {
   }
 }
 
+function gpuBadgeData(gpu?: GpuData) {
+  const vendor = cleanText(gpu?.vendor)
+  const model = cleanText(gpu?.model || gpu?.name)
+  const haystack = `${vendor} ${model}`.toLowerCase()
+
+  if (haystack.includes('nvidia') || haystack.includes('geforce')) {
+    return {
+      top: 'GEFORCE',
+      middle: model.match(/rtx|gtx/i)?.[0]?.toUpperCase() || 'RTX',
+      bottom: 'gpu',
+      variant: 'nvidia',
+      compact: false,
+    }
+  }
+
+  if (haystack.includes('amd') || haystack.includes('radeon')) {
+    return {
+      top: 'RADEON',
+      middle: model.match(/rx\s*\d+/i)?.[0]?.toUpperCase() || 'AMD',
+      bottom: 'gpu',
+      variant: 'amd',
+      compact: false,
+    }
+  }
+
+  if (haystack.includes('apple')) {
+    return {
+      top: 'apple',
+      middle: 'GPU',
+      bottom: 'soc',
+      variant: 'apple',
+      compact: true,
+    }
+  }
+
+  if (haystack.includes('intel')) {
+    return {
+      top: 'intel',
+      middle: model.match(/arc|iris|uhd/i)?.[0]?.toUpperCase() || 'GPU',
+      bottom: 'graphics',
+      variant: 'intel',
+      compact: true,
+    }
+  }
+
+  return {
+    top: vendor || 'GPU',
+    middle: 'GRAPHICS',
+    bottom: 'chip',
+    variant: 'generic',
+    compact: true,
+  }
+}
+
 async function writeClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)
@@ -206,6 +260,7 @@ const connectedDisplays = computed(() =>
 )
 const mainDisplay = computed(() => connectedDisplays.value.find((item) => item.main) || connectedDisplays.value[0])
 const healthState = computed(() => inferHealthState(primaryGpu.value))
+const badgeMeta = computed(() => gpuBadgeData(primaryGpu.value))
 
 const heroSpecs = computed(() => {
   const gpu = primaryGpu.value
@@ -541,14 +596,15 @@ onUnmounted(() => {
       <section class="graphics-hero">
         <article class="hero-card">
           <div class="hero-card__head">
-            <div class="gpu-badge">
-              <span>{{ cleanText(primaryGpu?.vendor).includes('NVIDIA') ? 'GEFORCE' : cleanText(primaryGpu?.vendor) || 'GPU' }}</span>
-              <strong>{{ cleanText(primaryGpu?.model).match(/rtx|gtx|rx/i)?.[0]?.toUpperCase() || 'GRAPHICS' }}</strong>
+            <div :class="['gpu-badge', `gpu-badge--${badgeMeta.variant}`, { 'gpu-badge--compact': badgeMeta.compact }]">
+              <span>{{ badgeMeta.top }}</span>
+              <strong>{{ badgeMeta.middle }}</strong>
+              <em>{{ badgeMeta.bottom }}</em>
             </div>
 
             <div class="hero-card__title">
               <h2>{{ primaryGpu?.model || primaryGpu?.name || '读取中' }}</h2>
-              <p>{{ joinParts([primaryGpu?.vendor, primaryGpu?.deviceId], ' | ') || '等待显卡识别' }}</p>
+              <p>{{ joinParts([primaryGpu?.vendor, primaryGpu?.deviceId], ' | ') || '未识别显卡信息' }}</p>
             </div>
           </div>
 
@@ -727,7 +783,7 @@ onUnmounted(() => {
 .hero-card__head {
   display: flex;
   gap: 18px;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .gpu-badge {
@@ -741,22 +797,78 @@ onUnmounted(() => {
   background: linear-gradient(160deg, rgba(83, 201, 42, 0.92), rgba(29, 82, 22, 0.88));
   color: #f2f9ec;
   box-shadow: 0 18px 36px rgba(14, 50, 10, 0.32);
+  overflow: hidden;
 
   span {
+    display: block;
+    min-width: 0;
     font-size: 11px;
     letter-spacing: 0.06em;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   strong {
+    display: block;
+    min-width: 0;
     font-size: 22px;
     line-height: 1;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
+
+  em {
+    font-style: normal;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+    opacity: 0.86;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.gpu-badge--compact {
+  gap: 5px;
+
+  strong {
+    font-size: 16px;
+  }
+
+  em {
+    font-size: 12px;
+  }
+}
+
+.gpu-badge--amd {
+  background: linear-gradient(160deg, rgba(221, 62, 56, 0.92), rgba(118, 32, 28, 0.88));
+  box-shadow: 0 18px 36px rgba(64, 16, 14, 0.28);
+}
+
+.gpu-badge--apple {
+  background: linear-gradient(160deg, rgba(107, 121, 255, 0.92), rgba(54, 63, 156, 0.88));
+  box-shadow: 0 18px 36px rgba(25, 31, 85, 0.28);
+}
+
+.gpu-badge--intel {
+  background: linear-gradient(160deg, rgba(69, 144, 255, 0.92), rgba(34, 79, 162, 0.88));
+  box-shadow: 0 18px 36px rgba(13, 39, 80, 0.28);
+}
+
+.gpu-badge--generic {
+  background: linear-gradient(160deg, rgba(62, 118, 181, 0.9), rgba(32, 61, 105, 0.88));
+  box-shadow: 0 18px 36px rgba(14, 30, 55, 0.26);
 }
 
 .hero-card__title {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 
   h2 {
     margin: 0;
@@ -764,12 +876,14 @@ onUnmounted(() => {
     font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
   }
 
   p {
     margin: 0;
     color: var(--text-muted);
     font-size: 14px;
+    overflow-wrap: anywhere;
   }
 }
 

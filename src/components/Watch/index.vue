@@ -11,7 +11,7 @@ import {
   Thermometer,
 } from '@icon-park/vue-next'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
-import { clampPercent } from '../../utils'
+import { clampPercent, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
 
 const props = defineProps<{
   active?: boolean
@@ -21,6 +21,20 @@ const memoData = reactive<MemoData>({
   active: 0,
   available: 0,
   total: 0,
+  free: 0,
+  used: 0,
+  rawActive: 0,
+  rawAvailable: 0,
+  normalizedPlatform: '',
+  swaptotal: 0,
+  swapused: 0,
+  swapfree: 0,
+  pressure: {
+    level: 'unknown',
+    rawLevel: null,
+    availablePercent: null,
+    source: 'fallback',
+  },
 })
 
 const gpuData = ref<GpuData[]>([])
@@ -128,10 +142,10 @@ const primaryGpu = computed(() => {
 
 const cpuPercent = computed(() => clampPercent(cpuLoad.value))
 const memoryPercent = computed(() => {
-  if (!memoData.total) return 0
-  return clampPercent((memoData.active / memoData.total) * 100)
+  return getDisplayMemoryUsagePercent(memoData)
 })
 const gpuPercent = computed(() => clampPercent(primaryGpu.value?.utilizationGpu || 0))
+const memoryPressureLabel = computed(() => getMemoryPressureLabel(memoData.pressure?.level))
 
 const cpuTempValue = computed(() => {
   if (typeof cpuTemperature.value?.value === 'number') return cpuTemperature.value.value
@@ -150,13 +164,14 @@ const gpuMemoryUsed = computed(() => {
 })
 
 const gpuName = computed(() => {
-  const value = primaryGpu.value?.model || primaryGpu.value?.name || '等待显卡遥测'
+  const value = primaryGpu.value?.model || primaryGpu.value?.name || '未识别显卡'
   return value.length > 20 ? `${value.slice(0, 20)}...` : value
 })
 
 const footerStatus = computed(() => {
   if (cpuPercent.value || memoryPercent.value || gpuPercent.value) return '状态良好'
-  return '等待遥测'
+  if (!primaryGpu.value) return '未检测到显卡信息'
+  return '部分指标暂不支持'
 })
 
 async function refreshFastMetrics() {
@@ -178,6 +193,15 @@ async function refreshFastMetrics() {
       memoData.active = memoRes.value.active
       memoData.total = memoRes.value.total
       memoData.available = memoRes.value.available
+      memoData.free = memoRes.value.free || 0
+      memoData.used = memoRes.value.used || 0
+      memoData.rawActive = memoRes.value.rawActive || 0
+      memoData.rawAvailable = memoRes.value.rawAvailable || 0
+      memoData.normalizedPlatform = memoRes.value.normalizedPlatform || ''
+      memoData.swaptotal = memoRes.value.swaptotal || 0
+      memoData.swapused = memoRes.value.swapused || 0
+      memoData.swapfree = memoRes.value.swapfree || 0
+      memoData.pressure = memoRes.value.pressure || memoData.pressure
       clampHistory(history.memory, memoryPercent.value)
     }
 
@@ -385,14 +409,14 @@ onUnmounted(() => {
                 <DashboardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
                 <span>已用</span>
               </div>
-              <strong>{{ formatGigabytesFromBytes(memoData.active) }}</strong>
+              <strong>{{ formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData)) }}</strong>
             </div>
             <div class="metric-side-item">
               <div class="metric-side-item__label">
                 <MemoryCardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                <span>总计</span>
+                <span>{{ memoData.normalizedPlatform === 'darwin' ? '压力' : '总计' }}</span>
               </div>
-              <strong>{{ formatGigabytesFromBytes(memoData.total, 0) }}</strong>
+              <strong>{{ memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel : formatGigabytesFromBytes(memoData.total, 0) }}</strong>
             </div>
           </template>
         </WatchRow>

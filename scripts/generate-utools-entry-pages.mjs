@@ -3,7 +3,10 @@ import { join } from 'node:path'
 
 const distDir = join(process.cwd(), 'dist')
 const assetsDir = join(distDir, 'assets')
-const helperSourceDir = join(process.cwd(), 'native', 'hwmon-helper', 'bin', 'win32-x64')
+const nodeModulesDistDir = join(distDir, 'node_modules')
+const optionalRuntimePackages = [
+  'macos-temperature-sensor',
+]
 const sourceHtml = readFileSync(join(distDir, 'index.html'), 'utf8')
 
 const scriptMatch = sourceHtml.match(/<script[^>]*src="\.\/([^"]+)"[^>]*><\/script>/i)
@@ -77,11 +80,16 @@ for (const [entryName, pageName] of [
 writePageEntry(join(distDir, 'computer.html'), 'computer')
 writePageEntry(join(distDir, 'watch.html'), 'watch')
 
-if (existsSync(helperSourceDir)) {
-  const helperTargetDir = join(distDir, 'native', 'hwmon-helper', 'bin', 'win32-x64')
-  rmSync(helperTargetDir, { recursive: true, force: true })
-  mkdirSync(helperTargetDir, { recursive: true })
-  cpSync(helperSourceDir, helperTargetDir, { recursive: true, force: true })
+for (const packageName of optionalRuntimePackages) {
+  const sourceDir = join(process.cwd(), 'node_modules', packageName)
+  const targetDir = join(nodeModulesDistDir, packageName)
+  rmSync(targetDir, { recursive: true, force: true })
+
+  if (!existsSync(sourceDir)) continue
+
+  mkdirSync(nodeModulesDistDir, { recursive: true })
+  cpSync(sourceDir, targetDir, { recursive: true, force: true })
 }
 
+rmSync(join(distDir, 'native'), { recursive: true, force: true })
 rmSync(join(distDir, 'index.html'), { force: true })

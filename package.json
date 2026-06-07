@@ -10,8 +10,7 @@
     "dev": "vite",
     "dev:electron": "vite --mode=electron",
     "build": "vue-tsc && vite build && node scripts/generate-utools-entry-pages.mjs",
-    "build:hwmon-helper": "dotnet publish native/hwmon-helper/hwmon-helper.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:DebugType=None /p:DebugSymbols=false -o native/hwmon-helper/bin/win32-x64",
-    "build:electron": "npm run build:hwmon-helper && vue-tsc && vite build --mode=electron && electron-builder",
+    "build:electron": "vue-tsc && vite build --mode=electron && electron-builder",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -42,5 +41,8 @@
   "env": {
     "VITE_DEV_SERVER_HOST": "127.0.0.1",
     "VITE_DEV_SERVER_PORT": 9000
+  },
+  "optionalDependencies": {
+    "macos-temperature-sensor": "^1.0.4"
   }
 }

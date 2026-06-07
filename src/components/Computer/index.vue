@@ -2,7 +2,18 @@
 import { Chip, Cpu, GraphicDesign, Memory } from '@icon-park/vue-next'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, overviewServiceLabels, type OverviewServiceKey } from '../../composables/useHardwareData'
-import { bytesToGB, clampPercent, formatBytes, formatDisplayResolution, formatUptime } from '../../utils'
+import {
+  bytesToGB,
+  clampPercent,
+  formatBytes,
+  formatDisplayResolution,
+  formatUptime,
+  getDisplayMemoryAvailableBytes,
+  getDisplayMemoryAvailableLabel,
+  getMemoryPressureLabel,
+  getDisplayMemoryUsedBytes,
+  getDisplayMemoryUsedLabel,
+} from '../../utils'
 
 const props = defineProps<{
   active?: boolean
@@ -83,10 +94,19 @@ function formatMemoryModule(item: MemoLayoutData) {
 }
 
 function formatGpuMemory(gpu?: GpuData) {
-  if (!gpu) return '等待遥测'
+  if (!gpu) return '未检测到显卡信息'
   const memory = gpu.memoryTotal || gpu.vram || 0
   if (!memory) return '显存未知'
   return `${(memory / 1024).toFixed(0)} GB`
+}
+
+function formatBoardTitle() {
+  const boardName = joinParts([boardData.value?.manufacturer, boardData.value?.model])
+  if (boardName) return boardName
+  if (loading.value) return '读取中'
+  const platform = cleanText(osInfo.value?.platform).toLowerCase()
+  if (platform === 'darwin') return '当前平台未提供主板型号'
+  return '未识别主板信息'
 }
 
 function formatMemoryKit() {
@@ -102,6 +122,21 @@ function formatMemoryKit() {
   }
 
   return sizes.map((item) => `${item.toFixed(0)} GB`).join(' + ')
+}
+
+function memoryOverviewLines() {
+  if (memoData.value.normalizedPlatform === 'darwin') {
+    return [
+      `内存压力 ${getMemoryPressureLabel(memoData.value.pressure?.level)}`,
+      memoData.value.swapused ? `已用交换 ${bytesToGB(memoData.value.swapused)} GB` : '已用交换 0 GB',
+      memoData.value.total ? `${bytesToGB(getDisplayMemoryUsedBytes(memoData.value))} GB / ${bytesToGB(memoData.value.total)} GB` : '',
+    ].filter(Boolean)
+  }
+
+  return [
+    joinParts([memoLayoutData.value[0]?.type, memoLayoutData.value[0]?.clockSpeed ? `${memoLayoutData.value[0].clockSpeed} MHz` : '']),
+    formatMemoryKit(),
+  ].filter(Boolean)
 }
 
 function installedMemoryBytes() {
@@ -257,17 +292,14 @@ const summaryCards = computed(() => [
     accent: 'var(--accent-purple)',
     icon: Memory,
     title: installedMemoryBytes() > 0 ? `${bytesToGB(installedMemoryBytes())} GB` : memoData.value.total ? `${bytesToGB(memoData.value.total)} GB` : '读取中',
-    lines: [
-      joinParts([memoLayoutData.value[0]?.type, memoLayoutData.value[0]?.clockSpeed ? `${memoLayoutData.value[0].clockSpeed} MHz` : '']),
-      formatMemoryKit(),
-    ].filter(Boolean),
+    lines: memoryOverviewLines(),
   },
   {
     id: 'board',
     label: '主板',
     accent: 'var(--accent-yellow)',
     icon: Chip,
-    title: joinParts([boardData.value?.manufacturer, boardData.value?.model]) || '读取中',
+    title: formatBoardTitle(),
     lines: [
       biosData.value?.version ? `BIOS ${biosData.value.version}` : '',
       biosData.value?.releaseDate || biosData.value?.vendor || '',
@@ -322,16 +354,20 @@ const statusCards = computed<MetricCard[]>(() => [
     accent: 'var(--accent-purple)',
     percent: usedMemoPercent.value,
     trend: metricHistory.memoryLoad,
-    footerCenter: memoData.value.total ? `${bytesToGB(memoData.value.active)} GB / ${bytesToGB(memoData.value.total)} GB` : '等待内存数据',
+    footerCenter: memoData.value.total ? `${bytesToGB(getDisplayMemoryUsedBytes(memoData.value))} GB / ${bytesToGB(memoData.value.total)} GB` : '等待内存数据',
   },
   {
     id: 'storage-usage',
     label: '存储使用率',
-    value: `${Math.round(storageUsage.value.percent)}%`,
+    value: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin' ? '--' : `${Math.round(storageUsage.value.percent)}%`,
     accent: 'var(--accent-yellow)',
-    percent: storageUsage.value.percent,
-    trend: metricHistory.storageLoad,
-    footerCenter: storageUsage.value.total ? `${formatBytes(storageUsage.value.used)} / ${formatBytes(storageUsage.value.total)}` : '等待磁盘数据',
+    percent: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin' ? 0 : storageUsage.value.percent,
+    trend: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin' ? [] : metricHistory.storageLoad,
+    footerCenter: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin'
+      ? 'macOS 暂不显示已用存储'
+      : storageUsage.value.total
+        ? `${formatBytes(storageUsage.value.used)} / ${formatBytes(storageUsage.value.total)}`
+        : '等待磁盘数据',
   },
 ])
 
@@ -368,6 +404,10 @@ const detailRows = computed<DetailRow[]>(() => {
       lines: [
       installedMemoryBytes() > 0 ? `已安装 ${bytesToGB(installedMemoryBytes())} GB` : '',
       memoData.value.total ? `系统总量 ${bytesToGB(memoData.value.total)} GB` : '',
+      memoData.value.total ? `${getDisplayMemoryUsedLabel(memoData.value)} ${bytesToGB(getDisplayMemoryUsedBytes(memoData.value))} GB` : '',
+      memoData.value.total ? `${getDisplayMemoryAvailableLabel(memoData.value)} ${bytesToGB(getDisplayMemoryAvailableBytes(memoData.value))} GB` : '',
+      memoData.value.normalizedPlatform === 'darwin' ? `内存压力 ${getMemoryPressureLabel(memoData.value.pressure?.level)}` : '',
+      memoData.value.normalizedPlatform === 'darwin' ? `已用交换 ${bytesToGB(memoData.value.swapused || 0)} GB` : '',
       ...memoLayoutData.value.slice(0, 2).map(formatMemoryModule),
       ].filter(Boolean),
     },
