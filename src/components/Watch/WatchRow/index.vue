@@ -41,52 +41,62 @@ defineProps<{
 
 <style scoped lang="less">
 .watch-metric-card {
+  --watch-card-accent: #35b6ff;
+  --watch-card-border: rgba(102, 124, 161, 0.28);
+  --watch-card-icon-bg: rgba(255, 255, 255, 0.05);
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 112px;
+  grid-template-columns: 40px minmax(0, 1fr) 82px;
   align-items: stretch;
-  gap: 12px;
-  min-height: 94px;
-  padding: 12px 14px;
-  border: 1px solid rgba(102, 124, 161, 0.28);
-  border-radius: 18px;
+  gap: 8px;
+  min-height: 82px;
+  padding: 9px 10px;
+  border: 1px solid var(--watch-card-border);
+  border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(22, 34, 53, 0.94), rgba(17, 27, 42, 0.94)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--watch-card-accent) 16%, transparent), transparent 42%),
+    linear-gradient(180deg, rgba(22, 34, 53, 0.95), rgba(17, 27, 42, 0.95)),
     rgba(17, 27, 42, 0.94);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 16px 30px rgba(1, 7, 18, 0.28);
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 18px 32px rgba(1, 7, 18, 0.22);
 }
 
 .watch-metric-card--cpu {
-  border-color: rgba(67, 176, 255, 0.34);
+  --watch-card-accent: #35b6ff;
+  --watch-card-border: rgba(67, 176, 255, 0.34);
 }
 
 .watch-metric-card--gpu {
-  border-color: rgba(121, 214, 82, 0.34);
+  --watch-card-accent: #83df55;
+  --watch-card-border: rgba(121, 214, 82, 0.34);
 }
 
 .watch-metric-card--memory {
-  border-color: rgba(157, 113, 255, 0.34);
+  --watch-card-accent: #a775ff;
+  --watch-card-border: rgba(157, 113, 255, 0.34);
 }
 
 .watch-metric-card__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
+  width: 40px;
+  height: 40px;
   align-self: center;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03)),
+    var(--watch-card-icon-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .watch-metric-card__main {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   grid-template-rows: auto auto auto;
   align-items: end;
-  column-gap: 12px;
-  row-gap: 6px;
+  column-gap: 8px;
+  row-gap: 4px;
   min-width: 0;
 }
 
@@ -106,7 +116,7 @@ defineProps<{
 
 .watch-metric-card__subtitle {
   color: rgba(190, 202, 222, 0.78);
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.2;
 }
 
@@ -133,9 +143,9 @@ defineProps<{
 .watch-metric-card__side {
   display: grid;
   align-content: center;
-  gap: 10px;
+  gap: 7px;
   min-width: 0;
-  padding-left: 12px;
+  padding-left: 10px;
   border-left: 1px solid rgba(96, 115, 146, 0.24);
 }
 </style>

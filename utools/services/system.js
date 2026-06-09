@@ -1,7 +1,7 @@
 import si from 'systeminformation'
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -47,12 +47,13 @@ const emptyCurrentLoadData = {
   cpus: [],
 }
 
-let gpuInfoCache = []
-let gpuInfoCacheAt = 0
-let gpuInfoPromise
 let openHardwareMonitorLastStartAt = 0
 let openHardwareMonitorStartPromise
 let openHardwareMonitorManagedPid = null
+let configuredPluginRoot = ''
+let configuredUtoolsRuntime
+const runtimeServiceCache = new Map()
+const runtimeServicePromiseCache = new Map()
 
 async function readSystemInfo(label, fallback, reader) {
   try {
@@ -61,6 +62,44 @@ async function readSystemInfo(label, fallback, reader) {
     console.warn(`[system-info] ${label} failed`, error)
     return fallback
   }
+}
+
+function isRuntimeCacheFresh(entry, maxAgeMs) {
+  return Boolean(entry && Number.isFinite(entry.cachedAt) && Date.now() - entry.cachedAt < maxAgeMs)
+}
+
+async function readCachedServiceValue(cacheKey, maxAgeMs, reader) {
+  const memoryEntry = runtimeServiceCache.get(cacheKey)
+  if (isRuntimeCacheFresh(memoryEntry, maxAgeMs)) {
+    return memoryEntry.value
+  }
+
+  const runningPromise = runtimeServicePromiseCache.get(cacheKey)
+  if (runningPromise) {
+    return runningPromise
+  }
+
+  const nextPromise = (async () => {
+    const value = await reader()
+    const entry = {
+      cachedAt: Date.now(),
+      value,
+    }
+    runtimeServiceCache.set(cacheKey, entry)
+    return value
+  })().finally(() => {
+    runtimeServicePromiseCache.delete(cacheKey)
+  })
+
+  runtimeServicePromiseCache.set(cacheKey, nextPromise)
+  return nextPromise
+}
+
+export function configureSystemServiceContext({ pluginRoot, utools } = {}) {
+  configuredPluginRoot = typeof pluginRoot === 'string' && pluginRoot.trim()
+    ? path.resolve(pluginRoot)
+    : ''
+  configuredUtoolsRuntime = utools
 }
 
 function normalizeJsonArray(value) {
@@ -75,6 +114,14 @@ function toNumber(value) {
 
 function isWindows() {
   return typeof process !== 'undefined' && process.platform === 'win32'
+}
+
+function getDefaultHardwareSensorSettings() {
+  return {
+    enhancedSensorEnabled: isWindows(),
+    openHardwareMonitorAutoStart: isWindows(),
+    openHardwareMonitorPort: DEFAULT_HARDWARE_SENSOR_SETTINGS.openHardwareMonitorPort,
+  }
 }
 
 function isValidCpuTemperature(value) {
@@ -184,8 +231,12 @@ function normalizeHardwareSensorSettings(input) {
 }
 
 function getHardwareSensorSettings() {
+  if (!isWindows()) {
+    return normalizeHardwareSensorSettings(getDefaultHardwareSensorSettings())
+  }
+
   return normalizeHardwareSensorSettings({
-    ...DEFAULT_HARDWARE_SENSOR_SETTINGS,
+    ...getDefaultHardwareSensorSettings(),
     ...(readHardwareSensorSettingsRaw() || {}),
   })
 }
@@ -230,6 +281,10 @@ async function stopPluginManagedOpenHardwareMonitor() {
 }
 
 async function updateHardwareSensorSettings(patch = {}) {
+  if (!isWindows()) {
+    return normalizeHardwareSensorSettings(getDefaultHardwareSensorSettings())
+  }
+
   const previous = getHardwareSensorSettings()
   const next = normalizeHardwareSensorSettings({
     ...previous,
@@ -396,6 +451,20 @@ function scoreCpuFanSensor(sensor) {
   return 40
 }
 
+function scoreCpuClockSensor(sensor) {
+  const haystack = normalizeSensorText(sensor)
+
+  if (haystack.includes('bus speed') || haystack.includes('bclk') || haystack.includes('base clock')) return 5
+  if (haystack.includes('core max')) return 130
+  if (/core\s*#?\d+/.test(haystack)) return 125
+  if (haystack.includes('average') || haystack.includes('avg')) return 120
+  if (haystack.includes('cpu core')) return 115
+  if (haystack.includes('package')) return 105
+  if (haystack.includes('core')) return 100
+  if (haystack.includes('cpu') || haystack.includes('processor')) return 90
+  return 40
+}
+
 function scoreGpuTemperatureSensor(sensor) {
   const haystack = `${sensor.name} ${sensor.identifier}`.toLowerCase()
   if (haystack.includes('hot spot') || haystack.includes('hotspot')) return 92
@@ -490,7 +559,7 @@ function scoreBoardFanSensor(sensor) {
 
 async function queryHardwareMonitorSensors(namespace, sensorType) {
   if (typeof process === 'undefined' || process.platform !== 'win32') return []
-  if (!['Temperature', 'Load', 'Power', 'Voltage', 'Fan'].includes(sensorType)) return []
+  if (!['Temperature', 'Load', 'Power', 'Voltage', 'Fan', 'Clock'].includes(sensorType)) return []
 
   return queryWmiSensors(namespace, sensorType)
 }
@@ -590,20 +659,74 @@ function uniquePaths(paths) {
   return [...new Set(paths.filter((item) => typeof item === 'string' && item.trim()))]
 }
 
-function getOpenHardwareMonitorDirectoryCandidates() {
-  const cwd = typeof process?.cwd === 'function' ? process.cwd() : ''
+function normalizeWindowsFilePath(pathnameValue = '') {
+  if (!pathnameValue) return ''
+  const decodedPath = decodeURIComponent(pathnameValue)
+  return decodedPath.replace(/^\/([A-Za-z]:[\\/])/, '$1')
+}
+
+function getRuntimeRootCandidates() {
   const dirname = typeof __dirname === 'string' ? __dirname : ''
+  const filenameDir = typeof __filename === 'string' ? path.dirname(__filename) : ''
   const resourcesPath = typeof process?.resourcesPath === 'string' ? process.resourcesPath : ''
+  const locationPathname = typeof globalThis?.location?.pathname === 'string'
+    ? normalizeWindowsFilePath(globalThis.location.pathname)
+    : ''
+  const locationDir = locationPathname ? path.dirname(locationPathname) : ''
+
+  const baseCandidates = uniquePaths([
+    locationDir,
+    filenameDir,
+    dirname,
+    resourcesPath,
+  ])
+
+  const pluginRoots = []
+
+  for (const baseCandidate of baseCandidates) {
+    let current = path.resolve(baseCandidate)
+
+    for (let depth = 0; depth < 6; depth += 1) {
+      if (
+        fs.existsSync(path.join(current, 'plugin.json'))
+        || fs.existsSync(path.join(current, 'preload.js'))
+      ) {
+        pluginRoots.push(current)
+      }
+
+      const parent = path.dirname(current)
+      if (!parent || parent === current) {
+        break
+      }
+      current = parent
+    }
+  }
+
+  return {
+    configuredPluginRoot,
+    locationDir,
+    dirname,
+    filenameDir,
+    resourcesPath,
+    pluginRoots: uniquePaths(pluginRoots),
+  }
+}
+
+function getOpenHardwareMonitorDirectoryCandidates() {
+  const runtimeRoots = getRuntimeRootCandidates()
+  const rootCandidates = uniquePaths([
+    runtimeRoots.configuredPluginRoot,
+    ...runtimeRoots.pluginRoots,
+    runtimeRoots.locationDir,
+    runtimeRoots.filenameDir,
+    runtimeRoots.dirname,
+    runtimeRoots.resourcesPath,
+  ])
 
   return uniquePaths([
-    cwd ? path.join(cwd, 'vendor', 'openhardwaremonitor') : '',
-    cwd ? path.join(cwd, 'dist', 'vendor', 'openhardwaremonitor') : '',
-    cwd ? path.join(cwd, 'dist-electron', 'vendor', 'openhardwaremonitor') : '',
-    dirname ? path.join(dirname, 'vendor', 'openhardwaremonitor') : '',
-    dirname ? path.join(dirname, '..', 'vendor', 'openhardwaremonitor') : '',
-    dirname ? path.join(dirname, '..', '..', 'vendor', 'openhardwaremonitor') : '',
-    dirname ? path.join(dirname, '..', '..', '..', 'vendor', 'openhardwaremonitor') : '',
-    resourcesPath ? path.join(resourcesPath, 'vendor', 'openhardwaremonitor') : '',
+    ...rootCandidates.map((rootPath) => path.join(rootPath, 'vendor', 'openhardwaremonitor')),
+    ...rootCandidates.map((rootPath) => path.join(rootPath, 'dist', 'vendor', 'openhardwaremonitor')),
+    ...rootCandidates.map((rootPath) => path.join(rootPath, 'dist-electron', 'vendor', 'openhardwaremonitor')),
   ])
 }
 
@@ -638,6 +761,123 @@ function getBundledOpenHardwareMonitorPath() {
   return resolveOpenHardwareMonitorExecutable().executablePath
 }
 
+function getUtoolsRuntime() {
+  return configuredUtoolsRuntime || globalThis?.utools || (typeof utools !== 'undefined' ? utools : undefined)
+}
+
+function isAsarPath(targetPath = '') {
+  return /(^|[\\/])[^\\/]+\.asar([\\/]|$)/i.test(targetPath)
+}
+
+function readTextIfExists(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8').trim()
+  } catch {
+    return ''
+  }
+}
+
+function readFirstLineIfExists(filePath) {
+  const text = readTextIfExists(filePath)
+  if (!text) return ''
+  return text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || ''
+}
+
+function safePathSegment(value) {
+  return String(value || 'default')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 64)
+}
+
+function getOpenHardwareMonitorBundleVersion(sourceDirectoryPath) {
+  const versionFile = path.join(sourceDirectoryPath, 'VERSION.txt')
+  const firstLine = readFirstLineIfExists(versionFile)
+  const versionMatch = firstLine.match(/\b\d+(?:\.\d+){1,3}\b/)
+
+  if (versionMatch) {
+    return versionMatch[0]
+  }
+
+  const fullText = readTextIfExists(versionFile)
+  const labeledMatch = fullText.match(/Version:\s*([0-9]+(?:\.[0-9]+){1,3})/i)
+  if (labeledMatch?.[1]) {
+    return labeledMatch[1]
+  }
+
+  return 'default'
+}
+
+function copyDirectoryRecursive(sourceDir, targetDir) {
+  fs.mkdirSync(targetDir, { recursive: true })
+
+  const entries = fs.readdirSync(sourceDir, { withFileTypes: true })
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name)
+    const targetPath = path.join(targetDir, entry.name)
+
+    if (entry.isDirectory()) {
+      copyDirectoryRecursive(sourcePath, targetPath)
+      continue
+    }
+
+    if (entry.isFile()) {
+      fs.writeFileSync(targetPath, fs.readFileSync(sourcePath))
+    }
+  }
+}
+
+function ensurePhysicalOpenHardwareMonitor(resolved = resolveOpenHardwareMonitorExecutable()) {
+  const baseResult = {
+    ...resolved,
+    insideAsar: isAsarPath(resolved.executablePath),
+    runtimeDirectoryPath: resolved.directoryPath,
+    runtimeExecutablePath: resolved.executablePath,
+    runtimeExists: resolved.exists,
+  }
+
+  if (!resolved.exists) {
+    return {
+      ...baseResult,
+      reason: 'OHM_EXE_NOT_FOUND',
+      suggestion: 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
+    }
+  }
+
+  if (!baseResult.insideAsar) {
+    return baseResult
+  }
+
+  const utoolsRuntime = getUtoolsRuntime()
+  const userDataPath = utoolsRuntime?.getPath?.('userData')
+
+  if (!userDataPath) {
+    return {
+      ...baseResult,
+      runtimeExists: false,
+      reason: 'OHM_USERDATA_UNAVAILABLE',
+      suggestion: '当前环境无法解析 uTools userData 目录，不能从 asar 解包 OHM',
+    }
+  }
+
+  const version = safePathSegment(getOpenHardwareMonitorBundleVersion(resolved.directoryPath))
+  const runtimeDirectoryPath = path.join(userDataPath, 'system-info-plugin', 'vendor', `openhardwaremonitor-${version}`)
+  const runtimeExecutablePath = path.join(runtimeDirectoryPath, OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+
+  if (!fs.existsSync(runtimeExecutablePath)) {
+    copyDirectoryRecursive(resolved.directoryPath, runtimeDirectoryPath)
+  }
+
+  return {
+    ...baseResult,
+    runtimeDirectoryPath,
+    runtimeExecutablePath,
+    runtimeExists: fs.existsSync(runtimeExecutablePath),
+    reason: fs.existsSync(runtimeExecutablePath) ? undefined : 'OHM_RUNTIME_COPY_FAILED',
+    suggestion: fs.existsSync(runtimeExecutablePath) ? undefined : 'OpenHardwareMonitor 从插件包复制到本地目录失败',
+  }
+}
+
 async function isProcessRunning(processName) {
   if (!isWindows()) return false
 
@@ -656,15 +896,15 @@ async function isProcessRunning(processName) {
 function buildOpenHardwareMonitorStatusResult(overrides = {}) {
   const settings = overrides.settings || getHardwareSensorSettings()
   const resolved = overrides.resolved || resolveOpenHardwareMonitorExecutable()
-  const executablePath = overrides.executablePath || resolved.executablePath
+  const executablePath = overrides.executablePath || resolved.runtimeExecutablePath || resolved.executablePath
 
   return {
     platform: isWindows() ? 'win32' : 'other',
     settings,
     running: Boolean(overrides.running),
-    executableExists: typeof overrides.executableExists === 'boolean' ? overrides.executableExists : Boolean(resolved.exists),
+    executableExists: typeof overrides.executableExists === 'boolean' ? overrides.executableExists : Boolean(resolved.runtimeExists ?? resolved.exists),
     executablePath,
-    executableDirectory: overrides.executableDirectory || resolved.directoryPath,
+    executableDirectory: overrides.executableDirectory || resolved.runtimeDirectoryPath || resolved.directoryPath,
     port: settings.openHardwareMonitorPort,
     started: Boolean(overrides.started),
     reason: overrides.reason,
@@ -674,7 +914,7 @@ function buildOpenHardwareMonitorStatusResult(overrides = {}) {
 
 async function getOpenHardwareMonitorStatus() {
   const settings = getHardwareSensorSettings()
-  const resolved = resolveOpenHardwareMonitorExecutable()
+  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
 
   if (!isWindows()) {
     return buildOpenHardwareMonitorStatusResult({
@@ -686,8 +926,8 @@ async function getOpenHardwareMonitorStatus() {
     })
   }
 
-  const executablePath = resolved.executablePath
-  const executableExists = resolved.exists
+  const executablePath = resolved.runtimeExecutablePath
+  const executableExists = resolved.runtimeExists
   const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
 
   return buildOpenHardwareMonitorStatusResult({
@@ -696,13 +936,14 @@ async function getOpenHardwareMonitorStatus() {
     running,
     executableExists,
     executablePath,
-    reason: running ? undefined : executableExists ? 'OHM_NOT_RUNNING' : 'OHM_EXE_NOT_FOUND',
-    suggestion: executableExists ? undefined : 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
+    executableDirectory: resolved.runtimeDirectoryPath,
+    reason: running ? undefined : executableExists ? 'OHM_NOT_RUNNING' : resolved.reason || 'OHM_EXE_NOT_FOUND',
+    suggestion: executableExists ? undefined : resolved.suggestion || 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
   })
 }
 
 async function startBundledOpenHardwareMonitor() {
-  const resolved = resolveOpenHardwareMonitorExecutable()
+  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
 
   if (!isWindows()) {
     return buildOpenHardwareMonitorStatusResult({
@@ -711,15 +952,16 @@ async function startBundledOpenHardwareMonitor() {
     })
   }
 
-  const executablePath = resolved.executablePath
+  const executablePath = resolved.runtimeExecutablePath
 
-  if (!resolved.exists) {
+  if (!resolved.runtimeExists) {
     return buildOpenHardwareMonitorStatusResult({
       resolved,
       executableExists: false,
       executablePath,
-      reason: 'OHM_EXE_NOT_FOUND',
-      suggestion: 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
+      executableDirectory: resolved.runtimeDirectoryPath,
+      reason: resolved.reason || 'OHM_EXE_NOT_FOUND',
+      suggestion: resolved.suggestion || 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
     })
   }
 
@@ -742,26 +984,28 @@ async function startBundledOpenHardwareMonitor() {
     openHardwareMonitorLastStartAt = Date.now()
 
     return buildOpenHardwareMonitorStatusResult({
-      resolved,
-      executableExists: true,
-      executablePath,
-      started: true,
-    })
+        resolved,
+        executableExists: true,
+        executablePath,
+        executableDirectory: resolved.runtimeDirectoryPath,
+        started: true,
+      })
   } catch (error) {
     return buildOpenHardwareMonitorStatusResult({
-      resolved,
-      executableExists: true,
-      executablePath,
-      reason: 'OHM_START_FAILED',
-      suggestion: '可能需要管理员权限，或被安全软件拦截',
-      error: error instanceof Error ? error.message : String(error),
+        resolved,
+        executableExists: true,
+        executablePath,
+        executableDirectory: resolved.runtimeDirectoryPath,
+        reason: 'OHM_START_FAILED',
+        suggestion: '可能需要管理员权限，或被安全软件拦截',
+        error: error instanceof Error ? error.message : String(error),
     })
   }
 }
 
 async function ensureOpenHardwareMonitorRunning() {
   const settings = getHardwareSensorSettings()
-  const resolved = resolveOpenHardwareMonitorExecutable()
+  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
 
   if (!isWindows()) {
     return buildOpenHardwareMonitorStatusResult({
@@ -774,22 +1018,26 @@ async function ensureOpenHardwareMonitorRunning() {
   const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
   if (running) {
     return buildOpenHardwareMonitorStatusResult({
-      settings,
-      resolved,
-      running: true,
-      executableExists: resolved.exists,
-    })
+        settings,
+        resolved,
+        running: true,
+        executableExists: resolved.runtimeExists,
+        executableDirectory: resolved.runtimeDirectoryPath,
+        executablePath: resolved.runtimeExecutablePath,
+      })
   }
 
   if (!settings.enhancedSensorEnabled || !settings.openHardwareMonitorAutoStart) {
     return buildOpenHardwareMonitorStatusResult({
-      settings,
-      resolved,
-      running: false,
-      executableExists: resolved.exists,
-      reason: 'OHM_AUTOSTART_DISABLED',
-      suggestion: '开启增强模式后，可再启用自动启动 OpenHardwareMonitor',
-    })
+        settings,
+        resolved,
+        running: false,
+        executableExists: resolved.runtimeExists,
+        executableDirectory: resolved.runtimeDirectoryPath,
+        executablePath: resolved.runtimeExecutablePath,
+        reason: resolved.runtimeExists ? 'OHM_AUTOSTART_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
+        suggestion: '开启增强模式后，可再启用自动启动 OpenHardwareMonitor',
+      })
   }
 
   const now = Date.now()
@@ -799,13 +1047,15 @@ async function ensureOpenHardwareMonitorRunning() {
 
   if (now - openHardwareMonitorLastStartAt < OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS) {
     return buildOpenHardwareMonitorStatusResult({
-      settings,
-      resolved,
-      running: false,
-      executableExists: resolved.exists,
-      reason: 'OHM_START_COOLDOWN',
-      suggestion: '刚刚尝试过启动 OpenHardwareMonitor，请稍后再试',
-    })
+        settings,
+        resolved,
+        running: false,
+        executableExists: resolved.runtimeExists,
+        executableDirectory: resolved.runtimeDirectoryPath,
+        executablePath: resolved.runtimeExecutablePath,
+        reason: 'OHM_START_COOLDOWN',
+        suggestion: '刚刚尝试过启动 OpenHardwareMonitor，请稍后再试',
+      })
   }
 
   openHardwareMonitorStartPromise = Promise.resolve(startBundledOpenHardwareMonitor())
@@ -983,7 +1233,7 @@ async function readOpenHardwareMonitorHttp(port = DEFAULT_HARDWARE_SENSOR_SETTIN
 
 async function startOpenHardwareMonitorManually() {
   const settings = getHardwareSensorSettings()
-  const resolved = resolveOpenHardwareMonitorExecutable()
+  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
 
   if (!isWindows()) {
     return buildOpenHardwareMonitorStatusResult({
@@ -995,12 +1245,14 @@ async function startOpenHardwareMonitorManually() {
 
   if (!settings.enhancedSensorEnabled) {
     return buildOpenHardwareMonitorStatusResult({
-      settings,
-      resolved,
-      executableExists: resolved.exists,
-      reason: 'ENHANCED_SENSOR_DISABLED',
-      suggestion: '请先开启硬件传感器增强模式',
-    })
+        settings,
+        resolved,
+        executableExists: resolved.runtimeExists,
+        executableDirectory: resolved.runtimeDirectoryPath,
+        executablePath: resolved.runtimeExecutablePath,
+        reason: resolved.runtimeExists ? 'ENHANCED_SENSOR_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
+        suggestion: '请先开启硬件传感器增强模式',
+      })
   }
 
   const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
@@ -1009,7 +1261,9 @@ async function startOpenHardwareMonitorManually() {
       settings,
       resolved,
       running: true,
-      executableExists: resolved.exists,
+      executableExists: resolved.runtimeExists,
+      executableDirectory: resolved.runtimeDirectoryPath,
+      executablePath: resolved.runtimeExecutablePath,
     })
   }
 
@@ -1025,8 +1279,9 @@ async function startOpenHardwareMonitorManually() {
     settings,
     resolved,
     running: startedRunning,
-    executableExists: resolved.exists,
-    executablePath: resolved.executablePath,
+    executableExists: resolved.runtimeExists,
+    executableDirectory: resolved.runtimeDirectoryPath,
+    executablePath: resolved.runtimeExecutablePath,
     started: startedRunning,
     reason: startedRunning ? undefined : 'OHM_START_FAILED',
     suggestion: startedRunning ? undefined : '插件尝试启动失败。请手动打开一次 OpenHardwareMonitor，确认没有被权限或安全软件拦截。',
@@ -1036,23 +1291,43 @@ async function startOpenHardwareMonitorManually() {
 async function openOpenHardwareMonitorDirectory() {
   if (!isWindows()) return false
 
-  const resolved = resolveOpenHardwareMonitorExecutable()
-  const directoryPath = resolved.directoryPath
+  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
+  const directoryPath = resolved.runtimeDirectoryPath
 
-  if (!directoryPath || !fs.existsSync(directoryPath)) {
-    return false
+  if (!directoryPath || !resolved.runtimeExists || !fs.existsSync(directoryPath)) {
+    return {
+      ok: false,
+      directoryPath,
+      reason: resolved.reason || 'OHM_EXE_NOT_FOUND',
+      suggestion: resolved.suggestion || 'OpenHardwareMonitor 目录不可用',
+    }
   }
 
   try {
-    const child = spawn('explorer.exe', [directoryPath], {
-      detached: true,
-      stdio: 'ignore',
+    const utoolsRuntime = getUtoolsRuntime()
+    if (utoolsRuntime && typeof utoolsRuntime.shellOpenPath === 'function') {
+      utoolsRuntime.shellOpenPath(directoryPath)
+      return {
+        ok: true,
+        directoryPath,
+      }
+    }
+
+    await execFileAsync('explorer.exe', [path.normalize(directoryPath)], {
       windowsHide: false,
+      timeout: 4000,
     })
-    child.unref()
-    return true
-  } catch {
-    return false
+    return {
+      ok: true,
+      directoryPath,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      directoryPath,
+      reason: 'OHM_OPEN_DIRECTORY_FAILED',
+      suggestion: error instanceof Error ? error.message : String(error),
+    }
   }
 }
 
@@ -1169,6 +1444,49 @@ async function getHardwareMonitorCpuFanSpeed() {
     sensorName: mainSensor?.name,
     unit: 'RPM',
     max: Math.max(...sensors.map((sensor) => sensor.value)),
+  }
+}
+
+async function getHardwareMonitorCpuCurrentSpeed() {
+  const sensors = (await getHardwareMonitorSensors('Clock'))
+    .filter(isCpuSensor)
+    .filter((sensor) => {
+      const haystack = normalizeSensorText(sensor)
+      return !haystack.includes('bus speed') && !haystack.includes('bclk') && !haystack.includes('base clock')
+    })
+
+  if (!sensors.length) return undefined
+
+  const normalized = sensors
+    .map((sensor) => {
+      const value = typeof sensor.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null
+      if (value === null || value <= 0) return null
+      const ghzValue = value > 20 ? value / 1000 : value
+      if (!Number.isFinite(ghzValue) || ghzValue <= 0 || ghzValue > 10) return null
+      return {
+        ...sensor,
+        ghzValue: Math.round(ghzValue * 100) / 100,
+      }
+    })
+    .filter(Boolean)
+
+  if (!normalized.length) return undefined
+
+  const mainSensor = [...normalized].sort((a, b) => scoreCpuClockSensor(b) - scoreCpuClockSensor(a))[0]
+  const coreValues = normalized
+    .filter((sensor) => /core\s*#?\d+|core max/i.test(normalizeSensorText(sensor)))
+    .map((sensor) => sensor.ghzValue)
+
+  const allValues = normalized.map((sensor) => sensor.ghzValue)
+  const avgFromAll = allValues.reduce((sum, value) => sum + value, 0) / allValues.length
+
+  return {
+    min: Math.min(...allValues),
+    max: Math.max(...allValues),
+    avg: Math.round(avgFromAll * 100) / 100,
+    cores: coreValues,
+    source: mainSensor?.source?.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor',
+    sensorName: mainSensor?.name,
   }
 }
 
@@ -1542,27 +1860,15 @@ async function readGpuInfo() {
 }
 
 async function getGpuInfo() {
-  const now = Date.now()
+  return readCachedServiceValue('gpuInfo', 5000, readGpuInfo)
+}
 
-  if (gpuInfoPromise) {
-    return gpuInfoPromise
-  }
-
-  if (gpuInfoCache.length && now - gpuInfoCacheAt < 2000) {
-    return gpuInfoCache
-  }
-
-  gpuInfoPromise = readGpuInfo()
-    .then((result) => {
-      gpuInfoCache = result
-      gpuInfoCacheAt = Date.now()
-      return result
-    })
-    .finally(() => {
-      gpuInfoPromise = undefined
-    })
-
-  return gpuInfoPromise
+async function getCurrentLoadSnapshot() {
+  return readCachedServiceValue(
+    'currentLoadSnapshot',
+    2000,
+    () => readSystemInfo('currentLoadSnapshot', emptyCurrentLoadData, () => si.currentLoad())
+  )
 }
 
 export const systemService = {
@@ -1576,66 +1882,127 @@ export const systemService = {
 
   openOpenHardwareMonitorDirectory,
 
-  getCpuInfo: () => readSystemInfo('cpu', undefined, () => si.cpu()),
-
-  getCpuFullLoad: () =>
-    readSystemInfo('currentLoad', 0, async () => {
-      const current = await si.currentLoad()
-      return Math.round(current.currentLoad)
-    }),
-
-  getCpuTemperature: () =>
-    readSystemInfo(
-      'cpuTemperature',
-      buildCpuTemperatureResult(
-        {
-          errorCode: 'CPU_TEMPERATURE_SERVICE_FALLBACK',
-          message: 'readSystemInfo 捕获到未处理异常',
-          confidence: 'unsupported',
-        },
-        'unsupported',
-        undefined,
-        null
-      ),
-      getCpuTemperature
+  getCpuInfo: () =>
+    readCachedServiceValue(
+      'cpuInfo',
+      30000,
+      () => readSystemInfo('cpu', undefined, () => si.cpu())
     ),
 
-  getCpuPower: () => readSystemInfo('cpuPower', undefined, getHardwareMonitorCpuPower),
+  getCpuFullLoad: () =>
+    readCachedServiceValue(
+      'cpuFullLoad',
+      2000,
+      async () => {
+        const current = await getCurrentLoadSnapshot()
+        return Math.round(current.currentLoad || 0)
+      }
+    ),
 
-  getCpuCurrentSpeed: () => readSystemInfo('cpuCurrentSpeed', { min: 0, max: 0, avg: 0, cores: [] }, () => si.cpuCurrentSpeed()),
+  getCpuTemperature: () =>
+    readCachedServiceValue(
+      'cpuTemperature',
+      5000,
+      () => readSystemInfo(
+        'cpuTemperature',
+        buildCpuTemperatureResult(
+          {
+            errorCode: 'CPU_TEMPERATURE_SERVICE_FALLBACK',
+            message: 'readSystemInfo 捕获到未处理异常',
+            confidence: 'unsupported',
+          },
+          'unsupported',
+          undefined,
+          null
+        ),
+        getCpuTemperature
+      )
+    ),
 
-  getCpuLoadData: () => readSystemInfo('currentLoadData', emptyCurrentLoadData, () => si.currentLoad()),
+  getCpuPower: () =>
+    readCachedServiceValue(
+      'cpuPower',
+      8000,
+      () => readSystemInfo('cpuPower', undefined, getHardwareMonitorCpuPower)
+    ),
 
-  getCpuVoltage: () => readSystemInfo('cpuVoltage', { value: null, source: 'unsupported', unit: 'V', max: null }, getHardwareMonitorCpuVoltage),
+  getCpuCurrentSpeed: () =>
+    readCachedServiceValue(
+      'cpuCurrentSpeed',
+      2000,
+      async () => {
+        const fallback = { min: 0, max: 0, avg: 0, cores: [] }
+
+        if (isWindows()) {
+          const hardwareMonitorSpeed = await readSystemInfo('cpuClockSensors', undefined, getHardwareMonitorCpuCurrentSpeed)
+          if (hardwareMonitorSpeed?.cores?.length || hardwareMonitorSpeed?.avg) {
+            return hardwareMonitorSpeed
+          }
+        }
+
+        return readSystemInfo('cpuCurrentSpeed', fallback, () => si.cpuCurrentSpeed())
+      }
+    ),
+
+  getCpuLoadData: () =>
+    readCachedServiceValue(
+      'cpuLoadData',
+      2000,
+      async () => {
+        const current = await getCurrentLoadSnapshot()
+        return current || emptyCurrentLoadData
+      }
+    ),
+
+  getCpuVoltage: () =>
+    readCachedServiceValue(
+      'cpuVoltage',
+      8000,
+      () => readSystemInfo('cpuVoltage', { value: null, source: 'unsupported', unit: 'V', max: null }, getHardwareMonitorCpuVoltage)
+    ),
 
   getCpuFanSpeed: () => readSystemInfo('cpuFanSpeed', { value: null, source: 'unsupported', unit: 'RPM', max: null }, getHardwareMonitorCpuFanSpeed),
 
-  getBoardTelemetry: () => readSystemInfo('boardTelemetry', createEmptyBoardTelemetry(), getBoardTelemetry),
+  getBoardTelemetry: () =>
+    readCachedServiceValue(
+      'boardTelemetry',
+      8000,
+      () => readSystemInfo('boardTelemetry', createEmptyBoardTelemetry(), getBoardTelemetry)
+    ),
 
-  getMemInfo: () => readSystemInfo(
-    'mem',
-    {
-      active: 0,
-      available: 0,
-      total: 0,
-      free: 0,
-      used: 0,
-      rawActive: 0,
-      rawAvailable: 0,
-      normalizedPlatform: '',
-      swaptotal: 0,
-      swapused: 0,
-      swapfree: 0,
-      pressure: MAC_MEMORY_PRESSURE_FALLBACK,
-    },
-    async () => {
-      const memory = await si.mem()
-      const pressure = await getMacMemoryPressure()
-      return normalizeMemoryInfo(memory, pressure)
-    }
+  getMemInfo: () => readCachedServiceValue(
+    'memInfo',
+    3000,
+    () => readSystemInfo(
+      'mem',
+      {
+        active: 0,
+        available: 0,
+        total: 0,
+        free: 0,
+        used: 0,
+        rawActive: 0,
+        rawAvailable: 0,
+        normalizedPlatform: '',
+        swaptotal: 0,
+        swapused: 0,
+        swapfree: 0,
+        pressure: MAC_MEMORY_PRESSURE_FALLBACK,
+      },
+      async () => {
+        const memory = await si.mem()
+        const pressure = await getMacMemoryPressure()
+        return normalizeMemoryInfo(memory, pressure)
+      }
+    )
   ),
 
-  getMemoryLayout: () => readSystemInfo('memLayout', [], () => si.memLayout()),
+  getMemoryLayout: () =>
+    readCachedServiceValue(
+      'memoryLayout',
+      30000,
+      () => readSystemInfo('memLayout', [], () => si.memLayout())
+    ),
 
   getGpuInfo,
 
@@ -1652,22 +2019,45 @@ export const systemService = {
   getNetworkInterfaces: () => readSystemInfo('networkInterfaces', [], () => si.networkInterfaces()),
 
   getDiskData: () =>
-    readSystemInfo('fsSize', [], async () => {
-      const disks = await si.fsSize()
-      return disks.map(normalizeDiskUsage)
-    }),
+    readCachedServiceValue(
+      'diskData',
+      6000,
+      () => readSystemInfo('fsSize', [], async () => {
+        const disks = await si.fsSize()
+        return disks.map(normalizeDiskUsage)
+      })
+    ),
 
-  getDiskLayout: () => readSystemInfo('diskLayout', [], () => si.diskLayout()),
+  getDiskLayout: () =>
+    readCachedServiceValue(
+      'diskLayout',
+      30000,
+      () => readSystemInfo('diskLayout', [], () => si.diskLayout())
+    ),
 
-  getBiosData: () => readSystemInfo('bios', undefined, () => si.bios()),
+  getBiosData: () =>
+    readCachedServiceValue(
+      'biosData',
+      30000,
+      () => readSystemInfo('bios', undefined, () => si.bios())
+    ),
 
   getDisplaysData: () =>
-    readSystemInfo('displays', [], async () => {
-      const graphics = await si.graphics()
-      return graphics.displays || []
-    }),
+    readCachedServiceValue(
+      'displaysData',
+      30000,
+      () => readSystemInfo('displays', [], async () => {
+        const graphics = await si.graphics()
+        return graphics.displays || []
+      })
+    ),
 
-  getBoardData: () => readSystemInfo('baseboard', undefined, () => si.baseboard()),
+  getBoardData: () =>
+    readCachedServiceValue(
+      'boardData',
+      30000,
+      () => readSystemInfo('baseboard', undefined, () => si.baseboard())
+    ),
 
   getBatteryInfo: () => readSystemInfo('battery', undefined, () => si.battery()),
 
@@ -1679,8 +2069,18 @@ export const systemService = {
 
   getPrinterInfo: () => readSystemInfo('printer', [], () => si.printer()),
 
-  getOsInfo: () => readSystemInfo('osInfo', undefined, () => si.osInfo()),
+  getOsInfo: () =>
+    readCachedServiceValue(
+      'osInfo',
+      30000,
+      () => readSystemInfo('osInfo', undefined, () => si.osInfo())
+    ),
 
   getSysEnv: () => readSystemInfo('versions', {}, () => si.versions()),
-  getTimeInfo: () => readSystemInfo('time', undefined, () => si.time()),
+  getTimeInfo: () =>
+    readCachedServiceValue(
+      'timeInfo',
+      5000,
+      () => readSystemInfo('time', undefined, () => si.time())
+    ),
 }

@@ -30,7 +30,6 @@ type SharedMetricHistoryKey =
   | 'cpuSpeed'
   | 'cpuVoltage'
   | 'cpuPower'
-  | 'cpuFan'
   | 'gpuClock'
   | 'gpuMemory'
   | 'gpuPower'
@@ -113,7 +112,6 @@ const cpuLoadData = ref<CurrentLoadData>(emptyCurrentLoadData)
 const cpuCurrentSpeed = ref<CpuCurrentSpeedData>(emptyCpuCurrentSpeedData)
 const cpuPower = ref<CpuPowerData>()
 const cpuVoltage = ref<CpuVoltageData>()
-const cpuFan = ref<CpuFanData>()
 const boardTelemetry = ref<BoardTelemetryData>({
   boardTemperature: { value: null, source: 'unsupported', unit: '°C', max: null },
   vrmTemperature: { value: null, source: 'unsupported', unit: '°C', max: null },
@@ -149,7 +147,6 @@ const metricHistory = reactive<Record<SharedMetricHistoryKey, number[]>>({
   cpuSpeed: [],
   cpuVoltage: [],
   cpuPower: [],
-  cpuFan: [],
   gpuClock: [],
   gpuMemory: [],
   gpuPower: [],
@@ -178,6 +175,20 @@ let initPromise: Promise<void> | undefined
 let refreshInFlight: Promise<void> | undefined
 let pollingTimerId: number | undefined
 let subscriberCount = 0
+let lastCpuTempRefreshAt = 0
+let lastCpuSpeedRefreshAt = 0
+let lastCpuAuxRefreshAt = 0
+let lastBoardTelemetryRefreshAt = 0
+let lastGpuRefreshAt = 0
+
+const DYNAMIC_POLL_INTERVALS = {
+  base: 4000,
+  cpuTemp: 7000,
+  cpuSpeed: 4000,
+  cpuAux: 12000,
+  boardTelemetry: 12000,
+  gpu: 8000,
+} as const
 
 function withTimeout<T>(promise: Promise<T>, timeout = 8000): Promise<T> {
   return Promise.race([
@@ -262,27 +273,33 @@ const storageUsage = computed(() => {
   return { total, used, percent }
 })
 
-async function refreshDynamicMetrics() {
+async function refreshDynamicMetrics(force = false) {
   if (refreshInFlight) return refreshInFlight
 
   refreshInFlight = (async () => {
     try {
-      const [temperatureRes, cpuLoadRes, cpuLoadDataRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, cpuFanRes, boardTelemetryRes, gpuRes, memoRes, diskRes, timeRes] = await Promise.allSettled([
-        readService(() => window.services.getCpuTemperature(), 9000),
+      const now = Date.now()
+      const needsCpuTemp = force || now - lastCpuTempRefreshAt >= DYNAMIC_POLL_INTERVALS.cpuTemp
+      const needsCpuSpeed = force || now - lastCpuSpeedRefreshAt >= DYNAMIC_POLL_INTERVALS.cpuSpeed
+      const needsCpuAux = force || now - lastCpuAuxRefreshAt >= DYNAMIC_POLL_INTERVALS.cpuAux
+      const needsBoardTelemetry = force || now - lastBoardTelemetryRefreshAt >= DYNAMIC_POLL_INTERVALS.boardTelemetry
+      const needsGpu = force || now - lastGpuRefreshAt >= DYNAMIC_POLL_INTERVALS.gpu
+
+      const [temperatureRes, cpuLoadRes, cpuLoadDataRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, boardTelemetryRes, gpuRes, memoRes, diskRes, timeRes] = await Promise.allSettled([
+        needsCpuTemp ? readService(() => window.services.getCpuTemperature(), 9000) : Promise.resolve(undefined),
         readService(() => window.services.getCpuFullLoad(), 6000),
         readService(() => window.services.getCpuLoadData(), 7000),
-        readService(() => window.services.getCpuCurrentSpeed(), 7000),
-        readService(() => window.services.getCpuPower(), 7000),
-        readService(() => window.services.getCpuVoltage(), 7000),
-        readService(() => window.services.getCpuFanSpeed(), 7000),
-        readService(() => window.services.getBoardTelemetry(), 7000),
-        readService(() => window.services.getGpuInfo(), 15000),
+        needsCpuSpeed ? readService(() => window.services.getCpuCurrentSpeed(), 7000) : Promise.resolve(undefined),
+        needsCpuAux ? readService(() => window.services.getCpuPower(), 7000) : Promise.resolve(undefined),
+        needsCpuAux ? readService(() => window.services.getCpuVoltage(), 7000) : Promise.resolve(undefined),
+        needsBoardTelemetry ? readService(() => window.services.getBoardTelemetry(), 7000) : Promise.resolve(undefined),
+        needsGpu ? readService(() => window.services.getGpuInfo(), 15000) : Promise.resolve(undefined),
         readService(() => window.services.getMemInfo(), 6000),
         readService(() => window.services.getDiskData(), 10000),
         readService(() => window.services.getTimeInfo(), 6000),
       ])
 
-      if (temperatureRes.status === 'fulfilled') {
+      if (needsCpuTemp && temperatureRes.status === 'fulfilled') {
         cpuTemperature.value = temperatureRes.value
         const nextCpuTemperatureValue =
           typeof temperatureRes.value?.value === 'number'
@@ -302,7 +319,8 @@ async function refreshDynamicMetrics() {
                 : '服务返回 undefined'
         )
         pushMetricHistory('cpuTemp', nextCpuTemperatureValue || 0)
-      } else {
+        lastCpuTempRefreshAt = now
+      } else if (needsCpuTemp && temperatureRes.status === 'rejected') {
         setFetchState('cpuTemperature', 'error', normalizeErrorMessage(temperatureRes.reason))
       }
 
@@ -318,42 +336,45 @@ async function refreshDynamicMetrics() {
         cpuLoadData.value = cpuLoadDataRes.value || emptyCurrentLoadData
       }
 
-      if (cpuSpeedRes.status === 'fulfilled') {
+      if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
         cpuCurrentSpeed.value = cpuSpeedRes.value || emptyCpuCurrentSpeedData
         pushMetricHistory('cpuSpeed', getDisplayCpuCurrentSpeedGHz(cpuSpeedRes.value || emptyCpuCurrentSpeedData))
+        lastCpuSpeedRefreshAt = now
       }
 
-      if (cpuPowerRes.status === 'fulfilled') {
+      if (needsCpuAux && cpuPowerRes.status === 'fulfilled') {
         cpuPower.value = cpuPowerRes.value
         pushMetricHistory('cpuPower', cpuPowerRes.value?.value || 0)
       }
 
-      if (cpuVoltageRes.status === 'fulfilled') {
+      if (needsCpuAux && cpuVoltageRes.status === 'fulfilled') {
         cpuVoltage.value = cpuVoltageRes.value
         pushMetricHistory('cpuVoltage', cpuVoltageRes.value?.value || 0)
       }
 
-      if (cpuFanRes.status === 'fulfilled') {
-        cpuFan.value = cpuFanRes.value
-        pushMetricHistory('cpuFan', cpuFanRes.value?.value || 0)
+      if (needsCpuAux) {
+        lastCpuAuxRefreshAt = now
       }
 
-      if (boardTelemetryRes.status === 'fulfilled') {
+      if (needsBoardTelemetry && boardTelemetryRes.status === 'fulfilled' && boardTelemetryRes.value) {
         boardTelemetry.value = boardTelemetryRes.value
+        lastBoardTelemetryRefreshAt = now
       }
 
-      if (gpuRes.status === 'fulfilled') {
-        gpuData.value = gpuRes.value || []
-        setFetchState('gpuInfo', gpuRes.value.length ? 'ok' : 'missing', gpuRes.value.length ? '' : '返回空数组')
+      if (needsGpu && gpuRes.status === 'fulfilled') {
+        const nextGpuData = gpuRes.value || []
+        gpuData.value = nextGpuData
+        setFetchState('gpuInfo', nextGpuData.length ? 'ok' : 'missing', nextGpuData.length ? '' : '返回空数组')
 
-        const selectedGpu = [...(gpuRes.value || [])].sort((left, right) => gpuSelectionScore(right) - gpuSelectionScore(left))[0]
+        const selectedGpu = [...nextGpuData].sort((left, right) => gpuSelectionScore(right) - gpuSelectionScore(left))[0]
         pushMetricHistory('gpuTemp', selectedGpu?.temperatureGpu || 0)
         pushMetricHistory('gpuLoad', selectedGpu?.utilizationGpu || 0, true)
         pushMetricHistory('gpuClock', selectedGpu?.clockCore || 0)
         pushMetricHistory('gpuMemory', selectedGpu?.memoryUsed || 0)
         pushMetricHistory('gpuPower', selectedGpu?.powerDraw || 0)
         pushMetricHistory('gpuFan', selectedGpu?.fanSpeed || 0)
-      } else {
+        lastGpuRefreshAt = now
+      } else if (needsGpu && gpuRes.status === 'rejected') {
         setFetchState('gpuInfo', 'error', normalizeErrorMessage(gpuRes.reason))
       }
 
@@ -469,7 +490,7 @@ async function initHardwareData() {
       setFetchState('networkInterfaces', 'error', normalizeErrorMessage(networkRes.reason))
     }
 
-    await refreshDynamicMetrics()
+    await refreshDynamicMetrics(true)
   } finally {
     initialized.value = true
     loading.value = false
@@ -485,7 +506,7 @@ function startPolling() {
 
   pollingTimerId = window.setInterval(() => {
     refreshDynamicMetrics()
-  }, 4000)
+  }, DYNAMIC_POLL_INTERVALS.base)
 }
 
 function stopPolling() {
@@ -532,7 +553,6 @@ export const hardwareStore = {
   cpuCurrentSpeed,
   cpuPower,
   cpuVoltage,
-  cpuFan,
   boardTelemetry,
   memoData,
   memoLayoutData,

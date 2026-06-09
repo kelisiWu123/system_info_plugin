@@ -7,7 +7,7 @@ const props = defineProps<{
   active?: boolean
 }>()
 
-type MetricHistoryKey = 'load' | 'temp' | 'speed' | 'voltage' | 'power' | 'fan'
+type MetricHistoryKey = 'load' | 'temp' | 'speed' | 'voltage' | 'power'
 
 interface MonitorCard {
   id: string
@@ -39,7 +39,6 @@ const {
   cpuTemperature,
   cpuPower,
   cpuVoltage,
-  cpuFan,
   cpuCurrentSpeed,
   cpuLoadData,
   boardData,
@@ -54,7 +53,6 @@ const metricHistory: Record<MetricHistoryKey, number[]> = {
   speed: hardwareStore.metricHistory.cpuSpeed,
   voltage: hardwareStore.metricHistory.cpuVoltage,
   power: hardwareStore.metricHistory.cpuPower,
-  fan: hardwareStore.metricHistory.cpuFan,
 }
 
 const subscribed = ref(false)
@@ -91,6 +89,12 @@ function getHistoryMin(values: number[]) {
 function getHistoryMax(values: number[], fallback = 0) {
   if (!values.length) return fallback
   return Math.max(fallback, ...values)
+}
+
+function getHistoryAverage(values: number[], fallback = 0) {
+  const source = values.filter((value) => Number.isFinite(value) && value > 0)
+  if (!source.length) return fallback
+  return source.reduce((sum, value) => sum + value, 0) / source.length
 }
 
 function ringStyle(percent: number, accent: string) {
@@ -149,10 +153,6 @@ function formatVoltage(value: number | null) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(2)} V` : '暂不支持'
 }
 
-function formatFan(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} RPM` : '暂不支持'
-}
-
 function formatSensorReason(reason?: string) {
   switch (reason) {
     case 'ENHANCED_SENSOR_DISABLED':
@@ -167,12 +167,22 @@ function formatSensorReason(reason?: string) {
       return '启动冷却中'
     case 'OHM_START_FAILED':
       return '启动失败'
+    case 'OHM_START_PENDING':
+      return '启动中'
     case 'OHM_HTTP_UNAVAILABLE':
       return '本地服务不可达'
     case 'OHM_HTTP_BAD_STATUS':
       return '本地服务状态异常'
     case 'OHM_NO_CPU_TEMP_SENSOR':
       return '没有可信 CPU 温度传感器'
+    case 'OHM_DIRECTORY_OPENED':
+      return '目录已打开'
+    case 'OHM_OPEN_DIRECTORY_FAILED':
+      return '打开目录失败'
+    case 'OHM_USERDATA_UNAVAILABLE':
+      return '本地数据目录不可用'
+    case 'OHM_RUNTIME_COPY_FAILED':
+      return '组件释放失败'
     case 'TEMPERATURE_UNAVAILABLE':
     case 'CPU_TEMPERATURE_UNAVAILABLE':
       return 'CPU 温度不可用'
@@ -302,7 +312,6 @@ const cpuTemperatureValue = computed(() => {
 
 const cpuPowerValue = computed(() => safeNumber(cpuPower.value?.value))
 const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? parseVoltageString(cpuData.value?.voltage))
-const cpuFanValue = computed(() => safeNumber(cpuFan.value?.value))
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
 const currentSpeedValue = computed(() => {
   const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
@@ -451,8 +460,8 @@ const monitorCards = computed<MonitorCard[]>(() => [
     accent: 'var(--accent-blue)',
     percent: currentSpeedMax.value > 0 ? clampPercent(((currentSpeedValue.value || 0) / currentSpeedMax.value) * 100) : 0,
     trend: metricHistory.speed,
-    footerLeft: `基准 ${formatFrequency(safeNumber(cpuData.value?.speed))}`,
-    footerRight: `睿频 ${formatFrequency(safeNumber(cpuData.value?.speedMax))}`,
+    footerLeft: `均值 ${formatFrequency(getHistoryAverage(metricHistory.speed, currentSpeedValue.value || 0))}`,
+    footerRight: `峰值 ${formatFrequency(getHistoryMax(metricHistory.speed, currentSpeedValue.value || 0))}`,
   },
   {
     id: 'voltage',
@@ -477,18 +486,6 @@ const monitorCards = computed<MonitorCard[]>(() => [
     footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.power))} W`,
     footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.power, cpuPowerValue.value || 0))} W`,
     unsupported: cpuPowerValue.value === null,
-  },
-  {
-    id: 'fan',
-    label: '风扇转速',
-    value: formatFan(cpuFanValue.value),
-    unit: cpuFanValue.value ? 'RPM' : '',
-    accent: '#46d4eb',
-    percent: cpuFanValue.value ? clampPercent((cpuFanValue.value / Math.max(cpuFanValue.value, cpuFan.value?.max || 1800)) * 100) : 0,
-    trend: metricHistory.fan,
-    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.fan))} RPM`,
-    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.fan, cpuFanValue.value || 0))} RPM`,
-    unsupported: cpuFanValue.value === null,
   },
 ])
 
@@ -604,7 +601,6 @@ const processorReportText = computed(() => {
     `当前电压：${formatVoltage(cpuVoltageValue.value)}`,
     `当前频率：${formatFrequency(currentSpeedValue.value)}`,
     `当前负载：${Math.round(cpuLoadPercent.value)}%`,
-    `风扇转速：${formatFan(cpuFanValue.value)}`,
     '',
     ...detailSpecs.value.map((item) => `${item.label}：${item.value}`),
     '',
@@ -640,6 +636,11 @@ async function refreshHardwareSensorState() {
   sensorSettingsLoading.value = true
 
   try {
+    openHardwareMonitorStatus.value = {
+      ...openHardwareMonitorStatus.value,
+      reason: '检测中...',
+      suggestion: '正在读取 OpenHardwareMonitor 当前状态',
+    } as OpenHardwareMonitorStatusData
     const [settings, status] = await Promise.all([
       window.services.getHardwareSensorSettings(),
       window.services.getOpenHardwareMonitorStatus(),
@@ -682,6 +683,11 @@ async function startOpenHardwareMonitor() {
   sensorActionLoading.value = true
 
   try {
+    openHardwareMonitorStatus.value = {
+      ...openHardwareMonitorStatus.value,
+      reason: 'OHM_START_PENDING',
+      suggestion: '正在尝试启动 OpenHardwareMonitor',
+    } as OpenHardwareMonitorStatusData
     openHardwareMonitorStatus.value = await window.services.startOpenHardwareMonitor()
     const latestStatus = await window.services.getOpenHardwareMonitorStatus()
     openHardwareMonitorStatus.value = {
@@ -699,9 +705,30 @@ async function openHardwareSensorComponentDirectory() {
   if (!isWindowsPlatform.value) return
 
   try {
-    await window.services.openOpenHardwareMonitorDirectory()
+    const result = await window.services.openOpenHardwareMonitorDirectory()
+    if (result?.ok) {
+      openHardwareMonitorStatus.value = {
+        ...(openHardwareMonitorStatus.value || {}),
+        executableDirectory: result.directoryPath || openHardwareMonitorStatus.value?.executableDirectory,
+        reason: 'OHM_DIRECTORY_OPENED',
+        suggestion: result.directoryPath ? `已打开目录：${result.directoryPath}` : '已打开 OpenHardwareMonitor 目录',
+      } as OpenHardwareMonitorStatusData
+      return
+    }
+
+    openHardwareMonitorStatus.value = {
+      ...(openHardwareMonitorStatus.value || {}),
+      executableDirectory: result?.directoryPath || openHardwareMonitorStatus.value?.executableDirectory,
+      reason: result?.reason || 'OHM_OPEN_DIRECTORY_FAILED',
+      suggestion: result?.suggestion || '打开 OpenHardwareMonitor 目录失败',
+    } as OpenHardwareMonitorStatusData
   } catch (error) {
     console.error('打开 OpenHardwareMonitor 目录失败:', error)
+    openHardwareMonitorStatus.value = {
+      ...(openHardwareMonitorStatus.value || {}),
+      reason: 'OHM_OPEN_DIRECTORY_FAILED',
+      suggestion: error instanceof Error ? error.message : String(error),
+    } as OpenHardwareMonitorStatusData
   }
 }
 
@@ -805,7 +832,7 @@ onUnmounted(() => {
         <div class="panel-title">
           <div>
             <h3>实时监控</h3>
-            <p>聚焦 CPU 负载、温度、频率、电压和风扇转速</p>
+            <p>聚焦 CPU 负载、温度、频率、电压和功耗</p>
           </div>
           <button
             v-if="isWindowsPlatform"
@@ -1396,7 +1423,7 @@ onUnmounted(() => {
 
 .monitor-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 

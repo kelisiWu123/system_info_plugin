@@ -99,6 +99,12 @@ declare global {
     reason?: string
     suggestion?: string
   }
+  interface OpenHardwareMonitorDirectoryResultData {
+    ok: boolean
+    directoryPath?: string
+    reason?: string
+    suggestion?: string
+  }
   interface CpuPowerData {
     value: number
     source: 'LibreHardwareMonitor' | 'OpenHardwareMonitor'
@@ -173,7 +179,7 @@ declare global {
       updateHardwareSensorSettings: (patch: Partial<HardwareSensorSettingsData>) => Promise<HardwareSensorSettingsData>
       getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>
       startOpenHardwareMonitor: () => Promise<OpenHardwareMonitorStatusData>
-      openOpenHardwareMonitorDirectory: () => Promise<boolean>
+      openOpenHardwareMonitorDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>
       getCpuInfo: () => Promise<CpuData | undefined>
       getCpuFullLoad: () => Promise<number>
       getCpuTemperature: () => Promise<CpuTemperatureData | undefined>

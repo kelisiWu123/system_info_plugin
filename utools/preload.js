@@ -1,12 +1,20 @@
-import { systemService } from './services/system'
+import path from 'node:path'
+import { configureSystemServiceContext, systemService } from './services/system'
 import { setupWindowBridge, windowService } from './services/window'
 
 setupWindowBridge()
 
+const pluginRoot = utools.isDev() ? path.resolve(__dirname, '..') : __dirname
+
+configureSystemServiceContext({
+  pluginRoot,
+  utools,
+})
+
 const windowPresets = {
   a_watch: {
-    prod: { height: 430, width: 628, backgroundColor: 0.04 },
-    dev: { height: 462, width: 660, backgroundColor: 0.04 },
+    prod: { height: 398, width: 432, backgroundColor: 0 },
+    dev: { height: 420, width: 456, backgroundColor: 0 },
   },
   a_computer: {
     prod: { height: 860, width: 1380, backgroundColor: 1 },
