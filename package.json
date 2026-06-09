@@ -41,8 +41,5 @@
   "env": {
     "VITE_DEV_SERVER_HOST": "127.0.0.1",
     "VITE_DEV_SERVER_PORT": 9000
-  },
-  "optionalDependencies": {
-    "macos-temperature-sensor": "^1.0.4"
   }
 }

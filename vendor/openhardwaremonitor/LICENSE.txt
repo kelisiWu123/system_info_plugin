@@ -1,0 +1,14 @@
+OpenHardwareMonitor
+Source: https://github.com/HardwareMonitor/OpenHardwareMonitor
+Release: https://github.com/HardwareMonitor/OpenHardwareMonitor/releases/tag/3.0.9585
+
+Upstream licensing notice preserved from the official repository README:
+
+"This program is free software: you can redistribute it.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+
+Notes:
+- The upstream repository README includes the license notice above.
+- The default branch metadata does not currently expose a standalone root LICENSE file.
+- This plugin vendors only the official release executable for optional local CPU temperature enhancement on Windows.

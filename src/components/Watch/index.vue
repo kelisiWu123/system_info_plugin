@@ -11,7 +11,7 @@ import {
   Thermometer,
 } from '@icon-park/vue-next'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
-import { clampPercent, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
+import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
 
 const props = defineProps<{
   active?: boolean
@@ -154,7 +154,8 @@ const cpuTempValue = computed(() => {
 })
 
 const cpuFrequencyValue = computed(() => {
-  return typeof cpuCurrentSpeed.value?.avg === 'number' && cpuCurrentSpeed.value.avg > 0 ? cpuCurrentSpeed.value.avg : null
+  const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
+  return value > 0 ? value : null
 })
 
 const gpuMemoryUsed = computed(() => {

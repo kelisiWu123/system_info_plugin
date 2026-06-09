@@ -58,6 +58,7 @@ declare global {
     tx_sec: number
   }
   type CpuTemperatureData = Systeminformation.CpuTemperatureData & {
+    ok?: boolean
     value?: number | null
     source?:
       | 'systeminformation'
@@ -76,7 +77,27 @@ declare global {
       hardwareName?: string
     }>
     errorCode?: string
+    reason?: string
     message?: string
+    suggestion?: string
+    raw?: unknown
+  }
+  interface HardwareSensorSettingsData {
+    enhancedSensorEnabled: boolean
+    openHardwareMonitorAutoStart: boolean
+    openHardwareMonitorPort: number
+  }
+  interface OpenHardwareMonitorStatusData {
+    platform: 'win32' | 'other'
+    settings: HardwareSensorSettingsData
+    running: boolean
+    executableExists: boolean
+    executablePath?: string
+    executableDirectory?: string
+    port: number
+    started?: boolean
+    reason?: string
+    suggestion?: string
   }
   interface CpuPowerData {
     value: number
@@ -148,6 +169,11 @@ declare global {
 
   interface Window {
     services: {
+      getHardwareSensorSettings: () => Promise<HardwareSensorSettingsData>
+      updateHardwareSensorSettings: (patch: Partial<HardwareSensorSettingsData>) => Promise<HardwareSensorSettingsData>
+      getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>
+      startOpenHardwareMonitor: () => Promise<OpenHardwareMonitorStatusData>
+      openOpenHardwareMonitorDirectory: () => Promise<boolean>
       getCpuInfo: () => Promise<CpuData | undefined>
       getCpuFullLoad: () => Promise<number>
       getCpuTemperature: () => Promise<CpuTemperatureData | undefined>

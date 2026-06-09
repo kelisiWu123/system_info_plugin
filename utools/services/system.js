@@ -1,8 +1,19 @@
 import si from 'systeminformation'
-import { execFile } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
+const HARDWARE_SENSOR_SETTINGS_STORAGE_KEY = 'hardwareSensorSettings'
+const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
+  enhancedSensorEnabled: false,
+  openHardwareMonitorAutoStart: false,
+  openHardwareMonitorPort: 18085,
+}
+const OPEN_HARDWARE_MONITOR_PROCESS_NAME = 'OpenHardwareMonitor.exe'
+const OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS = 1500
+const OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS = 15000
 const MAC_MEMORY_PRESSURE_FALLBACK = {
   level: 'unknown',
   rawLevel: null,
@@ -39,6 +50,9 @@ const emptyCurrentLoadData = {
 let gpuInfoCache = []
 let gpuInfoCacheAt = 0
 let gpuInfoPromise
+let openHardwareMonitorLastStartAt = 0
+let openHardwareMonitorStartPromise
+let openHardwareMonitorManagedPid = null
 
 async function readSystemInfo(label, fallback, reader) {
   try {
@@ -57,6 +71,19 @@ function normalizeJsonArray(value) {
 function toNumber(value) {
   const numericValue = Number(value)
   return Number.isFinite(numericValue) ? numericValue : null
+}
+
+function isWindows() {
+  return typeof process !== 'undefined' && process.platform === 'win32'
+}
+
+function isValidCpuTemperature(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value < 120
+}
+
+function toValidCpuTemperature(value) {
+  const numericValue = toNumber(value)
+  return isValidCpuTemperature(numericValue) ? Math.round(numericValue * 10) / 10 : null
 }
 
 function roundTemperature(value) {
@@ -97,6 +124,124 @@ function createEmptyBoardTelemetry() {
 
 function normalizeSensorText(sensor) {
   return `${sensor.name} ${sensor.identifier} ${sensor.parent}`.toLowerCase()
+}
+
+function getHardwareSensorSettingsStorage() {
+  if (typeof utools !== 'undefined' && utools?.dbStorage) {
+    return utools.dbStorage
+  }
+
+  return globalThis?.utools?.dbStorage
+}
+
+function readHardwareSensorSettingsRaw() {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.getItem) {
+    return storage.getItem(HARDWARE_SENSOR_SETTINGS_STORAGE_KEY)
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const value = localStorage.getItem(HARDWARE_SENSOR_SETTINGS_STORAGE_KEY)
+      return value ? JSON.parse(value) : null
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+function writeHardwareSensorSettingsRaw(value) {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.setItem) {
+    storage.setItem(HARDWARE_SENSOR_SETTINGS_STORAGE_KEY, value)
+    return
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(HARDWARE_SENSOR_SETTINGS_STORAGE_KEY, JSON.stringify(value))
+    } catch {
+      // ignore storage fallback failures
+    }
+  }
+}
+
+function normalizeHardwareSensorSettings(input) {
+  const portCandidate = Number(input?.openHardwareMonitorPort)
+  const port = Number.isInteger(portCandidate) && portCandidate >= 1 && portCandidate <= 65535
+    ? portCandidate
+    : DEFAULT_HARDWARE_SENSOR_SETTINGS.openHardwareMonitorPort
+
+  return {
+    enhancedSensorEnabled: Boolean(input?.enhancedSensorEnabled),
+    openHardwareMonitorAutoStart: Boolean(input?.openHardwareMonitorAutoStart),
+    openHardwareMonitorPort: port,
+  }
+}
+
+function getHardwareSensorSettings() {
+  return normalizeHardwareSensorSettings({
+    ...DEFAULT_HARDWARE_SENSOR_SETTINGS,
+    ...(readHardwareSensorSettingsRaw() || {}),
+  })
+}
+
+async function stopPluginManagedOpenHardwareMonitor() {
+  if (!isWindows() || !openHardwareMonitorManagedPid) {
+    return {
+      ok: false,
+      reason: 'OHM_NOT_PLUGIN_MANAGED',
+    }
+  }
+
+  const targetPid = openHardwareMonitorManagedPid
+
+  try {
+    await execFileAsync('taskkill.exe', ['/PID', String(targetPid), '/T', '/F'], {
+      windowsHide: true,
+      timeout: 4000,
+    })
+    openHardwareMonitorManagedPid = null
+    return {
+      ok: true,
+      pid: targetPid,
+    }
+  } catch (error) {
+    const stillRunning = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+    if (!stillRunning) {
+      openHardwareMonitorManagedPid = null
+      return {
+        ok: true,
+        pid: targetPid,
+      }
+    }
+
+    return {
+      ok: false,
+      pid: targetPid,
+      reason: 'OHM_STOP_FAILED',
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+async function updateHardwareSensorSettings(patch = {}) {
+  const previous = getHardwareSensorSettings()
+  const next = normalizeHardwareSensorSettings({
+    ...previous,
+    ...patch,
+  })
+  writeHardwareSensorSettingsRaw(next)
+
+  if (previous.enhancedSensorEnabled && !next.enhancedSensorEnabled) {
+    await stopPluginManagedOpenHardwareMonitor()
+  }
+
+  return next
 }
 
 async function queryWmiSensors(namespace, sensorType) {
@@ -361,23 +506,23 @@ async function getHardwareMonitorSensors(sensorType) {
 
 function extractSystemInformationCpuTemperatureValue(temperature) {
   const anyTemperature = temperature || {}
-  const main = toNumber(anyTemperature.main)
-  if (main && main > 0) return { value: roundTemperature(main), sensorName: 'main' }
+  const main = toValidCpuTemperature(anyTemperature.main)
+  if (main !== null) return { value: main, sensorName: 'main' }
 
-  const packageValue = toNumber(anyTemperature.package ?? anyTemperature.packageTemperature ?? anyTemperature.cpuPackage)
-  if (packageValue && packageValue > 0) return { value: roundTemperature(packageValue), sensorName: 'package' }
+  const packageValue = toValidCpuTemperature(anyTemperature.package ?? anyTemperature.packageTemperature ?? anyTemperature.cpuPackage)
+  if (packageValue !== null) return { value: packageValue, sensorName: 'package' }
 
-  const tdieValue = toNumber(anyTemperature.tdie ?? anyTemperature.tDie)
-  if (tdieValue && tdieValue > 0) return { value: roundTemperature(tdieValue), sensorName: 'tdie' }
+  const tdieValue = toValidCpuTemperature(anyTemperature.tdie ?? anyTemperature.tDie)
+  if (tdieValue !== null) return { value: tdieValue, sensorName: 'tdie' }
 
-  const tctlValue = toNumber(anyTemperature.tctl ?? anyTemperature.tCtl)
-  if (tctlValue && tctlValue > 0) return { value: roundTemperature(tctlValue), sensorName: 'tctl' }
+  const tctlValue = toValidCpuTemperature(anyTemperature.tctl ?? anyTemperature.tCtl)
+  if (tctlValue !== null) return { value: tctlValue, sensorName: 'tctl' }
 
-  const maxValue = toNumber(anyTemperature.max)
-  if (maxValue && maxValue > 0) return { value: roundTemperature(maxValue), sensorName: 'max' }
+  const maxValue = toValidCpuTemperature(anyTemperature.max)
+  if (maxValue !== null) return { value: maxValue, sensorName: 'max' }
 
   const coreValues = Array.isArray(anyTemperature.cores)
-    ? anyTemperature.cores.map(toNumber).filter((value) => value && value > 0)
+    ? anyTemperature.cores.map(toValidCpuTemperature).filter((value) => value !== null)
     : []
   if (coreValues.length) {
     const maximum = Math.max(...coreValues)
@@ -396,17 +541,19 @@ function extractSystemInformationCpuTemperatureValue(temperature) {
 
 function buildCpuTemperatureResult(base, source, sensorName, value) {
   const anyBase = base || {}
-  const coreValues = Array.isArray(anyBase.cores) ? anyBase.cores.map(toNumber).filter((item) => item !== null) : []
+  const normalizedValue = value === null ? null : toValidCpuTemperature(value)
+  const coreValues = Array.isArray(anyBase.cores) ? anyBase.cores.map(toValidCpuTemperature).filter((item) => item !== null) : []
   const maxCandidates = [
-    toNumber(anyBase.max),
+    toValidCpuTemperature(anyBase.max),
     ...(coreValues.length ? [Math.max(...coreValues)] : []),
-    toNumber(value),
+    normalizedValue,
   ].filter((item) => item !== null)
 
   return {
     ...anyBase,
-    main: value,
-    value,
+    ok: normalizedValue !== null,
+    main: normalizedValue,
+    value: normalizedValue,
     cores: coreValues,
     max: maxCandidates.length ? roundTemperature(Math.max(...maxCandidates)) : null,
     socket: Array.isArray(anyBase.socket) ? anyBase.socket : [],
@@ -416,10 +563,13 @@ function buildCpuTemperatureResult(base, source, sensorName, value) {
     unit: anyBase.unit ?? '°C',
     confidence: value === null && source === 'unsupported' ? 'unsupported' : anyBase.confidence,
     errorCode: anyBase.errorCode,
+    reason: anyBase.reason,
     message: anyBase.message,
+    suggestion: anyBase.suggestion,
     hardwareName: anyBase.hardwareName,
     identifier: anyBase.identifier,
     allCpuTemperatureSensors: anyBase.allCpuTemperatureSensors,
+    raw: anyBase.raw,
   }
 }
 
@@ -436,6 +586,476 @@ function inferCpuTemperatureConfidence(sensor) {
   return 'low'
 }
 
+function uniquePaths(paths) {
+  return [...new Set(paths.filter((item) => typeof item === 'string' && item.trim()))]
+}
+
+function getOpenHardwareMonitorDirectoryCandidates() {
+  const cwd = typeof process?.cwd === 'function' ? process.cwd() : ''
+  const dirname = typeof __dirname === 'string' ? __dirname : ''
+  const resourcesPath = typeof process?.resourcesPath === 'string' ? process.resourcesPath : ''
+
+  return uniquePaths([
+    cwd ? path.join(cwd, 'vendor', 'openhardwaremonitor') : '',
+    cwd ? path.join(cwd, 'dist', 'vendor', 'openhardwaremonitor') : '',
+    cwd ? path.join(cwd, 'dist-electron', 'vendor', 'openhardwaremonitor') : '',
+    dirname ? path.join(dirname, 'vendor', 'openhardwaremonitor') : '',
+    dirname ? path.join(dirname, '..', 'vendor', 'openhardwaremonitor') : '',
+    dirname ? path.join(dirname, '..', '..', 'vendor', 'openhardwaremonitor') : '',
+    dirname ? path.join(dirname, '..', '..', '..', 'vendor', 'openhardwaremonitor') : '',
+    resourcesPath ? path.join(resourcesPath, 'vendor', 'openhardwaremonitor') : '',
+  ])
+}
+
+function resolveOpenHardwareMonitorExecutable() {
+  const candidates = getOpenHardwareMonitorDirectoryCandidates()
+
+  for (const directoryPath of candidates) {
+    const executablePath = path.join(directoryPath, OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+    if (fs.existsSync(executablePath)) {
+      return {
+        directoryPath,
+        executablePath,
+        exists: true,
+        candidates,
+      }
+    }
+  }
+
+  return {
+    directoryPath: candidates[0] || '',
+    executablePath: candidates[0] ? path.join(candidates[0], OPEN_HARDWARE_MONITOR_PROCESS_NAME) : '',
+    exists: false,
+    candidates,
+  }
+}
+
+function getBundledOpenHardwareMonitorDirectory() {
+  return resolveOpenHardwareMonitorExecutable().directoryPath
+}
+
+function getBundledOpenHardwareMonitorPath() {
+  return resolveOpenHardwareMonitorExecutable().executablePath
+}
+
+async function isProcessRunning(processName) {
+  if (!isWindows()) return false
+
+  try {
+    const { stdout } = await execFileAsync('tasklist.exe', ['/FI', `IMAGENAME eq ${processName}`], {
+      windowsHide: true,
+      timeout: 2000,
+    })
+
+    return stdout.toLowerCase().includes(processName.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+function buildOpenHardwareMonitorStatusResult(overrides = {}) {
+  const settings = overrides.settings || getHardwareSensorSettings()
+  const resolved = overrides.resolved || resolveOpenHardwareMonitorExecutable()
+  const executablePath = overrides.executablePath || resolved.executablePath
+
+  return {
+    platform: isWindows() ? 'win32' : 'other',
+    settings,
+    running: Boolean(overrides.running),
+    executableExists: typeof overrides.executableExists === 'boolean' ? overrides.executableExists : Boolean(resolved.exists),
+    executablePath,
+    executableDirectory: overrides.executableDirectory || resolved.directoryPath,
+    port: settings.openHardwareMonitorPort,
+    started: Boolean(overrides.started),
+    reason: overrides.reason,
+    suggestion: overrides.suggestion,
+  }
+}
+
+async function getOpenHardwareMonitorStatus() {
+  const settings = getHardwareSensorSettings()
+  const resolved = resolveOpenHardwareMonitorExecutable()
+
+  if (!isWindows()) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: false,
+      executableExists: false,
+      reason: 'NOT_WINDOWS',
+    })
+  }
+
+  const executablePath = resolved.executablePath
+  const executableExists = resolved.exists
+  const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+
+  return buildOpenHardwareMonitorStatusResult({
+    settings,
+    resolved,
+    running,
+    executableExists,
+    executablePath,
+    reason: running ? undefined : executableExists ? 'OHM_NOT_RUNNING' : 'OHM_EXE_NOT_FOUND',
+    suggestion: executableExists ? undefined : 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
+  })
+}
+
+async function startBundledOpenHardwareMonitor() {
+  const resolved = resolveOpenHardwareMonitorExecutable()
+
+  if (!isWindows()) {
+    return buildOpenHardwareMonitorStatusResult({
+      resolved,
+      reason: 'NOT_WINDOWS',
+    })
+  }
+
+  const executablePath = resolved.executablePath
+
+  if (!resolved.exists) {
+    return buildOpenHardwareMonitorStatusResult({
+      resolved,
+      executableExists: false,
+      executablePath,
+      reason: 'OHM_EXE_NOT_FOUND',
+      suggestion: 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
+    })
+  }
+
+  try {
+    const startScript = [
+      `$p = Start-Process -FilePath '${executablePath.replace(/'/g, "''")}'`,
+      `-WorkingDirectory '${path.dirname(executablePath).replace(/'/g, "''")}'`,
+      '-WindowStyle Normal -PassThru',
+      '; $p.Id',
+    ].join(' ')
+
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', startScript], {
+      windowsHide: false,
+      timeout: 5000,
+    })
+
+    const startedPid = Number.parseInt(String(stdout).trim(), 10)
+    openHardwareMonitorManagedPid = Number.isFinite(startedPid) && startedPid > 0 ? startedPid : null
+
+    openHardwareMonitorLastStartAt = Date.now()
+
+    return buildOpenHardwareMonitorStatusResult({
+      resolved,
+      executableExists: true,
+      executablePath,
+      started: true,
+    })
+  } catch (error) {
+    return buildOpenHardwareMonitorStatusResult({
+      resolved,
+      executableExists: true,
+      executablePath,
+      reason: 'OHM_START_FAILED',
+      suggestion: '可能需要管理员权限，或被安全软件拦截',
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+async function ensureOpenHardwareMonitorRunning() {
+  const settings = getHardwareSensorSettings()
+  const resolved = resolveOpenHardwareMonitorExecutable()
+
+  if (!isWindows()) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      reason: 'NOT_WINDOWS',
+    })
+  }
+
+  const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+  if (running) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: true,
+      executableExists: resolved.exists,
+    })
+  }
+
+  if (!settings.enhancedSensorEnabled || !settings.openHardwareMonitorAutoStart) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: false,
+      executableExists: resolved.exists,
+      reason: 'OHM_AUTOSTART_DISABLED',
+      suggestion: '开启增强模式后，可再启用自动启动 OpenHardwareMonitor',
+    })
+  }
+
+  const now = Date.now()
+  if (openHardwareMonitorStartPromise) {
+    return openHardwareMonitorStartPromise
+  }
+
+  if (now - openHardwareMonitorLastStartAt < OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: false,
+      executableExists: resolved.exists,
+      reason: 'OHM_START_COOLDOWN',
+      suggestion: '刚刚尝试过启动 OpenHardwareMonitor，请稍后再试',
+    })
+  }
+
+  openHardwareMonitorStartPromise = Promise.resolve(startBundledOpenHardwareMonitor())
+    .finally(() => {
+      openHardwareMonitorStartPromise = undefined
+    })
+
+  return openHardwareMonitorStartPromise
+}
+
+function parseTemperatureValue(value) {
+  if (typeof value === 'number') {
+    return isValidCpuTemperature(value) ? Math.round(value * 10) / 10 : null
+  }
+
+  if (typeof value === 'string') {
+    const match = value.match(/(-?\d+(?:\.\d+)?)\s*(?:°C|C)?/i)
+    if (!match) return null
+    const parsed = Number(match[1])
+    return isValidCpuTemperature(parsed) ? Math.round(parsed * 10) / 10 : null
+  }
+
+  return null
+}
+
+function walkOpenHardwareMonitorSensorTree(node, pathStack = []) {
+  if (!node || typeof node !== 'object') return []
+
+  const name = String(node.Text || node.text || node.Name || node.name || '').trim()
+  const nextPath = name ? [...pathStack, name] : pathStack
+  const pathText = nextPath.join(' / ')
+  const lowerPathText = pathText.toLowerCase()
+  const rows = []
+  const parsedValue = parseTemperatureValue(node.Value ?? node.value)
+  const isTemperaturePath = /temperature|temperatures|温度/i.test(pathText)
+  const looksLikeCpu = /cpu|core|package|ccd|tdie|tctl|intel|amd|ryzen|processor/i.test(pathText)
+  const isExcluded = CPU_SENSOR_EXCLUSION_TERMS.some((term) => lowerPathText.includes(term))
+
+  if (parsedValue !== null && isTemperaturePath && looksLikeCpu && !isExcluded) {
+    rows.push({
+      name: name || 'Temperature',
+      path: pathText,
+      value: parsedValue,
+      unit: 'C',
+    })
+  }
+
+  const children = Array.isArray(node.Children) ? node.Children : Array.isArray(node.children) ? node.children : []
+  for (const child of children) {
+    rows.push(...walkOpenHardwareMonitorSensorTree(child, nextPath))
+  }
+
+  return rows
+}
+
+function parseOpenHardwareMonitorData(data) {
+  const sensors = walkOpenHardwareMonitorSensorTree(data)
+  const rankedSensors = sensors
+    .map((sensor) => ({
+      ...sensor,
+      score: scoreCpuTemperatureSensor({
+        name: sensor.name,
+        identifier: sensor.path,
+        parent: sensor.path,
+      }),
+    }))
+    .sort((a, b) => b.score - a.score)
+
+  const values = rankedSensors.map((item) => item.value).filter(isValidCpuTemperature)
+
+  if (!values.length) {
+    return buildCpuTemperatureResult(
+      {
+        cores: [],
+        confidence: 'unsupported',
+        errorCode: 'OHM_NO_CPU_TEMP_SENSOR',
+        reason: 'OHM_NO_CPU_TEMP_SENSOR',
+        suggestion: 'OpenHardwareMonitor 已运行，但没有返回可信的 CPU 温度传感器',
+        allCpuTemperatureSensors: [],
+        raw: data,
+      },
+      'OpenHardwareMonitor',
+      undefined,
+      null
+    )
+  }
+
+  const mainSensor = rankedSensors[0]
+  const coreValues = rankedSensors
+    .filter((sensor) => /core\s*#?\d+|core max/i.test(sensor.path))
+    .map((sensor) => sensor.value)
+    .filter(isValidCpuTemperature)
+
+  return buildCpuTemperatureResult(
+    {
+      cores: coreValues,
+      max: Math.max(...values),
+      confidence: mainSensor.score >= 130 ? 'high' : mainSensor.score >= 100 ? 'medium' : 'low',
+      hardwareName: 'OpenHardwareMonitor Remote Web Server',
+      identifier: mainSensor.path,
+      allCpuTemperatureSensors: rankedSensors.map((sensor) => ({
+        name: sensor.name,
+        identifier: sensor.path,
+        hardwareName: 'OpenHardwareMonitor Remote Web Server',
+        value: sensor.value,
+      })),
+      raw: data,
+    },
+    'OpenHardwareMonitor',
+    mainSensor.name,
+    mainSensor.value
+  )
+}
+
+async function readOpenHardwareMonitorHttp(port = DEFAULT_HARDWARE_SENSOR_SETTINGS.openHardwareMonitorPort) {
+  if (typeof fetch !== 'function') {
+    return buildCpuTemperatureResult(
+      {
+        confidence: 'unsupported',
+        errorCode: 'OHM_HTTP_FETCH_UNAVAILABLE',
+        reason: 'OHM_HTTP_UNAVAILABLE',
+        suggestion: '当前运行环境不支持本地 HTTP 读取',
+      },
+      'OpenHardwareMonitor',
+      undefined,
+      null
+    )
+  }
+
+  const url = `http://127.0.0.1:${port}/data.json`
+  const controller = typeof AbortController === 'function' ? new AbortController() : undefined
+  const timer = controller
+    ? setTimeout(() => controller.abort(), OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS)
+    : undefined
+
+  try {
+    const response = await fetch(url, {
+      signal: controller?.signal,
+    })
+
+    if (!response.ok) {
+      return buildCpuTemperatureResult(
+        {
+          confidence: 'unsupported',
+          errorCode: 'OHM_HTTP_BAD_STATUS',
+          reason: 'OHM_HTTP_BAD_STATUS',
+          message: `OpenHardwareMonitor 本地服务返回状态 ${response.status}`,
+          suggestion: '请确认 OpenHardwareMonitor 已运行，并启用本地 Remote Web Server',
+        },
+        'OpenHardwareMonitor',
+        undefined,
+        null
+      )
+    }
+
+    const data = await response.json()
+    return parseOpenHardwareMonitorData(data)
+  } catch (error) {
+    return buildCpuTemperatureResult(
+      {
+        confidence: 'unsupported',
+        errorCode: 'OHM_HTTP_UNAVAILABLE',
+        reason: 'OHM_HTTP_UNAVAILABLE',
+        message: error instanceof Error ? error.message : String(error),
+        suggestion: '请确认 OpenHardwareMonitor 已运行，并启用本地 Remote Web Server',
+      },
+      'OpenHardwareMonitor',
+      undefined,
+      null
+    )
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function startOpenHardwareMonitorManually() {
+  const settings = getHardwareSensorSettings()
+  const resolved = resolveOpenHardwareMonitorExecutable()
+
+  if (!isWindows()) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      reason: 'NOT_WINDOWS',
+    })
+  }
+
+  if (!settings.enhancedSensorEnabled) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      executableExists: resolved.exists,
+      reason: 'ENHANCED_SENSOR_DISABLED',
+      suggestion: '请先开启硬件传感器增强模式',
+    })
+  }
+
+  const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+  if (running) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: true,
+      executableExists: resolved.exists,
+    })
+  }
+
+  const startResult = await startBundledOpenHardwareMonitor()
+  if (!startResult.started) {
+    return startResult
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 1200))
+  const startedRunning = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+
+  return buildOpenHardwareMonitorStatusResult({
+    settings,
+    resolved,
+    running: startedRunning,
+    executableExists: resolved.exists,
+    executablePath: resolved.executablePath,
+    started: startedRunning,
+    reason: startedRunning ? undefined : 'OHM_START_FAILED',
+    suggestion: startedRunning ? undefined : '插件尝试启动失败。请手动打开一次 OpenHardwareMonitor，确认没有被权限或安全软件拦截。',
+  })
+}
+
+async function openOpenHardwareMonitorDirectory() {
+  if (!isWindows()) return false
+
+  const resolved = resolveOpenHardwareMonitorExecutable()
+  const directoryPath = resolved.directoryPath
+
+  if (!directoryPath || !fs.existsSync(directoryPath)) {
+    return false
+  }
+
+  try {
+    const child = spawn('explorer.exe', [directoryPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    })
+    child.unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
   if (typeof process === 'undefined' || process.platform !== 'win32') return undefined
 
@@ -445,8 +1065,8 @@ async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
 
   const mainSensor = pickBestCpuTemperatureSensor(sensors)
   const coreSensors = sensors.filter((sensor) => /core\s*#?\d+/.test(normalizeSensorText(sensor)))
-  const coreValues = coreSensors.map((sensor) => roundTemperature(sensor.value)).filter((value) => value !== null)
-  const allValues = sensors.map((sensor) => roundTemperature(sensor.value)).filter((value) => value !== null)
+  const coreValues = coreSensors.map((sensor) => toValidCpuTemperature(sensor.value)).filter((value) => value !== null)
+  const allValues = sensors.map((sensor) => toValidCpuTemperature(sensor.value)).filter((value) => value !== null)
   const source = namespace.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor'
 
   return buildCpuTemperatureResult(
@@ -462,12 +1082,12 @@ async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
         name: sensor.name,
         identifier: sensor.identifier,
         hardwareName: sensor.parent || undefined,
-        value: roundTemperature(sensor.value),
+        value: toValidCpuTemperature(sensor.value),
       })),
     },
     source,
     mainSensor?.name || undefined,
-    mainSensor ? roundTemperature(mainSensor.value) : null
+    mainSensor ? toValidCpuTemperature(mainSensor.value) : null
   )
 }
 
@@ -622,6 +1242,8 @@ async function getCpuTemperature() {
   try {
     const temperature = await si.cpuTemperature()
     const systemInfoValue = extractSystemInformationCpuTemperatureValue(temperature)
+    const sensorSettings = getHardwareSensorSettings()
+    const enhancedSensorEnabled = isWindows() && sensorSettings.enhancedSensorEnabled
 
     if (systemInfoValue.value !== null) {
       return buildCpuTemperatureResult(temperature, 'systeminformation', systemInfoValue.sensorName, systemInfoValue.value)
@@ -632,22 +1254,74 @@ async function getCpuTemperature() {
       return libreTemperature
     }
 
-    const openTemperature = await getHardwareMonitorCpuTemperatureFromNamespace('root\\OpenHardwareMonitor')
+    const openTemperature = enhancedSensorEnabled
+      ? await getHardwareMonitorCpuTemperatureFromNamespace('root\\OpenHardwareMonitor')
+      : undefined
     if (openTemperature && openTemperature.value !== null) {
       return openTemperature
     }
 
-    const diagnostics = [
+    const baseDiagnostics = [
       'systeminformation 未提供有效 CPU 温度',
       libreTemperature?.value === null ? 'LibreHardwareMonitor WMI: 无可用温度' : 'LibreHardwareMonitor WMI: 未命中',
       openTemperature?.value === null ? 'OpenHardwareMonitor WMI: 无可用温度' : 'OpenHardwareMonitor WMI: 未命中',
     ]
 
+    if (!isWindows()) {
+      return buildCpuTemperatureResult(
+        {
+          ...temperature,
+          errorCode: 'CPU_TEMPERATURE_UNAVAILABLE',
+          reason: 'TEMPERATURE_UNAVAILABLE',
+          message: baseDiagnostics.join(' | '),
+          suggestion: '当前系统未返回可用 CPU 温度',
+          confidence: 'unsupported',
+        },
+        'unsupported',
+        undefined,
+        null
+      )
+    }
+
+    if (!enhancedSensorEnabled) {
+      return buildCpuTemperatureResult(
+        {
+          ...temperature,
+          errorCode: 'ENHANCED_SENSOR_DISABLED',
+          reason: 'ENHANCED_SENSOR_DISABLED',
+          message: baseDiagnostics.join(' | '),
+          suggestion: 'Windows 下可在处理器页开启硬件传感器增强模式',
+          confidence: 'unsupported',
+        },
+        'unsupported',
+        undefined,
+        null
+      )
+    }
+
+    let openHardwareMonitorStatus
+    if (sensorSettings.openHardwareMonitorAutoStart) {
+      openHardwareMonitorStatus = await ensureOpenHardwareMonitorRunning()
+    }
+
+    const ohmResult = await readOpenHardwareMonitorHttp(sensorSettings.openHardwareMonitorPort)
+    if (ohmResult?.value !== null) {
+      return ohmResult
+    }
+
+    const diagnostics = [
+      ...baseDiagnostics,
+      openHardwareMonitorStatus?.reason ? `OHM 启动状态: ${openHardwareMonitorStatus.reason}` : 'OHM 启动状态: 未尝试自动启动',
+      ohmResult?.reason ? `OHM 读取结果: ${ohmResult.reason}` : 'OHM 读取结果: 无结果',
+    ]
+
     return buildCpuTemperatureResult(
       {
         ...temperature,
-        errorCode: 'CPU_TEMPERATURE_UNAVAILABLE',
+        errorCode: ohmResult?.errorCode || 'CPU_TEMPERATURE_UNAVAILABLE',
+        reason: ohmResult?.reason || 'TEMPERATURE_UNAVAILABLE',
         message: diagnostics.join(' | '),
+        suggestion: ohmResult?.suggestion || openHardwareMonitorStatus?.suggestion || '请确认 OpenHardwareMonitor 已运行，并启用本地 Remote Web Server，必要时以管理员权限运行',
         confidence: 'unsupported',
       },
       'unsupported',
@@ -892,6 +1566,16 @@ async function getGpuInfo() {
 }
 
 export const systemService = {
+  getHardwareSensorSettings: async () => getHardwareSensorSettings(),
+
+  updateHardwareSensorSettings: async (patch) => updateHardwareSensorSettings(patch),
+
+  getOpenHardwareMonitorStatus,
+
+  startOpenHardwareMonitor: startOpenHardwareMonitorManually,
+
+  openOpenHardwareMonitorDirectory,
+
   getCpuInfo: () => readSystemInfo('cpu', undefined, () => si.cpu()),
 
   getCpuFullLoad: () =>

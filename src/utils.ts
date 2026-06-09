@@ -69,6 +69,20 @@ function formatDisplayResolution(display?: DisplayData): string {
   return '--'
 }
 
+function getDisplayCpuCurrentSpeedGHz(speed?: CpuCurrentSpeedData | null): number {
+  if (!speed) return 0
+
+  const validCoreSpeeds = Array.isArray(speed.cores)
+    ? speed.cores.filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    : []
+
+  if (validCoreSpeeds.length) {
+    return Math.max(...validCoreSpeeds)
+  }
+
+  return typeof speed.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0 ? speed.avg : 0
+}
+
 function cleanStorageText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -215,6 +229,7 @@ export {
   formatUptime,
   clampPercent,
   formatDisplayResolution,
+  getDisplayCpuCurrentSpeedGHz,
   getPhysicalDiskLayout,
   getPhysicalDiskTotalBytes,
   getDisplayStorageVolumes,

@@ -1,0 +1,7 @@
+Bundled files in this directory come from the official OpenHardwareMonitor release package.
+
+Upstream project:
+https://github.com/HardwareMonitor/OpenHardwareMonitor
+
+This plugin vendors only the runtime executable and license materials required for the
+optional Windows CPU temperature enhancement path.

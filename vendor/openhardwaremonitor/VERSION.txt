@@ -1,0 +1,8 @@
+Component: OpenHardwareMonitor
+Source: https://github.com/HardwareMonitor/OpenHardwareMonitor/releases/tag/3.0.9585
+Version: 3.0.9585
+BundledAt: 2026-06-09
+SHA256: bdde4bb4043fe15c5e9b7addd23a8eed7d6fbffba34c281abdfca64ede96bf7f
+Binary: OpenHardwareMonitor_x64.exe
+Purpose:
+  Optional local hardware sensor backend for Windows CPU temperature.

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
-import { clampPercent, formatUptime } from '../../utils'
+import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
 
 const props = defineProps<{
   active?: boolean
@@ -58,6 +58,15 @@ const metricHistory: Record<MetricHistoryKey, number[]> = {
 }
 
 const subscribed = ref(false)
+const showSensorEnhancementPanel = ref(false)
+const sensorSettingsLoading = ref(false)
+const sensorActionLoading = ref(false)
+const sensorSettings = ref<HardwareSensorSettingsData>({
+  enhancedSensorEnabled: false,
+  openHardwareMonitorAutoStart: false,
+  openHardwareMonitorPort: 18085,
+})
+const openHardwareMonitorStatus = ref<OpenHardwareMonitorStatusData | null>(null)
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -142,6 +151,51 @@ function formatVoltage(value: number | null) {
 
 function formatFan(value: number | null) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} RPM` : '暂不支持'
+}
+
+function formatSensorReason(reason?: string) {
+  switch (reason) {
+    case 'ENHANCED_SENSOR_DISABLED':
+      return '增强模式未开启'
+    case 'OHM_EXE_NOT_FOUND':
+      return '组件不存在'
+    case 'OHM_NOT_RUNNING':
+      return '未运行'
+    case 'OHM_AUTOSTART_DISABLED':
+      return '自动启动未开启'
+    case 'OHM_START_COOLDOWN':
+      return '启动冷却中'
+    case 'OHM_START_FAILED':
+      return '启动失败'
+    case 'OHM_HTTP_UNAVAILABLE':
+      return '本地服务不可达'
+    case 'OHM_HTTP_BAD_STATUS':
+      return '本地服务状态异常'
+    case 'OHM_NO_CPU_TEMP_SENSOR':
+      return '没有可信 CPU 温度传感器'
+    case 'TEMPERATURE_UNAVAILABLE':
+    case 'CPU_TEMPERATURE_UNAVAILABLE':
+      return 'CPU 温度不可用'
+    case 'CPU_TEMPERATURE_EXCEPTION':
+      return '温度服务执行失败'
+    default:
+      return reason || '未检测'
+  }
+}
+
+function formatTemperatureSource(source?: CpuTemperatureData['source']) {
+  switch (source) {
+    case 'systeminformation':
+      return 'systeminformation'
+    case 'LibreHardwareMonitor':
+      return 'LibreHardwareMonitor WMI'
+    case 'OpenHardwareMonitor':
+      return 'OpenHardwareMonitor'
+    case 'unsupported':
+      return '不可用'
+    default:
+      return '--'
+  }
 }
 
 function parseVoltageString(value?: string) {
@@ -250,8 +304,33 @@ const cpuPowerValue = computed(() => safeNumber(cpuPower.value?.value))
 const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? parseVoltageString(cpuData.value?.voltage))
 const cpuFanValue = computed(() => safeNumber(cpuFan.value?.value))
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
-const currentSpeedValue = computed(() => safeNumber(cpuCurrentSpeed.value.avg))
+const currentSpeedValue = computed(() => {
+  const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
+  return value > 0 ? value : null
+})
 const currentSpeedMax = computed(() => safeNumber(cpuCurrentSpeed.value.max) || safeNumber(cpuData.value?.speedMax) || 0)
+const isWindowsPlatform = computed(() => {
+  const platform = cleanText(osInfo.value?.platform).toLowerCase()
+  const distro = cleanText(osInfo.value?.distro).toLowerCase()
+  return platform.includes('win') || distro.includes('windows')
+})
+const cpuTemperatureSourceLabel = computed(() => formatTemperatureSource(cpuTemperature.value?.source))
+const cpuTemperatureReasonLabel = computed(() => formatSensorReason(cpuTemperature.value?.reason || cpuTemperature.value?.errorCode))
+const openHardwareMonitorStatusLabel = computed(() => {
+  if (!openHardwareMonitorStatus.value) return '未检测'
+  if (openHardwareMonitorStatus.value.running) return '运行中'
+  if (!openHardwareMonitorStatus.value.executableExists) return '组件缺失'
+  return formatSensorReason(openHardwareMonitorStatus.value.reason)
+})
+const sensorEnhancementSummary = computed(() => {
+  if (!sensorSettings.value.enhancedSensorEnabled) return '增强模式关闭'
+  if (openHardwareMonitorStatus.value?.running) return '增强模式已启用，OHM 正在运行'
+  return '增强模式已启用，将在温度缺失时自动尝试启动 OHM'
+})
+const sensorEnhancementSuggestion = computed(() => {
+  if (cpuTemperature.value?.suggestion) return cpuTemperature.value.suggestion
+  return openHardwareMonitorStatus.value?.suggestion || ''
+})
 
 const healthState = computed(() => {
   const temperature = cpuTemperatureValue.value
@@ -555,6 +634,77 @@ async function copyProcessorInfo() {
   }
 }
 
+async function refreshHardwareSensorState() {
+  if (!isWindowsPlatform.value) return
+
+  sensorSettingsLoading.value = true
+
+  try {
+    const [settings, status] = await Promise.all([
+      window.services.getHardwareSensorSettings(),
+      window.services.getOpenHardwareMonitorStatus(),
+    ])
+    sensorSettings.value = settings
+    openHardwareMonitorStatus.value = status
+  } catch (error) {
+    console.error('读取硬件传感器增强状态失败:', error)
+  } finally {
+    sensorSettingsLoading.value = false
+  }
+}
+
+async function updateHardwareSensorSetting(patch: Partial<HardwareSensorSettingsData>) {
+  if (!isWindowsPlatform.value) return
+
+  sensorActionLoading.value = true
+
+  try {
+    sensorSettings.value = await window.services.updateHardwareSensorSettings(patch)
+    openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+  } catch (error) {
+    console.error('更新硬件传感器增强设置失败:', error)
+  } finally {
+    sensorActionLoading.value = false
+  }
+}
+
+async function toggleEnhancedSensorMode() {
+  const nextEnabled = !sensorSettings.value.enhancedSensorEnabled
+  await updateHardwareSensorSetting({
+    enhancedSensorEnabled: nextEnabled,
+    openHardwareMonitorAutoStart: nextEnabled,
+  })
+}
+
+async function startOpenHardwareMonitor() {
+  if (!isWindowsPlatform.value) return
+
+  sensorActionLoading.value = true
+
+  try {
+    openHardwareMonitorStatus.value = await window.services.startOpenHardwareMonitor()
+    const latestStatus = await window.services.getOpenHardwareMonitorStatus()
+    openHardwareMonitorStatus.value = {
+      ...latestStatus,
+      started: openHardwareMonitorStatus.value?.started || latestStatus.started,
+    }
+  } catch (error) {
+    console.error('启动 OpenHardwareMonitor 失败:', error)
+  } finally {
+    sensorActionLoading.value = false
+  }
+}
+
+async function openHardwareSensorComponentDirectory() {
+  if (!isWindowsPlatform.value) return
+
+  try {
+    await window.services.openOpenHardwareMonitorDirectory()
+  } catch (error) {
+    console.error('打开 OpenHardwareMonitor 目录失败:', error)
+  }
+}
+
 function startStressTest() {
   stressState.value = 'pending'
   window.setTimeout(() => {
@@ -574,6 +724,7 @@ async function ensureStoreActive() {
 
   subscribed.value = true
   await activateHardwareStore()
+  await refreshHardwareSensorState()
 }
 
 function releaseStore() {
@@ -656,7 +807,71 @@ onUnmounted(() => {
             <h3>实时监控</h3>
             <p>聚焦 CPU 负载、温度、频率、电压和风扇转速</p>
           </div>
-          <button type="button" class="panel-action">监控设置</button>
+          <button
+            v-if="isWindowsPlatform"
+            type="button"
+            class="panel-action"
+            @click="showSensorEnhancementPanel = !showSensorEnhancementPanel"
+          >
+            {{ showSensorEnhancementPanel ? '收起增强模式' : '传感器增强' }}
+          </button>
+        </div>
+
+        <div v-if="isWindowsPlatform && showSensorEnhancementPanel" class="sensor-enhancement-panel">
+          <div class="sensor-enhancement-panel__summary">
+            <div>
+              <h4>硬件传感器增强模式</h4>
+              <p>Windows 下 CPU 温度没有统一可靠接口。开启后，仅在当前链路拿不到可信温度时，才会尝试使用 OpenHardwareMonitor 本地服务。</p>
+            </div>
+            <span :class="['sensor-enhancement-panel__status', { 'sensor-enhancement-panel__status--active': sensorSettings.enhancedSensorEnabled }]">
+              {{ sensorEnhancementSummary }}
+            </span>
+          </div>
+
+          <div class="sensor-enhancement-grid">
+            <div class="sensor-enhancement-item">
+              <span>增强模式</span>
+              <strong>{{ sensorSettings.enhancedSensorEnabled ? '已开启' : '未开启' }}</strong>
+            </div>
+            <div class="sensor-enhancement-item">
+              <span>OHM 状态</span>
+              <strong>{{ sensorSettingsLoading ? '检测中...' : openHardwareMonitorStatusLabel }}</strong>
+            </div>
+            <div class="sensor-enhancement-item">
+              <span>当前温度来源</span>
+              <strong>{{ cpuTemperatureSourceLabel }}</strong>
+            </div>
+            <div class="sensor-enhancement-item">
+              <span>工作方式</span>
+              <strong>{{ sensorSettings.enhancedSensorEnabled ? '自动尝试启动 OHM' : '仅使用当前内置链路' }}</strong>
+            </div>
+          </div>
+
+          <div class="sensor-enhancement-actions">
+            <button type="button" class="sensor-button" :disabled="sensorActionLoading" @click="toggleEnhancedSensorMode">
+              {{ sensorSettings.enhancedSensorEnabled ? '关闭增强模式' : '开启增强模式' }}
+            </button>
+            <button type="button" class="sensor-button" :disabled="sensorSettingsLoading" @click="refreshHardwareSensorState">
+              检测状态
+            </button>
+            <button
+              type="button"
+              class="sensor-button"
+              :disabled="sensorActionLoading || !sensorSettings.enhancedSensorEnabled"
+              @click="startOpenHardwareMonitor"
+            >
+              尝试启动 OHM
+            </button>
+            <button type="button" class="sensor-button" @click="openHardwareSensorComponentDirectory">
+              打开组件目录
+            </button>
+          </div>
+
+          <div class="sensor-enhancement-meta">
+            <span>端口：{{ sensorSettings.openHardwareMonitorPort }}</span>
+            <span>原因：{{ cpuTemperatureReasonLabel }}</span>
+          </div>
+          <p v-if="sensorEnhancementSuggestion" class="sensor-enhancement-hint">建议：{{ sensorEnhancementSuggestion }}</p>
         </div>
 
         <div class="monitor-grid">
@@ -1068,6 +1283,117 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.sensor-enhancement-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid rgba(66, 128, 240, 0.18);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(17, 27, 40, 0.88), rgba(14, 21, 31, 0.92));
+}
+
+.sensor-enhancement-panel__summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+
+  h4 {
+    margin: 0;
+    color: #f5f7fb;
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+}
+
+.sensor-enhancement-panel__status {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(59, 74, 98, 0.46);
+  color: #cfd8eb;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sensor-enhancement-panel__status--active {
+  background: rgba(54, 116, 233, 0.18);
+  color: #8fc4ff;
+}
+
+.sensor-enhancement-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sensor-enhancement-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(84, 104, 132, 0.2);
+  border-radius: 12px;
+  background: rgba(19, 29, 42, 0.72);
+
+  span {
+    color: var(--text-subtle);
+    font-size: 12px;
+  }
+
+  strong {
+    color: #edf2fb;
+    font-size: 14px;
+    font-weight: 700;
+  }
+}
+
+.sensor-enhancement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sensor-button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(84, 104, 132, 0.34);
+  border-radius: 10px;
+  background: rgba(20, 29, 42, 0.8);
+  color: #e7eefb;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sensor-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.sensor-enhancement-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.sensor-enhancement-hint {
+  margin: 0;
+  color: #9fc1ea;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .monitor-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1342,6 +1668,10 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
+   .sensor-enhancement-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .processor-panel {
     height: auto;
   }
@@ -1366,11 +1696,16 @@ onUnmounted(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .sensor-enhancement-grid,
   .quick-stats,
   .monitor-grid,
   .core-chip-grid,
   .platform-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sensor-enhancement-panel__summary {
+    flex-direction: column;
   }
 
   .core-table__head,

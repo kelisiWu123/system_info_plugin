@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { clampPercent, getDisplayMemoryUsagePercent, getDisplayStorageVolumes, getPhysicalDiskTotalBytes } from '../utils'
+import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsagePercent, getDisplayStorageVolumes, getPhysicalDiskTotalBytes } from '../utils'
 
 export type FetchStatus = 'pending' | 'ok' | 'missing' | 'error'
 
@@ -320,7 +320,7 @@ async function refreshDynamicMetrics() {
 
       if (cpuSpeedRes.status === 'fulfilled') {
         cpuCurrentSpeed.value = cpuSpeedRes.value || emptyCpuCurrentSpeedData
-        pushMetricHistory('cpuSpeed', cpuSpeedRes.value?.avg || 0)
+        pushMetricHistory('cpuSpeed', getDisplayCpuCurrentSpeedGHz(cpuSpeedRes.value || emptyCpuCurrentSpeedData))
       }
 
       if (cpuPowerRes.status === 'fulfilled') {
