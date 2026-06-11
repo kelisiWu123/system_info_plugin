@@ -14,6 +14,7 @@ const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
 const OPEN_HARDWARE_MONITOR_PROCESS_NAME = 'OpenHardwareMonitor.exe'
 const OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS = 1500
 const OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS = 15000
+const CPU_CLOCK_ANOMALY_MAX_GHZ = 7.5
 const MAC_MEMORY_PRESSURE_FALLBACK = {
   level: 'unknown',
   rawLevel: null,
@@ -1452,7 +1453,14 @@ async function getHardwareMonitorCpuCurrentSpeed() {
     .filter(isCpuSensor)
     .filter((sensor) => {
       const haystack = normalizeSensorText(sensor)
-      return !haystack.includes('bus speed') && !haystack.includes('bclk') && !haystack.includes('base clock')
+      return (
+        !haystack.includes('bus speed')
+        && !haystack.includes('bclk')
+        && !haystack.includes('base clock')
+        && !haystack.includes('memory')
+        && !haystack.includes('fabric')
+        && !haystack.includes('uncore')
+      )
     })
 
   if (!sensors.length) return undefined
@@ -1462,7 +1470,7 @@ async function getHardwareMonitorCpuCurrentSpeed() {
       const value = typeof sensor.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null
       if (value === null || value <= 0) return null
       const ghzValue = value > 20 ? value / 1000 : value
-      if (!Number.isFinite(ghzValue) || ghzValue <= 0 || ghzValue > 10) return null
+      if (!Number.isFinite(ghzValue) || ghzValue <= 0 || ghzValue > CPU_CLOCK_ANOMALY_MAX_GHZ) return null
       return {
         ...sensor,
         ghzValue: Math.round(ghzValue * 100) / 100,
@@ -1934,7 +1942,11 @@ export const systemService = {
         const fallback = { min: 0, max: 0, avg: 0, cores: [] }
 
         if (isWindows()) {
-          const hardwareMonitorSpeed = await readSystemInfo('cpuClockSensors', undefined, getHardwareMonitorCpuCurrentSpeed)
+          const hardwareMonitorSpeed = await readSystemInfo(
+            'cpuClockSensors',
+            undefined,
+            getHardwareMonitorCpuCurrentSpeed
+          )
           if (hardwareMonitorSpeed?.cores?.length || hardwareMonitorSpeed?.avg) {
             return hardwareMonitorSpeed
           }
