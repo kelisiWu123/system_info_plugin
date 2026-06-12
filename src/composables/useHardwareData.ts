@@ -7,6 +7,7 @@ export type OverviewServiceKey =
   | 'cpuInfo'
   | 'cpuTemperature'
   | 'cpuLoad'
+  | 'cpuFanSpeed'
   | 'memInfo'
   | 'memoryLayout'
   | 'gpuInfo'
@@ -87,6 +88,7 @@ export const overviewServiceLabels: Record<OverviewServiceKey, string> = {
   cpuInfo: 'CPU 基础信息',
   cpuTemperature: 'CPU 温度',
   cpuLoad: 'CPU 负载',
+  cpuFanSpeed: 'CPU 风扇',
   memInfo: '内存占用',
   memoryLayout: '内存布局',
   gpuInfo: 'GPU 信息',
@@ -112,6 +114,7 @@ const cpuLoadData = ref<CurrentLoadData>(emptyCurrentLoadData)
 const cpuCurrentSpeed = ref<CpuCurrentSpeedData>(emptyCpuCurrentSpeedData)
 const cpuPower = ref<CpuPowerData>()
 const cpuVoltage = ref<CpuVoltageData>()
+const cpuFanSpeed = ref<CpuFanData>()
 const boardTelemetry = ref<BoardTelemetryData>({
   boardTemperature: { value: null, source: 'unsupported', unit: '°C', max: null },
   vrmTemperature: { value: null, source: 'unsupported', unit: '°C', max: null },
@@ -157,6 +160,7 @@ const fetchState = reactive<Record<OverviewServiceKey, { status: FetchStatus; no
   cpuInfo: { status: 'pending', note: '' },
   cpuTemperature: { status: 'pending', note: '' },
   cpuLoad: { status: 'pending', note: '' },
+  cpuFanSpeed: { status: 'pending', note: '' },
   memInfo: { status: 'pending', note: '' },
   memoryLayout: { status: 'pending', note: '' },
   gpuInfo: { status: 'pending', note: '' },
@@ -285,13 +289,14 @@ async function refreshDynamicMetrics(force = false) {
       const needsBoardTelemetry = force || now - lastBoardTelemetryRefreshAt >= DYNAMIC_POLL_INTERVALS.boardTelemetry
       const needsGpu = force || now - lastGpuRefreshAt >= DYNAMIC_POLL_INTERVALS.gpu
 
-      const [temperatureRes, cpuLoadRes, cpuLoadDataRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, boardTelemetryRes, gpuRes, memoRes, diskRes, timeRes] = await Promise.allSettled([
+      const [temperatureRes, cpuLoadRes, cpuLoadDataRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, cpuFanRes, boardTelemetryRes, gpuRes, memoRes, diskRes, timeRes] = await Promise.allSettled([
         needsCpuTemp ? readService(() => window.services.getCpuTemperature(), 9000) : Promise.resolve(undefined),
         readService(() => window.services.getCpuFullLoad(), 6000),
         readService(() => window.services.getCpuLoadData(), 7000),
         needsCpuSpeed ? readService(() => window.services.getCpuCurrentSpeed(), 7000) : Promise.resolve(undefined),
         needsCpuAux ? readService(() => window.services.getCpuPower(), 7000) : Promise.resolve(undefined),
         needsCpuAux ? readService(() => window.services.getCpuVoltage(), 7000) : Promise.resolve(undefined),
+        needsCpuAux ? readService(() => window.services.getCpuFanSpeed(), 7000) : Promise.resolve(undefined),
         needsBoardTelemetry ? readService(() => window.services.getBoardTelemetry(), 7000) : Promise.resolve(undefined),
         needsGpu ? readService(() => window.services.getGpuInfo(), 15000) : Promise.resolve(undefined),
         readService(() => window.services.getMemInfo(), 6000),
@@ -350,6 +355,11 @@ async function refreshDynamicMetrics(force = false) {
       if (needsCpuAux && cpuVoltageRes.status === 'fulfilled') {
         cpuVoltage.value = cpuVoltageRes.value
         pushMetricHistory('cpuVoltage', cpuVoltageRes.value?.value || 0)
+      }
+
+      if (needsCpuAux && cpuFanRes.status === 'fulfilled') {
+        cpuFanSpeed.value = cpuFanRes.value
+        setFetchState('cpuFanSpeed', cpuFanRes.value?.value ? 'ok' : cpuFanRes.value?.source === 'unsupported' ? 'ok' : 'missing', cpuFanRes.value?.message || '')
       }
 
       if (needsCpuAux) {
@@ -534,6 +544,10 @@ export async function activateHardwareStore() {
   }
 }
 
+export async function refreshHardwareStoreDynamicMetrics() {
+  await refreshDynamicMetrics(true)
+}
+
 export function deactivateHardwareStore() {
   subscriberCount = Math.max(0, subscriberCount - 1)
 
@@ -553,6 +567,7 @@ export const hardwareStore = {
   cpuCurrentSpeed,
   cpuPower,
   cpuVoltage,
+  cpuFanSpeed,
   boardTelemetry,
   memoData,
   memoLayoutData,

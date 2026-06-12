@@ -12,6 +12,17 @@ import {
 } from '@icon-park/vue-next'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
+import {
+  buildWatchCpuOverviewSideItems,
+  formatWatchRuntime,
+  getWatchCpuAuxMetricIds,
+  getWatchOverviewSideColumnCount,
+  formatWatchCpuSpeedSourceLabel,
+  getWatchCpuPalette,
+  getWatchGpuPalette,
+  getWatchMemoryPalette,
+  WATCH_MODE_POLL_PROFILES,
+} from '../../utils/watch'
 
 const props = defineProps<{
   active?: boolean
@@ -44,6 +55,7 @@ const cpuTemperature = ref<CpuTemperatureData>()
 const cpuCurrentSpeed = ref<CpuCurrentSpeedData>()
 const cpuPower = ref<CpuPowerData>()
 const cpuVoltage = ref<CpuVoltageData>()
+const cpuFanSpeed = ref<CpuFanData>()
 const timeInfo = ref<TimeData>()
 const memoryLayout = ref<MemoLayoutData[]>([])
 const pinned = ref(true)
@@ -57,6 +69,7 @@ const history = reactive({
   cpuSpeed: [] as number[],
   cpuPower: [] as number[],
   cpuVoltage: [] as number[],
+  cpuFan: [] as number[],
   gpuTemp: [] as number[],
   gpuMemory: [] as number[],
   gpuPower: [] as number[],
@@ -65,41 +78,20 @@ const history = reactive({
 let fastTimerId: number | undefined
 let slowTimerId: number | undefined
 let lastCpuSensorRefreshAt = 0
+let lastCpuPowerRefreshAt = 0
 let lastCpuAuxSensorRefreshAt = 0
+let lastCpuSpeedRefreshAt = 0
 let lastGpuRefreshAt = 0
 let lastInfoRefreshAt = 0
 let lastTimeRefreshAt = 0
 let watchRefreshGeneration = 0
 
-const MODE_POLL_PROFILES = {
-  overview: {
-    fast: 2500,
-    slow: 7000,
-    cpuTemp: 0,
-    cpuAux: 0,
-    gpu: 7000,
-  },
-  cpu: {
-    fast: 2200,
-    slow: 12000,
-    cpuTemp: 4500,
-    cpuAux: 10000,
-    gpu: 12000,
-  },
-  gpu: {
-    fast: 2200,
-    slow: 2500,
-    cpuTemp: 12000,
-    cpuAux: 0,
-    gpu: 2500,
-  },
-} as const
-
 const STATIC_INFO_INTERVAL_MS = 20000
 const TIME_INFO_INTERVAL_MS = 10000
+const CPU_SPEED_INFO_INTERVAL_MS = 4500
 
 function getCurrentPollProfile() {
-  return MODE_POLL_PROFILES[monitorMode.value]
+  return WATCH_MODE_POLL_PROFILES[monitorMode.value]
 }
 
 function withTimeout<T>(promise: Promise<T>, timeout = 2500): Promise<T> {
@@ -148,17 +140,19 @@ function formatFrequencyGHz(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(2)} GHz` : '--'
 }
 
-function formatRuntime(seconds?: number) {
-  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '--:--:--'
-  const whole = Math.floor(seconds)
-  const hours = Math.floor(whole / 3600)
-  const minutes = Math.floor((whole % 3600) / 60)
-  const remainingSeconds = whole % 60
-  return [hours, minutes, remainingSeconds].map((value) => String(value).padStart(2, '0')).join(':')
+function formatPower(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '--'
+  if (value < 1) return `${Math.round(value * 1000)} mW`
+  if (value < 10) return `${value.toFixed(1)} W`
+  return `${Math.round(value)} W`
 }
 
-function formatPower(value: number | null | undefined) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} W` : '--'
+function formatVoltage(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(2)} V` : '--'
+}
+
+function formatFanSpeed(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} RPM` : '--'
 }
 
 function sparklinePoints(values: number[]) {
@@ -189,6 +183,13 @@ function progressBarStyle(percent: number, tone: string) {
   }
 }
 
+function sparklinePaletteStyle(palette: { fill: string; stroke: string }) {
+  return {
+    '--sparkline-fill': palette.fill,
+    '--sparkline-stroke': palette.stroke,
+  }
+}
+
 const primaryGpu = computed(() => {
   return [...gpuData.value].sort((left, right) => gpuTelemetryScore(right) - gpuTelemetryScore(left))[0]
 })
@@ -199,6 +200,9 @@ const memoryPercent = computed(() => {
 })
 const gpuPercent = computed(() => clampPercent(primaryGpu.value?.utilizationGpu || 0))
 const memoryPressureLabel = computed(() => getMemoryPressureLabel(memoData.pressure?.level))
+const cpuWatchPalette = computed(() => getWatchCpuPalette())
+const gpuWatchPalette = computed(() => getWatchGpuPalette())
+const memoryWatchPalette = computed(() => getWatchMemoryPalette(memoData.normalizedPlatform, memoData.pressure?.level))
 
 const cpuTempValue = computed(() => {
   if (typeof cpuTemperature.value?.value === 'number') return cpuTemperature.value.value
@@ -206,11 +210,28 @@ const cpuTempValue = computed(() => {
   return null
 })
 
+const cpuTemperatureDisplay = computed(() => {
+  if (cpuTempValue.value !== null) return formatTemperature(cpuTempValue.value)
+  const reason = cpuTemperature.value?.reason || cpuTemperature.value?.errorCode || ''
+  if (reason === 'MACOS_SMC_PERMISSION_REQUIRED') return '需要管理员权限'
+  if (reason.startsWith('MACOS_SMC_')) return 'AppleSMC 失败'
+  return formatTemperature(cpuTempValue.value)
+})
+
 const cpuFrequencyValue = computed(() => {
   const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
   return value > 0 ? value : null
 })
+const cpuFrequencySourceLabel = computed(() => formatWatchCpuSpeedSourceLabel(cpuCurrentSpeed.value))
 const cpuPowerValue = computed(() => (typeof cpuPower.value?.value === 'number' ? cpuPower.value.value : null))
+const cpuVoltageValue = computed(() => (typeof cpuVoltage.value?.value === 'number' ? cpuVoltage.value.value : null))
+const cpuFanSpeedValue = computed(() => (typeof cpuFanSpeed.value?.value === 'number' ? cpuFanSpeed.value.value : null))
+const watchCpuAuxMetricIds = computed(() => getWatchCpuAuxMetricIds(memoData.normalizedPlatform))
+const cpuOverviewSideItems = computed(() => buildWatchCpuOverviewSideItems({
+  temperatureValue: cpuTemperatureDisplay.value,
+  powerValue: formatPower(cpuPowerValue.value),
+}))
+const cpuOverviewSideColumnCount = computed(() => getWatchOverviewSideColumnCount(cpuOverviewSideItems.value.length))
 
 const installedMemoryTotal = computed(() => {
   const modules = memoryLayout.value
@@ -239,12 +260,13 @@ const footerStatus = computed(() => {
   return '部分指标暂不支持'
 })
 
-const cpuDetailStats = computed(() => [
-  {
+const cpuDetailStats = computed(() => {
+  const stats = [
+    {
     id: 'load',
     label: 'CPU 使用率',
     value: formatPercent(cpuPercent.value),
-    accent: '#35b6ff',
+    accent: cpuWatchPalette.value.stroke,
     tone: 'cpu',
     history: history.cpu,
   },
@@ -258,7 +280,7 @@ const cpuDetailStats = computed(() => [
   },
   {
     id: 'speed',
-    label: '当前频率',
+    label: `当前频率 · ${cpuFrequencySourceLabel.value}`,
     value: formatFrequencyGHz(cpuFrequencyValue.value),
     accent: '#58a8ff',
     tone: 'speed',
@@ -272,14 +294,46 @@ const cpuDetailStats = computed(() => [
     tone: 'power',
     history: history.cpuPower,
   },
-])
+  ] as Array<{
+    id: string
+    label: string
+    value: string
+    accent: string
+    tone: string
+    history: number[]
+  }>
+
+  if (watchCpuAuxMetricIds.value.includes('voltage')) {
+    stats.push({
+      id: 'voltage',
+      label: '核心电压',
+      value: formatVoltage(cpuVoltageValue.value),
+      accent: '#b47cff',
+      tone: 'voltage',
+      history: history.cpuVoltage,
+    })
+  }
+
+  if (watchCpuAuxMetricIds.value.includes('fan')) {
+    stats.push({
+      id: 'fan',
+      label: 'CPU 风扇',
+      value: formatFanSpeed(cpuFanSpeedValue.value),
+      accent: '#73c1ff',
+      tone: 'fan',
+      history: history.cpuFan,
+    })
+  }
+
+  return stats
+})
 
 const gpuDetailStats = computed(() => [
   {
     id: 'load',
     label: 'GPU 使用率',
     value: formatPercent(gpuPercent.value),
-    accent: '#83df55',
+    accent: gpuWatchPalette.value.stroke,
     tone: 'gpu',
     history: history.gpu,
   },
@@ -316,18 +370,22 @@ async function refreshFastMetrics(force = false) {
     const pollProfile = getCurrentPollProfile()
     const needsCpuDetailSensors = monitorMode.value === 'cpu'
     const needsCpuTemp = pollProfile.cpuTemp > 0 && (force || now - lastCpuSensorRefreshAt >= pollProfile.cpuTemp)
+    const needsCpuSpeed = (monitorMode.value === 'overview' || needsCpuDetailSensors)
+      && (force || now - lastCpuSpeedRefreshAt >= CPU_SPEED_INFO_INTERVAL_MS)
+    const needsCpuPower = pollProfile.cpuPower > 0 && (force || now - lastCpuPowerRefreshAt >= pollProfile.cpuPower)
     const needsCpuAuxSensors = needsCpuDetailSensors
       && pollProfile.cpuAux > 0
       && (force || now - lastCpuAuxSensorRefreshAt >= pollProfile.cpuAux)
     const needsTimeInfo = force || now - lastTimeRefreshAt >= TIME_INFO_INTERVAL_MS
 
-    const [cpuLoadRes, memoRes, cpuTemperatureRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, timeRes] = await Promise.allSettled([
+    const [cpuLoadRes, memoRes, cpuTemperatureRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, cpuFanRes, timeRes] = await Promise.allSettled([
       withTimeout(window.services.getCpuFullLoad()),
       withTimeout(window.services.getMemInfo()),
       needsCpuTemp ? withTimeout(window.services.getCpuTemperature(), 3500) : Promise.resolve(undefined),
-      needsCpuDetailSensors ? withTimeout(window.services.getCpuCurrentSpeed(), 3500) : Promise.resolve(undefined),
-      needsCpuAuxSensors ? withTimeout(window.services.getCpuPower(), 3500) : Promise.resolve(undefined),
+      needsCpuSpeed ? withTimeout(window.services.getCpuCurrentSpeed(), 3500) : Promise.resolve(undefined),
+      (needsCpuPower || needsCpuAuxSensors) ? withTimeout(window.services.getCpuPower(), 3500) : Promise.resolve(undefined),
       needsCpuAuxSensors ? withTimeout(window.services.getCpuVoltage(), 3500) : Promise.resolve(undefined),
+      needsCpuAuxSensors ? withTimeout(window.services.getCpuFanSpeed(), 3500) : Promise.resolve(undefined),
       needsTimeInfo ? withTimeout(window.services.getTimeInfo(), 3500) : Promise.resolve(undefined),
     ])
 
@@ -360,19 +418,29 @@ async function refreshFastMetrics(force = false) {
       lastCpuSensorRefreshAt = now
     }
 
-    if (needsCpuDetailSensors && cpuSpeedRes.status === 'fulfilled') {
+    if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
       cpuCurrentSpeed.value = cpuSpeedRes.value
       clampHistory(history.cpuSpeed, cpuFrequencyValue.value || 0)
+      lastCpuSpeedRefreshAt = now
     }
 
-    if (needsCpuAuxSensors && cpuPowerRes.status === 'fulfilled') {
+    if ((needsCpuPower || needsCpuAuxSensors) && cpuPowerRes.status === 'fulfilled') {
       cpuPower.value = cpuPowerRes.value
       clampHistory(history.cpuPower, cpuPowerRes.value?.value || 0)
+    }
+
+    if (needsCpuPower) {
+      lastCpuPowerRefreshAt = now
     }
 
     if (needsCpuAuxSensors && cpuVoltageRes.status === 'fulfilled') {
       cpuVoltage.value = cpuVoltageRes.value
       clampHistory(history.cpuVoltage, cpuVoltageRes.value?.value || 0)
+    }
+
+    if (needsCpuAuxSensors && cpuFanRes.status === 'fulfilled') {
+      cpuFanSpeed.value = cpuFanRes.value
+      clampHistory(history.cpuFan, cpuFanRes.value?.value || 0)
     }
 
     if (needsCpuAuxSensors) {
@@ -445,6 +513,7 @@ async function startPolling() {
   watchRefreshGeneration += 1
   lastCpuSensorRefreshAt = 0
   lastCpuAuxSensorRefreshAt = 0
+  lastCpuSpeedRefreshAt = 0
   lastGpuRefreshAt = 0
   lastInfoRefreshAt = 0
   lastTimeRefreshAt = 0
@@ -561,110 +630,139 @@ onUnmounted(() => {
       </header>
 
       <div v-if="monitorMode === 'overview'" class="monitor-shell__body">
-        <WatchRow tone="cpu">
+        <WatchRow
+          tone="cpu"
+          :accent="cpuWatchPalette.stroke"
+          :border="cpuWatchPalette.border"
+          :side-width="cpuOverviewSideColumnCount > 1 ? '122px' : '82px'"
+        >
           <template #icon>
-            <Cpu theme="outline" size="24" fill="#35b6ff" :strokeWidth="3" />
+            <Cpu theme="outline" size="24" :fill="cpuWatchPalette.icon" :strokeWidth="3" />
           </template>
           <template #title>CPU</template>
           <template #subtitle>使用率</template>
           <template #value>{{ formatPercent(cpuPercent) }}</template>
           <template #chart>
-            <svg class="metric-sparkline metric-sparkline--cpu" viewBox="0 0 238 64" preserveAspectRatio="none">
+            <svg
+              class="metric-sparkline metric-sparkline--cpu"
+              :style="sparklinePaletteStyle(cpuWatchPalette)"
+              viewBox="0 0 238 64"
+              preserveAspectRatio="none"
+            >
               <polygon :points="sparklineArea(history.cpu)" />
               <polyline :points="sparklinePoints(history.cpu)" />
             </svg>
           </template>
           <template #bar>
             <div class="metric-progress">
-              <span class="metric-progress__fill" :style="progressBarStyle(cpuPercent, 'linear-gradient(90deg, #33b8ff, #4bd7ff)')" />
+              <span class="metric-progress__fill" :style="progressBarStyle(cpuPercent, cpuWatchPalette.progress)" />
             </div>
           </template>
           <template #side>
-            <div class="metric-side-item">
-              <div class="metric-side-item__label">
-                <Thermometer theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                <span>{{ monitorMode === 'overview' ? '频率' : '温度' }}</span>
+            <div
+              :class="[
+                'metric-side-list',
+                `metric-side-list--columns-${cpuOverviewSideColumnCount}`,
+              ]"
+            >
+              <div
+                v-for="item in cpuOverviewSideItems"
+                :key="item.id"
+                class="metric-side-item"
+              >
+                <div class="metric-side-item__label">
+                  <Thermometer v-if="item.icon === 'temperature'" theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
+                  <DashboardOne v-else theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
+                  <span>{{ item.label }}</span>
+                </div>
+                <strong>{{ item.value }}</strong>
               </div>
-              <strong>{{ monitorMode === 'overview' ? formatFrequencyGHz(cpuFrequencyValue) : formatTemperature(cpuTempValue) }}</strong>
-            </div>
-            <div class="metric-side-item">
-              <div class="metric-side-item__label">
-                <DashboardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                <span>功耗</span>
-              </div>
-              <strong>{{ formatPower(cpuPowerValue) }}</strong>
             </div>
           </template>
         </WatchRow>
 
-        <WatchRow tone="gpu">
+        <WatchRow tone="gpu" :accent="gpuWatchPalette.stroke" :border="gpuWatchPalette.border">
           <template #icon>
-            <GraphicDesign theme="outline" size="24" fill="#83df55" :strokeWidth="3" />
+            <GraphicDesign theme="outline" size="24" :fill="gpuWatchPalette.icon" :strokeWidth="3" />
           </template>
           <template #title>GPU</template>
           <template #subtitle>使用率</template>
           <template #value>{{ formatPercent(gpuPercent) }}</template>
           <template #chart>
-            <svg class="metric-sparkline metric-sparkline--gpu" viewBox="0 0 238 64" preserveAspectRatio="none">
+            <svg
+              class="metric-sparkline metric-sparkline--gpu"
+              :style="sparklinePaletteStyle(gpuWatchPalette)"
+              viewBox="0 0 238 64"
+              preserveAspectRatio="none"
+            >
               <polygon :points="sparklineArea(history.gpu)" />
               <polyline :points="sparklinePoints(history.gpu)" />
             </svg>
           </template>
           <template #bar>
             <div class="metric-progress">
-              <span class="metric-progress__fill" :style="progressBarStyle(gpuPercent, 'linear-gradient(90deg, #70d646, #9cf165)')" />
+              <span class="metric-progress__fill" :style="progressBarStyle(gpuPercent, gpuWatchPalette.progress)" />
             </div>
           </template>
           <template #side>
-            <div class="metric-side-item">
-              <div class="metric-side-item__label">
-                <Thermometer theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                <span>温度</span>
+            <div class="metric-side-list metric-side-list--columns-1">
+              <div class="metric-side-item">
+                <div class="metric-side-item__label">
+                  <Thermometer theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
+                  <span>温度</span>
+                </div>
+                <strong>{{ formatTemperature(primaryGpu?.temperatureGpu) }}</strong>
               </div>
-              <strong>{{ formatTemperature(primaryGpu?.temperatureGpu) }}</strong>
-            </div>
-            <div class="metric-side-item">
-              <div class="metric-side-item__label">
-                <MemoryCardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                <span>功耗</span>
+              <div class="metric-side-item">
+                <div class="metric-side-item__label">
+                  <MemoryCardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
+                  <span>功耗</span>
+                </div>
+                <strong>{{ formatPower(gpuPowerValue) }}</strong>
               </div>
-              <strong>{{ formatPower(gpuPowerValue) }}</strong>
             </div>
           </template>
         </WatchRow>
 
-        <WatchRow tone="memory">
+        <WatchRow tone="memory" :accent="memoryWatchPalette.stroke" :border="memoryWatchPalette.border">
           <template #icon>
-            <Memory theme="outline" size="24" fill="#a775ff" :strokeWidth="3" />
+            <Memory theme="outline" size="24" :fill="memoryWatchPalette.icon" :strokeWidth="3" />
           </template>
           <template #title>内存</template>
           <template #subtitle>使用率</template>
           <template #value>{{ formatPercent(memoryPercent) }}</template>
           <template #chart>
-            <svg class="metric-sparkline metric-sparkline--memory" viewBox="0 0 238 64" preserveAspectRatio="none">
+            <svg
+              class="metric-sparkline metric-sparkline--memory"
+              :style="sparklinePaletteStyle(memoryWatchPalette)"
+              viewBox="0 0 238 64"
+              preserveAspectRatio="none"
+            >
               <polygon :points="sparklineArea(history.memory)" />
               <polyline :points="sparklinePoints(history.memory)" />
             </svg>
           </template>
           <template #bar>
             <div class="metric-progress">
-              <span class="metric-progress__fill" :style="progressBarStyle(memoryPercent, 'linear-gradient(90deg, #9568ff, #b98dff)')" />
+              <span class="metric-progress__fill" :style="progressBarStyle(memoryPercent, memoryWatchPalette.progress)" />
             </div>
           </template>
           <template #side>
-            <div class="metric-side-item">
-              <div class="metric-side-item__label">
-                <DashboardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                <span>已用</span>
+            <div class="metric-side-list metric-side-list--columns-1">
+              <div class="metric-side-item">
+                <div class="metric-side-item__label">
+                  <DashboardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
+                  <span>已用</span>
+                </div>
+                <strong>{{ formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData)) }}</strong>
               </div>
-              <strong>{{ formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData)) }}</strong>
-            </div>
-            <div class="metric-side-item">
-              <div class="metric-side-item__label">
-                <MemoryCardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                <span>{{ memoData.normalizedPlatform === 'darwin' ? '压力' : '总计' }}</span>
+              <div class="metric-side-item">
+                <div class="metric-side-item__label">
+                  <MemoryCardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
+                  <span>{{ memoData.normalizedPlatform === 'darwin' ? '压力' : '总计' }}</span>
+                </div>
+                <strong>{{ memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel : formatGigabytesFromBytes(installedMemoryTotal, 0) }}</strong>
               </div>
-              <strong>{{ memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel : formatGigabytesFromBytes(installedMemoryTotal, 0) }}</strong>
             </div>
           </template>
         </WatchRow>
@@ -672,7 +770,11 @@ onUnmounted(() => {
 
       <div v-else-if="monitorMode === 'cpu'" class="monitor-shell__body monitor-shell__body--cpu-detail">
         <section class="detail-glass-panel detail-glass-panel--cpu cpu-detail-grid">
-          <article v-for="item in cpuDetailStats" :key="item.id" class="cpu-detail-metric">
+          <article
+            v-for="item in cpuDetailStats"
+            :key="item.id"
+            :class="['cpu-detail-metric', `cpu-detail-metric--${item.tone}`]"
+          >
             <div class="cpu-detail-metric__head">
               <span>{{ item.label }}</span>
               <strong>{{ item.value }}</strong>
@@ -688,7 +790,11 @@ onUnmounted(() => {
 
       <div v-else class="monitor-shell__body monitor-shell__body--cpu-detail">
         <section class="detail-glass-panel detail-glass-panel--gpu cpu-detail-grid">
-          <article v-for="item in gpuDetailStats" :key="item.id" class="cpu-detail-metric">
+          <article
+            v-for="item in gpuDetailStats"
+            :key="item.id"
+            :class="['cpu-detail-metric', `cpu-detail-metric--${item.tone}`]"
+          >
             <div class="cpu-detail-metric__head">
               <span>{{ item.label }}</span>
               <strong>{{ item.value }}</strong>
@@ -703,7 +809,7 @@ onUnmounted(() => {
 
       <footer class="monitor-shell__footer">
         <div class="monitor-shell__footer-meta">
-          <span>运行时间 {{ formatRuntime(timeInfo?.uptime) }}</span>
+          <span>运行时间 {{ formatWatchRuntime(timeInfo?.uptime) }}</span>
           <span>更新频率 1s</span>
         </div>
         <div class="monitor-shell__footer-status">
@@ -891,11 +997,11 @@ onUnmounted(() => {
 }
 
 .detail-glass-panel--cpu::before {
-  background: radial-gradient(circle, rgba(55, 182, 255, 0.7), transparent 70%);
+  background: radial-gradient(circle, rgba(167, 117, 255, 0.68), transparent 70%);
 }
 
 .detail-glass-panel--gpu::before {
-  background: radial-gradient(circle, rgba(131, 223, 85, 0.62), transparent 70%);
+  background: radial-gradient(circle, rgba(121, 231, 255, 0.70), transparent 70%);
 }
 
 .metric-sparkline {
@@ -904,38 +1010,40 @@ onUnmounted(() => {
 }
 
 .metric-sparkline polygon {
+  fill: var(--sparkline-fill);
   opacity: 0.18;
 }
 
 .metric-sparkline polyline {
   fill: none;
+  stroke: var(--sparkline-stroke);
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .metric-sparkline--cpu polygon {
-  fill: #35b6ff;
+  fill: var(--sparkline-fill, rgba(167, 117, 255, 0.22));
 }
 
 .metric-sparkline--cpu polyline {
-  stroke: #35b6ff;
+  stroke: var(--sparkline-stroke, #a775ff);
 }
 
 .metric-sparkline--gpu polygon {
-  fill: #83df55;
+  fill: var(--sparkline-fill, rgba(121, 231, 255, 0.30));
 }
 
 .metric-sparkline--gpu polyline {
-  stroke: #83df55;
+  stroke: var(--sparkline-stroke, #79e7ff);
 }
 
 .metric-sparkline--memory polygon {
-  fill: #a775ff;
+  fill: var(--sparkline-fill, rgba(121, 216, 79, 0.22));
 }
 
 .metric-sparkline--memory polyline {
-  stroke: #a775ff;
+  stroke: var(--sparkline-stroke, #79d84f);
 }
 
 .cpu-detail-grid {
@@ -978,24 +1086,36 @@ onUnmounted(() => {
   }
 }
 
-.cpu-detail-metric:nth-child(1) .cpu-detail-metric__head strong {
-  color: #46c5ff;
+.cpu-detail-metric--cpu .cpu-detail-metric__head strong {
+  color: #a775ff;
 }
 
-.cpu-detail-metric:nth-child(2) .cpu-detail-metric__head strong {
+.cpu-detail-metric--temp .cpu-detail-metric__head strong {
   color: #88e85d;
 }
 
-.cpu-detail-metric:nth-child(3) .cpu-detail-metric__head strong {
+.cpu-detail-metric--speed .cpu-detail-metric__head strong {
   color: #54b4ff;
 }
 
-.cpu-detail-metric:nth-child(4) .cpu-detail-metric__head strong {
+.cpu-detail-metric--power .cpu-detail-metric__head strong {
   color: #ffae47;
 }
 
-.cpu-detail-grid + .cpu-detail-grid .cpu-detail-metric__head strong {
-  color: #f7faff;
+.cpu-detail-metric--voltage .cpu-detail-metric__head strong {
+  color: #b47cff;
+}
+
+.cpu-detail-metric--fan .cpu-detail-metric__head strong {
+  color: #73c1ff;
+}
+
+.cpu-detail-metric--gpu .cpu-detail-metric__head strong {
+  color: #79e7ff;
+}
+
+.cpu-detail-metric--memory .cpu-detail-metric__head strong {
+  color: #b47cff;
 }
 
 .cpu-detail-sparkline {
@@ -1062,11 +1182,11 @@ onUnmounted(() => {
 }
 
 .cpu-detail-sparkline--cpu polygon {
-  fill: #35b6ff;
+  fill: rgba(167, 117, 255, 0.22);
 }
 
 .cpu-detail-sparkline--cpu polyline {
-  stroke: #35b6ff;
+  stroke: #a775ff;
 }
 
 .cpu-detail-sparkline--temp polygon {
@@ -1093,12 +1213,28 @@ onUnmounted(() => {
   stroke: #b47cff;
 }
 
+.cpu-detail-sparkline--voltage polygon {
+  fill: #b47cff;
+}
+
+.cpu-detail-sparkline--voltage polyline {
+  stroke: #b47cff;
+}
+
 .cpu-detail-sparkline--power polygon {
   fill: #ffb14d;
 }
 
 .cpu-detail-sparkline--power polyline {
   stroke: #ffb14d;
+}
+
+.cpu-detail-sparkline--fan polygon {
+  fill: #73c1ff;
+}
+
+.cpu-detail-sparkline--fan polyline {
+  stroke: #73c1ff;
 }
 
 .metric-progress {
@@ -1123,6 +1259,23 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.metric-side-list {
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.metric-side-list--columns-1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.metric-side-list--columns-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 10px;
+  row-gap: 6px;
+}
+
 .metric-side-item__label {
   display: inline-flex;
   align-items: center;
@@ -1130,26 +1283,15 @@ onUnmounted(() => {
   color: rgba(205, 216, 235, 0.78);
   font-size: 11px;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .metric-side-item strong {
   display: block;
-  color: #f4f8ff;
+  color: var(--watch-card-strong, #f4f8ff);
   font-size: 14px;
   font-weight: 700;
   line-height: 1.1;
-}
-
-:deep(.watch-metric-card--cpu .metric-side-item strong) {
-  color: #46c5ff;
-}
-
-:deep(.watch-metric-card--gpu .metric-side-item strong) {
-  color: #88e85d;
-}
-
-:deep(.watch-metric-card--memory .metric-side-item strong) {
-  color: #bb8dff;
 }
 
 .metric-side-item__value--wrap {

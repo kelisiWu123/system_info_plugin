@@ -2,7 +2,17 @@ import type { Systeminformation } from 'systeminformation'
 
 declare global {
   type CpuData = Systeminformation.CpuData
-  type CpuCurrentSpeedData = Systeminformation.CpuCurrentSpeedData
+  interface CpuCurrentSpeedData extends Systeminformation.CpuCurrentSpeedData {
+    source?: 'powermetrics' | 'systeminformation' | 'LibreHardwareMonitor' | 'OpenHardwareMonitor'
+    sensorName?: string
+    nativeSource?: 'powermetrics'
+    nativeErrorCode?: string
+    nativeReason?: string
+    nativeMessage?: string
+    nativeSuggestion?: string
+    privileged?: boolean
+    helper?: boolean
+  }
   type CurrentLoadData = Systeminformation.CurrentLoadData
   interface GpuData {
     model: string
@@ -18,8 +28,15 @@ declare global {
     memoryUsed?: number | null
     memoryFree?: number | null
     utilizationGpu?: number | null
+    idleResidencyGpu?: number | null
     utilizationMemory?: number | null
     temperatureGpu?: number | null
+    gpuCoreTemperatures?: Array<{
+      name: string
+      identifier?: string
+      value: number | null
+      hardwareName?: string
+    }>
     temperatureMemory?: number | null
     powerDraw?: number | null
     powerLimit?: number | null
@@ -28,6 +45,13 @@ declare global {
     fanSpeed?: number | null
     driverVersion?: string
     pciBus?: string
+    helper?: boolean
+    telemetrySource?: 'systeminformation' | 'powermetrics' | 'OpenHardwareMonitor'
+    temperatureSource?: 'systeminformation' | 'macos-temperature-sensor' | 'apple-smc' | 'OpenHardwareMonitor'
+    nativeTemperatureErrorCode?: string
+    nativeTemperatureReason?: string
+    nativeTemperatureMessage?: string
+    nativeTemperatureSuggestion?: string
     bus: string
   }
 
@@ -62,6 +86,8 @@ declare global {
     value?: number | null
     source?:
       | 'systeminformation'
+      | 'apple-smc'
+      | 'macos-temperature-sensor'
       | 'LibreHardwareMonitor'
       | 'OpenHardwareMonitor'
       | 'unsupported'
@@ -105,14 +131,38 @@ declare global {
     reason?: string
     suggestion?: string
   }
+  interface MacPowermetricsHelperStatusData {
+    ok?: boolean
+    platform: 'darwin' | 'other'
+    supported: boolean
+    label: string
+    bundledExists: boolean
+    bundledPath: string
+    runtimePath?: string
+    insideAsar?: boolean
+    installed: boolean
+    loaded: boolean
+    socketExists: boolean
+    installPath: string
+    plistPath: string
+    socketPath: string
+    reason?: string
+    suggestion?: string
+  }
   interface CpuPowerData {
-    value: number
-    source: 'LibreHardwareMonitor' | 'OpenHardwareMonitor'
+    value: number | null
+    source: 'powermetrics' | 'LibreHardwareMonitor' | 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
     sensors?: Array<{
       name: string
       value: number
     }>
+    errorCode?: string
+    reason?: string
+    message?: string
+    suggestion?: string
+    privileged?: boolean
+    helper?: boolean
   }
   interface CpuVoltageData {
     value: number | null
@@ -123,10 +173,14 @@ declare global {
   }
   interface CpuFanData {
     value: number | null
-    source: 'LibreHardwareMonitor' | 'OpenHardwareMonitor' | 'unsupported'
+    source: 'apple-smc' | 'LibreHardwareMonitor' | 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
     unit: 'RPM'
     max?: number | null
+    errorCode?: string
+    reason?: string
+    message?: string
+    suggestion?: string
   }
   interface BoardMetricData {
     value: number | null
@@ -180,6 +234,9 @@ declare global {
       getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>
       startOpenHardwareMonitor: () => Promise<OpenHardwareMonitorStatusData>
       openOpenHardwareMonitorDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>
+      getMacPowermetricsHelperStatus: () => Promise<MacPowermetricsHelperStatusData>
+      installMacPowermetricsHelper: () => Promise<MacPowermetricsHelperStatusData>
+      uninstallMacPowermetricsHelper: () => Promise<MacPowermetricsHelperStatusData>
       getCpuInfo: () => Promise<CpuData | undefined>
       getCpuFullLoad: () => Promise<number>
       getCpuTemperature: () => Promise<CpuTemperatureData | undefined>

@@ -9,6 +9,15 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import path from 'path'
+
+const nativeOptionalExternals = [
+  'macos-temperature-sensor',
+]
+
+function externalizeNativeOptionalDependencies(id: string) {
+  return nativeOptionalExternals.includes(id) || id.endsWith('.node')
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
   rmSync('dist-electron', { recursive: true, force: true })
@@ -32,7 +41,19 @@ export default defineConfig(({ command, mode }) => {
       }),
     utools({
       entry: [
-        { entry: 'utools/preload.js' }
+        {
+          entry: 'utools/preload.js',
+          vite: {
+            build: {
+              commonjsOptions: {
+                ignore: nativeOptionalExternals,
+              },
+              rollupOptions: {
+                external: externalizeNativeOptionalDependencies,
+              },
+            },
+          },
+        }
       ],
       hmr: {
         pluginJsonPath: './plugin.json'

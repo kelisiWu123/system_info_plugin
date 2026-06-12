@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "dev:electron": "vite --mode=electron",
-    "build": "vue-tsc && vite build && node scripts/generate-utools-entry-pages.mjs",
+    "build": "node scripts/build-mac-smc-sensors.mjs && vue-tsc && vite build && node scripts/generate-utools-entry-pages.mjs",
     "build:electron": "vue-tsc && vite build --mode=electron && electron-builder",
     "preview": "vite preview"
   },
@@ -41,5 +41,8 @@
   "env": {
     "VITE_DEV_SERVER_HOST": "127.0.0.1",
     "VITE_DEV_SERVER_PORT": 9000
+  },
+  "optionalDependencies": {
+    "macos-temperature-sensor": "^1.0.4"
   }
 }

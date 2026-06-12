@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
+import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareStoreDynamicMetrics } from '../../composables/useHardwareData'
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
+import { getSensorEnhancementActionLabel, getSensorEnhancementPlatform } from '../../utils/platform'
+import { getProcessorAuxDisplayMode } from '../../utils/processor'
 
 const props = defineProps<{
   active?: boolean
@@ -39,6 +41,7 @@ const {
   cpuTemperature,
   cpuPower,
   cpuVoltage,
+  cpuFanSpeed,
   cpuCurrentSpeed,
   cpuLoadData,
   boardData,
@@ -59,12 +62,14 @@ const subscribed = ref(false)
 const showSensorEnhancementPanel = ref(false)
 const sensorSettingsLoading = ref(false)
 const sensorActionLoading = ref(false)
+const macHelperActionMessage = ref('')
 const sensorSettings = ref<HardwareSensorSettingsData>({
   enhancedSensorEnabled: false,
   openHardwareMonitorAutoStart: false,
   openHardwareMonitorPort: 18085,
 })
 const openHardwareMonitorStatus = ref<OpenHardwareMonitorStatusData | null>(null)
+const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -89,12 +94,6 @@ function getHistoryMin(values: number[]) {
 function getHistoryMax(values: number[], fallback = 0) {
   if (!values.length) return fallback
   return Math.max(fallback, ...values)
-}
-
-function getHistoryAverage(values: number[], fallback = 0) {
-  const source = values.filter((value) => Number.isFinite(value) && value > 0)
-  if (!source.length) return fallback
-  return source.reduce((sum, value) => sum + value, 0) / source.length
 }
 
 function ringStyle(percent: number, accent: string) {
@@ -153,6 +152,10 @@ function formatVoltage(value: number | null) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(2)} V` : '暂不支持'
 }
 
+function formatFanSpeed(value: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} RPM` : '暂不支持'
+}
+
 function formatSensorReason(reason?: string) {
   switch (reason) {
     case 'ENHANCED_SENSOR_DISABLED':
@@ -186,6 +189,12 @@ function formatSensorReason(reason?: string) {
     case 'TEMPERATURE_UNAVAILABLE':
     case 'CPU_TEMPERATURE_UNAVAILABLE':
       return 'CPU 温度不可用'
+    case 'MACOS_SMC_PERMISSION_REQUIRED':
+      return 'AppleSMC 需要管理员权限'
+    case 'MACOS_SMC_SENSOR_FAILED':
+      return 'AppleSMC 读取失败'
+    case 'MACOS_SMC_SENSOR_EMPTY':
+      return 'AppleSMC 未返回温度'
     case 'CPU_TEMPERATURE_EXCEPTION':
       return '温度服务执行失败'
     default:
@@ -197,6 +206,10 @@ function formatTemperatureSource(source?: CpuTemperatureData['source']) {
   switch (source) {
     case 'systeminformation':
       return 'systeminformation'
+    case 'apple-smc':
+      return 'AppleSMC'
+    case 'macos-temperature-sensor':
+      return 'macOS 原生传感器'
     case 'LibreHardwareMonitor':
       return 'LibreHardwareMonitor WMI'
     case 'OpenHardwareMonitor':
@@ -206,6 +219,27 @@ function formatTemperatureSource(source?: CpuTemperatureData['source']) {
     default:
       return '--'
   }
+}
+
+function formatCpuSpeedSource(speed: CpuCurrentSpeedData) {
+  if (speed.source === 'powermetrics' && speed.helper) return 'powermetrics helper'
+  if (speed.source === 'powermetrics') return 'powermetrics native'
+  if (speed.source === 'systeminformation' && speed.nativeErrorCode === 'MACOS_POWERMETRICS_HELPER_UNAVAILABLE') return 'systeminformation fallback / helper 未安装'
+  if (speed.source === 'systeminformation' && speed.nativeErrorCode === 'MACOS_POWERMETRICS_PERMISSION_REQUIRED') {
+    return 'systeminformation fallback / 需安装 helper'
+  }
+  if (speed.source === 'systeminformation') return 'systeminformation'
+  if (speed.source === 'LibreHardwareMonitor') return 'LibreHardwareMonitor'
+  if (speed.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  return '未知来源'
+}
+
+function formatCpuPowerSource(power?: CpuPowerData) {
+  if (power?.source === 'powermetrics' && power.helper) return 'powermetrics helper'
+  if (power?.source === 'powermetrics') return 'powermetrics'
+  if (power?.source === 'LibreHardwareMonitor') return 'LibreHardwareMonitor'
+  if (power?.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  return '功耗来源未知'
 }
 
 function parseVoltageString(value?: string) {
@@ -309,20 +343,31 @@ const cpuTemperatureValue = computed(() => {
   if (typeof cpuTemperature.value?.main === 'number') return cpuTemperature.value.main
   return null
 })
+const cpuTemperatureIssueLabel = computed(() => {
+  const reason = cpuTemperature.value?.reason || cpuTemperature.value?.errorCode || ''
+  if (reason === 'MACOS_SMC_PERMISSION_REQUIRED') return '需要管理员权限'
+  if (reason.startsWith('MACOS_SMC_')) return 'AppleSMC 读取失败'
+  if (cpuTemperature.value?.source === 'unsupported' && cpuTemperatureValue.value === null) return '暂不支持'
+  return '--'
+})
 
 const cpuPowerValue = computed(() => safeNumber(cpuPower.value?.value))
 const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? parseVoltageString(cpuData.value?.voltage))
+const cpuFanSpeedValue = computed(() => safeNumber(cpuFanSpeed.value?.value))
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
 const currentSpeedValue = computed(() => {
   const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
   return value > 0 ? value : null
 })
 const currentSpeedMax = computed(() => safeNumber(cpuCurrentSpeed.value.max) || safeNumber(cpuData.value?.speedMax) || 0)
-const isWindowsPlatform = computed(() => {
-  const platform = cleanText(osInfo.value?.platform).toLowerCase()
-  const distro = cleanText(osInfo.value?.distro).toLowerCase()
-  return platform.includes('win') || distro.includes('windows')
-})
+const currentSpeedSourceLabel = computed(() => formatCpuSpeedSource(cpuCurrentSpeed.value))
+const sensorEnhancementPlatform = computed(() => getSensorEnhancementPlatform(osInfo.value))
+const processorAuxDisplayMode = computed(() => getProcessorAuxDisplayMode(sensorEnhancementPlatform.value))
+const isWindowsPlatform = computed(() => sensorEnhancementPlatform.value === 'windows')
+const isMacPlatform = computed(() => sensorEnhancementPlatform.value === 'macos')
+const sensorEnhancementActionLabel = computed(() =>
+  getSensorEnhancementActionLabel(sensorEnhancementPlatform.value, showSensorEnhancementPanel.value)
+)
 const cpuTemperatureSourceLabel = computed(() => formatTemperatureSource(cpuTemperature.value?.source))
 const cpuTemperatureReasonLabel = computed(() => formatSensorReason(cpuTemperature.value?.reason || cpuTemperature.value?.errorCode))
 const openHardwareMonitorStatusLabel = computed(() => {
@@ -340,6 +385,20 @@ const sensorEnhancementSuggestion = computed(() => {
   if (cpuTemperature.value?.suggestion) return cpuTemperature.value.suggestion
   return openHardwareMonitorStatus.value?.suggestion || ''
 })
+const macHelperStatusLabel = computed(() => {
+  if (!macHelperStatus.value) return '未检测'
+  if (macHelperStatus.value.loaded && macHelperStatus.value.socketExists) return '运行中'
+  if (macHelperStatus.value.installed) return '已安装未就绪'
+  if (!macHelperStatus.value.bundledExists) return '组件缺失'
+  return '未安装'
+})
+const macHelperSummary = computed(() => {
+  if (!macHelperStatus.value) return '增强状态未检测'
+  if (macHelperStatus.value.loaded && macHelperStatus.value.socketExists) return '增强模式已启用，频率与 GPU 遥测优先走 powermetrics'
+  if (macHelperStatus.value.installed) return '增强组件已安装但还未就绪'
+  return '安装增强组件后可免每次授权读取 CPU 频率，并补齐 Apple Silicon GPU 遥测'
+})
+const macHelperSuggestion = computed(() => macHelperStatus.value?.suggestion || cpuCurrentSpeed.value.nativeSuggestion || '')
 
 const healthState = computed(() => {
   const temperature = cpuTemperatureValue.value
@@ -401,8 +460,11 @@ const primarySpecs = computed(() => [
     value: cleanText(cpuData.value?.socket) || '--',
   },
   {
-    label: '电压 / 当前功耗',
-    value: joinParts([formatVoltage(cpuVoltageValue.value), formatPower(cpuPowerValue.value)], ' / '),
+    label: processorAuxDisplayMode.value === 'fan' ? '风扇 / 当前功耗' : '电压 / 当前功耗',
+    value: joinParts([
+      processorAuxDisplayMode.value === 'fan' ? formatFanSpeed(cpuFanSpeedValue.value) : formatVoltage(cpuVoltageValue.value),
+      formatPower(cpuPowerValue.value),
+    ], ' / '),
   },
 ])
 
@@ -410,7 +472,7 @@ const quickStats = computed(() => [
   {
     id: 'temp',
     label: '温度',
-    value: formatTemperature(cpuTemperatureValue.value),
+    value: cpuTemperatureValue.value === null ? cpuTemperatureIssueLabel.value : formatTemperature(cpuTemperatureValue.value),
     accent: 'var(--accent-blue)',
     trend: metricHistory.temp,
   },
@@ -444,11 +506,11 @@ const monitorCards = computed<MonitorCard[]>(() => [
   {
     id: 'temp',
     label: 'CPU 温度',
-    value: formatTemperature(cpuTemperatureValue.value),
+    value: cpuTemperatureValue.value === null ? cpuTemperatureIssueLabel.value : formatTemperature(cpuTemperatureValue.value),
     accent: 'var(--accent-green)',
     percent: clampPercent(((cpuTemperatureValue.value || 0) / 100) * 100),
     trend: metricHistory.temp,
-    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.temp))}°C`,
+    footerLeft: cpuTemperatureValue.value === null ? cpuTemperatureReasonLabel.value : `最低 ${Math.round(getHistoryMin(metricHistory.temp))}°C`,
     footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.temp, cpuTemperatureValue.value || 0))}°C`,
     unsupported: cpuTemperature.value?.source === 'unsupported' && cpuTemperatureValue.value === null,
   },
@@ -460,21 +522,34 @@ const monitorCards = computed<MonitorCard[]>(() => [
     accent: 'var(--accent-blue)',
     percent: currentSpeedMax.value > 0 ? clampPercent(((currentSpeedValue.value || 0) / currentSpeedMax.value) * 100) : 0,
     trend: metricHistory.speed,
-    footerLeft: `均值 ${formatFrequency(getHistoryAverage(metricHistory.speed, currentSpeedValue.value || 0))}`,
+    footerLeft: `来源 ${currentSpeedSourceLabel.value}`,
     footerRight: `峰值 ${formatFrequency(getHistoryMax(metricHistory.speed, currentSpeedValue.value || 0))}`,
   },
-  {
-    id: 'voltage',
-    label: '核心电压',
-    value: formatVoltage(cpuVoltageValue.value),
-    unit: cpuVoltageValue.value ? 'V' : '',
-    accent: 'var(--accent-purple)',
-    percent: cpuVoltageValue.value ? clampPercent((cpuVoltageValue.value / Math.max(cpuVoltageValue.value, safeNumber(cpuVoltage.value?.max) || 1.6)) * 100) : 0,
-    trend: metricHistory.voltage,
-    footerLeft: `最低 ${getHistoryMin(metricHistory.voltage).toFixed(2)} V`,
-    footerRight: `最高 ${getHistoryMax(metricHistory.voltage, cpuVoltageValue.value || 0).toFixed(2)} V`,
-    unsupported: cpuVoltageValue.value === null,
-  },
+  processorAuxDisplayMode.value === 'fan'
+    ? {
+        id: 'fan-primary',
+        label: 'CPU 风扇',
+        value: formatFanSpeed(cpuFanSpeedValue.value),
+        unit: '',
+        accent: 'var(--accent-purple)',
+        percent: cpuFanSpeedValue.value ? clampPercent((cpuFanSpeedValue.value / Math.max(cpuFanSpeedValue.value, safeNumber(cpuFanSpeed.value?.max) || 4000)) * 100) : 0,
+        trend: [],
+        footerLeft: cpuFanSpeed.value?.sensorName || '风扇传感器',
+        footerRight: cpuFanSpeed.value?.source === 'apple-smc' ? 'AppleSMC' : cpuFanSpeed.value?.source || '',
+        unsupported: cpuFanSpeedValue.value === null,
+      }
+    : {
+        id: 'voltage',
+        label: '核心电压',
+        value: formatVoltage(cpuVoltageValue.value),
+        unit: cpuVoltageValue.value ? 'V' : '',
+        accent: 'var(--accent-purple)',
+        percent: cpuVoltageValue.value ? clampPercent((cpuVoltageValue.value / Math.max(cpuVoltageValue.value, safeNumber(cpuVoltage.value?.max) || 1.6)) * 100) : 0,
+        trend: metricHistory.voltage,
+        footerLeft: `最低 ${getHistoryMin(metricHistory.voltage).toFixed(2)} V`,
+        footerRight: `最高 ${getHistoryMax(metricHistory.voltage, cpuVoltageValue.value || 0).toFixed(2)} V`,
+        unsupported: cpuVoltageValue.value === null,
+      },
   {
     id: 'power',
     label: '当前功耗',
@@ -483,21 +558,37 @@ const monitorCards = computed<MonitorCard[]>(() => [
     accent: 'var(--accent-orange)',
     percent: cpuPowerValue.value ? clampPercent((cpuPowerValue.value / Math.max(cpuPowerValue.value, 125)) * 100) : 0,
     trend: metricHistory.power,
-    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.power))} W`,
+    footerLeft: `来源 ${formatCpuPowerSource(cpuPower.value)}`,
     footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.power, cpuPowerValue.value || 0))} W`,
     unsupported: cpuPowerValue.value === null,
   },
+  ...(processorAuxDisplayMode.value === 'fan'
+    ? []
+    : [{
+        id: 'fan',
+        label: 'CPU 风扇',
+        value: formatFanSpeed(cpuFanSpeedValue.value),
+        unit: '',
+        accent: 'var(--accent-blue)',
+        percent: cpuFanSpeedValue.value ? clampPercent((cpuFanSpeedValue.value / Math.max(cpuFanSpeedValue.value, safeNumber(cpuFanSpeed.value?.max) || 4000)) * 100) : 0,
+        trend: [],
+        footerLeft: cpuFanSpeed.value?.sensorName || '风扇传感器',
+        footerRight: cpuFanSpeed.value?.source === 'apple-smc' ? 'AppleSMC' : cpuFanSpeed.value?.source || '',
+        unsupported: cpuFanSpeedValue.value === null,
+      }]
+    ),
 ])
 
 const allCoreRows = computed<CoreRow[]>(() => {
   const speedCores = cpuCurrentSpeed.value.cores || []
   const loadCores = cpuLoadData.value.cpus || []
   const temperatureCores = cpuTemperature.value?.cores || []
+  const architectureCoreCount = (cpuData.value?.performanceCores || 0) + (cpuData.value?.efficiencyCores || 0)
+  const knownCoreCount = architectureCoreCount || cpuData.value?.physicalCores || 0
   const total = Math.max(
-    speedCores.length,
-    loadCores.length,
-    temperatureCores.length,
-    cpuData.value?.physicalCores || 0,
+    knownCoreCount,
+    knownCoreCount ? Math.min(speedCores.length, knownCoreCount) : speedCores.length,
+    knownCoreCount ? Math.min(loadCores.length, knownCoreCount) : loadCores.length,
     0
   )
 
@@ -598,7 +689,7 @@ const processorReportText = computed(() => {
     `核心 / 线程：${joinParts([cpuData.value?.physicalCores ? `${cpuData.value.physicalCores} 核` : '', cpuData.value?.cores ? `${cpuData.value.cores} 线程` : ''], ' / ') || '--'}`,
     `当前温度：${formatTemperature(cpuTemperatureValue.value)}`,
     `当前功耗：${formatPower(cpuPowerValue.value)}`,
-    `当前电压：${formatVoltage(cpuVoltageValue.value)}`,
+    `${processorAuxDisplayMode.value === 'fan' ? '当前风扇' : '当前电压'}：${processorAuxDisplayMode.value === 'fan' ? formatFanSpeed(cpuFanSpeedValue.value) : formatVoltage(cpuVoltageValue.value)}`,
     `当前频率：${formatFrequency(currentSpeedValue.value)}`,
     `当前负载：${Math.round(cpuLoadPercent.value)}%`,
     '',
@@ -651,6 +742,60 @@ async function refreshHardwareSensorState() {
     console.error('读取硬件传感器增强状态失败:', error)
   } finally {
     sensorSettingsLoading.value = false
+  }
+}
+
+async function refreshMacPowermetricsHelperState() {
+  if (!isMacPlatform.value) return
+
+  sensorSettingsLoading.value = true
+
+  try {
+    macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
+    macHelperActionMessage.value = ''
+  } catch (error) {
+    console.error('读取 macOS powermetrics helper 状态失败:', error)
+  } finally {
+    sensorSettingsLoading.value = false
+  }
+}
+
+async function installMacPowermetricsHelper() {
+  if (!isMacPlatform.value) return
+
+  sensorActionLoading.value = true
+
+  try {
+    macHelperActionMessage.value = '正在安装 helper，并等待 LaunchDaemon 就绪...'
+    macHelperStatus.value = await window.services.installMacPowermetricsHelper()
+    macHelperActionMessage.value = macHelperStatus.value.loaded && macHelperStatus.value.socketExists
+      ? 'helper 已就绪，正在刷新频率来源...'
+      : 'helper 已安装，仍在等待系统服务就绪'
+    await refreshHardwareStoreDynamicMetrics()
+    macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
+  } catch (error) {
+    console.error('安装 macOS powermetrics helper 失败:', error)
+    macHelperActionMessage.value = 'helper 安装失败'
+  } finally {
+    sensorActionLoading.value = false
+  }
+}
+
+async function uninstallMacPowermetricsHelper() {
+  if (!isMacPlatform.value) return
+
+  sensorActionLoading.value = true
+
+  try {
+    macHelperActionMessage.value = '正在卸载 helper...'
+    macHelperStatus.value = await window.services.uninstallMacPowermetricsHelper()
+    await refreshHardwareStoreDynamicMetrics()
+    macHelperActionMessage.value = 'helper 已卸载'
+  } catch (error) {
+    console.error('卸载 macOS powermetrics helper 失败:', error)
+    macHelperActionMessage.value = 'helper 卸载失败'
+  } finally {
+    sensorActionLoading.value = false
   }
 }
 
@@ -751,7 +896,10 @@ async function ensureStoreActive() {
 
   subscribed.value = true
   await activateHardwareStore()
-  await refreshHardwareSensorState()
+  await Promise.all([
+    refreshHardwareSensorState(),
+    refreshMacPowermetricsHelperState(),
+  ])
 }
 
 function releaseStore() {
@@ -832,19 +980,19 @@ onUnmounted(() => {
         <div class="panel-title">
           <div>
             <h3>实时监控</h3>
-            <p>聚焦 CPU 负载、温度、频率、电压和功耗</p>
+            <p>{{ processorAuxDisplayMode === 'fan' ? '聚焦 CPU 负载、温度、频率、风扇和功耗' : '聚焦 CPU 负载、温度、频率、电压和功耗' }}</p>
           </div>
           <button
-            v-if="isWindowsPlatform"
+            v-if="sensorEnhancementPlatform !== 'unsupported'"
             type="button"
             class="panel-action"
             @click="showSensorEnhancementPanel = !showSensorEnhancementPanel"
           >
-            {{ showSensorEnhancementPanel ? '收起增强模式' : '传感器增强' }}
+            {{ sensorEnhancementActionLabel }}
           </button>
         </div>
 
-        <div v-if="isWindowsPlatform && showSensorEnhancementPanel" class="sensor-enhancement-panel">
+        <div v-if="sensorEnhancementPlatform === 'windows' && showSensorEnhancementPanel" class="sensor-enhancement-panel">
           <div class="sensor-enhancement-panel__summary">
             <div>
               <h4>硬件传感器增强模式</h4>
@@ -901,6 +1049,56 @@ onUnmounted(() => {
           <p v-if="sensorEnhancementSuggestion" class="sensor-enhancement-hint">建议：{{ sensorEnhancementSuggestion }}</p>
         </div>
 
+        <div v-if="sensorEnhancementPlatform === 'macos' && showSensorEnhancementPanel" class="sensor-enhancement-panel">
+          <div class="sensor-enhancement-panel__summary">
+            <div>
+              <h4>硬件传感器增强模式</h4>
+              <p>CPU 实时频率和 Apple Silicon GPU 遥测需要 root 权限读取 powermetrics。安装 helper 后，插件通过本地白名单服务读取这些指标，不再为每次采样弹授权。</p>
+            </div>
+            <span :class="['sensor-enhancement-panel__status', { 'sensor-enhancement-panel__status--active': macHelperStatus?.loaded && macHelperStatus?.socketExists }]">
+              {{ macHelperSummary }}
+            </span>
+          </div>
+
+          <div class="sensor-enhancement-grid">
+            <div class="sensor-enhancement-item">
+              <span>增强组件状态</span>
+              <strong>{{ sensorSettingsLoading ? '检测中...' : macHelperStatusLabel }}</strong>
+            </div>
+            <div class="sensor-enhancement-item">
+              <span>当前频率来源</span>
+              <strong>{{ currentSpeedSourceLabel }}</strong>
+            </div>
+            <div class="sensor-enhancement-item">
+              <span>LaunchDaemon</span>
+              <strong>{{ macHelperStatus?.loaded ? '已加载' : '未加载' }}</strong>
+            </div>
+            <div class="sensor-enhancement-item">
+              <span>Socket</span>
+              <strong>{{ macHelperStatus?.socketExists ? '可用' : '不可用' }}</strong>
+            </div>
+          </div>
+
+          <div class="sensor-enhancement-actions">
+            <button type="button" class="sensor-button" :disabled="sensorActionLoading || !macHelperStatus?.bundledExists" @click="installMacPowermetricsHelper">
+              {{ macHelperStatus?.installed ? '重新安装增强组件' : '安装增强组件' }}
+            </button>
+            <button type="button" class="sensor-button" :disabled="sensorSettingsLoading" @click="refreshMacPowermetricsHelperState">
+              检测状态
+            </button>
+            <button type="button" class="sensor-button" :disabled="sensorActionLoading || !macHelperStatus?.installed" @click="uninstallMacPowermetricsHelper">
+              卸载增强组件
+            </button>
+          </div>
+
+          <div class="sensor-enhancement-meta">
+            <span>服务：{{ macHelperStatus?.label || 'com.hwinfox.powermetrics-helper' }}</span>
+            <span>来源：{{ macHelperStatus?.runtimePath || macHelperStatus?.bundledPath || '--' }}</span>
+          </div>
+          <p v-if="macHelperActionMessage" class="sensor-enhancement-hint">状态：{{ macHelperActionMessage }}</p>
+          <p v-if="macHelperSuggestion" class="sensor-enhancement-hint">建议：{{ macHelperSuggestion }}</p>
+        </div>
+
         <div class="monitor-grid">
           <article v-for="card in monitorCards" :key="card.id" class="monitor-card">
             <div class="monitor-card__label">{{ card.label }}</div>
@@ -914,7 +1112,7 @@ onUnmounted(() => {
               <polyline :points="sparklinePoints(card.trend)" :stroke="card.accent" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <div class="monitor-card__foot" :class="{ 'monitor-card__foot--single': card.unsupported }">
-              <span>{{ card.unsupported ? '当前机器暂不支持' : card.footerLeft }}</span>
+              <span>{{ card.footerLeft }}</span>
               <span v-if="!card.unsupported">{{ card.footerRight }}</span>
             </div>
           </article>
@@ -925,7 +1123,7 @@ onUnmounted(() => {
         <article class="processor-panel">
           <div class="processor-panel__title">
             <h3>核心频率详情</h3>
-            <p>{{ allCoreRows.length }} 个核心监测项</p>
+            <p>{{ allCoreRows.length }} 个核心行</p>
           </div>
 
           <div class="core-table">

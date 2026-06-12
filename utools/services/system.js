@@ -3,8 +3,27 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import macSensors from './macSensors.cjs'
 
 const execFileAsync = promisify(execFile)
+const {
+  buildMacGpuTemperatureFallbackDiagnostics,
+  pickPreferredMacGpuTemperature,
+  readMacCpuTemperature,
+  readMacGpuTemperature,
+  readMacPowermetricsHelperCpuPower,
+  readMacPowermetricsHelperCpuSpeed,
+  readMacPowermetricsHelperGpuTelemetry,
+  readMacPowermetricsCpuSpeed,
+  readMacSmcCpuTemperature,
+  readMacSmcGpuTemperature,
+  readMacSmcFanSpeed,
+} = macSensors
+const MAC_POWERMETRICS_HELPER_LABEL = 'com.hwinfox.powermetrics-helper'
+const MAC_POWERMETRICS_HELPER_INSTALL_DIR = '/Library/Application Support/HWInfoX'
+const MAC_POWERMETRICS_HELPER_BINARY_PATH = `${MAC_POWERMETRICS_HELPER_INSTALL_DIR}/hwinfox-powermetrics-helper`
+const MAC_POWERMETRICS_HELPER_PLIST_PATH = `/Library/LaunchDaemons/${MAC_POWERMETRICS_HELPER_LABEL}.plist`
+const MAC_POWERMETRICS_HELPER_SOCKET_PATH = '/var/run/hwinfox-powermetrics-helper.sock'
 const HARDWARE_SENSOR_SETTINGS_STORAGE_KEY = 'hardwareSensorSettings'
 const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
   enhancedSensorEnabled: false,
@@ -115,6 +134,318 @@ function toNumber(value) {
 
 function isWindows() {
   return typeof process !== 'undefined' && process.platform === 'win32'
+}
+
+function isMacOS() {
+  return typeof process !== 'undefined' && process.platform === 'darwin'
+}
+
+function hasCpuSpeedValue(speed) {
+  return Boolean(speed?.cores?.length || speed?.avg)
+}
+
+function invalidateRuntimeServiceCache(...cacheKeys) {
+  cacheKeys.forEach((cacheKey) => {
+    runtimeServiceCache.delete(cacheKey)
+    runtimeServicePromiseCache.delete(cacheKey)
+  })
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`
+}
+
+function getBundledMacPowermetricsHelperPath() {
+  const root = configuredPluginRoot || path.resolve(__dirname, '../..')
+  return path.resolve(root, 'vendor/macos/hwinfox-powermetrics-helper')
+}
+
+function ensurePhysicalMacPowermetricsHelper() {
+  const bundledPath = getBundledMacPowermetricsHelperPath()
+  const baseResult = {
+    bundledPath,
+    runtimePath: bundledPath,
+    exists: fs.existsSync(bundledPath),
+    insideAsar: isAsarPath(bundledPath),
+  }
+
+  if (!baseResult.exists) {
+    return {
+      ...baseResult,
+      reason: 'MACOS_POWERMETRICS_HELPER_BUNDLE_MISSING',
+      suggestion: '请先重新构建插件，确保 vendor/macos/hwinfox-powermetrics-helper 存在。',
+    }
+  }
+
+  if (!baseResult.insideAsar) {
+    return baseResult
+  }
+
+  const utoolsRuntime = getUtoolsRuntime()
+  const userDataPath = utoolsRuntime?.getPath?.('userData')
+  if (!userDataPath) {
+    return {
+      ...baseResult,
+      exists: false,
+      reason: 'MACOS_POWERMETRICS_HELPER_USERDATA_UNAVAILABLE',
+      suggestion: '当前环境无法解析 uTools userData 目录，不能从 asar 解包 helper。',
+    }
+  }
+
+  const runtimeDirectoryPath = path.join(userDataPath, 'system-info-plugin', 'vendor', 'macos')
+  const runtimePath = path.join(runtimeDirectoryPath, 'hwinfox-powermetrics-helper')
+
+  try {
+    fs.mkdirSync(runtimeDirectoryPath, { recursive: true })
+    fs.writeFileSync(runtimePath, fs.readFileSync(bundledPath))
+    fs.chmodSync(runtimePath, 0o755)
+  } catch (error) {
+    return {
+      ...baseResult,
+      runtimePath,
+      exists: false,
+      reason: 'MACOS_POWERMETRICS_HELPER_RUNTIME_COPY_FAILED',
+      suggestion: error instanceof Error ? error.message : 'helper 从 asar 解包失败。',
+    }
+  }
+
+  return {
+    ...baseResult,
+    runtimePath,
+    exists: fs.existsSync(runtimePath),
+    reason: fs.existsSync(runtimePath) ? undefined : 'MACOS_POWERMETRICS_HELPER_RUNTIME_COPY_FAILED',
+    suggestion: fs.existsSync(runtimePath) ? undefined : 'helper 从 asar 解包失败。',
+  }
+}
+
+function buildMacPowermetricsHelperPlist() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${MAC_POWERMETRICS_HELPER_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${MAC_POWERMETRICS_HELPER_BINARY_PATH}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/var/log/hwinfox-powermetrics-helper.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/hwinfox-powermetrics-helper.log</string>
+</dict>
+</plist>
+`
+}
+
+function buildMacPowermetricsHelperInstallScript() {
+  const helper = ensurePhysicalMacPowermetricsHelper()
+  const bundledHelperPath = helper.runtimePath
+  const plistContent = buildMacPowermetricsHelperPlist()
+
+  return [
+    'set -e',
+    `/bin/mkdir -p ${shellQuote(MAC_POWERMETRICS_HELPER_INSTALL_DIR)}`,
+    `/usr/sbin/chown root:wheel ${shellQuote(MAC_POWERMETRICS_HELPER_INSTALL_DIR)}`,
+    `/bin/chmod 755 ${shellQuote(MAC_POWERMETRICS_HELPER_INSTALL_DIR)}`,
+    `/usr/bin/install -o root -g wheel -m 755 ${shellQuote(bundledHelperPath)} ${shellQuote(MAC_POWERMETRICS_HELPER_BINARY_PATH)}`,
+    `/bin/cat > ${shellQuote(MAC_POWERMETRICS_HELPER_PLIST_PATH)} <<'HWINFOX_PLIST'`,
+    plistContent,
+    'HWINFOX_PLIST',
+    `/usr/sbin/chown root:wheel ${shellQuote(MAC_POWERMETRICS_HELPER_PLIST_PATH)}`,
+    `/bin/chmod 644 ${shellQuote(MAC_POWERMETRICS_HELPER_PLIST_PATH)}`,
+    `/bin/launchctl bootout system ${shellQuote(MAC_POWERMETRICS_HELPER_PLIST_PATH)} >/dev/null 2>&1 || true`,
+    `/bin/launchctl bootstrap system ${shellQuote(MAC_POWERMETRICS_HELPER_PLIST_PATH)}`,
+    `/bin/launchctl enable system/${MAC_POWERMETRICS_HELPER_LABEL}`,
+    `/bin/launchctl kickstart -k system/${MAC_POWERMETRICS_HELPER_LABEL}`,
+  ].join('\n')
+}
+
+function buildMacPowermetricsHelperUninstallScript() {
+  return [
+    'set -e',
+    `/bin/launchctl bootout system ${shellQuote(MAC_POWERMETRICS_HELPER_PLIST_PATH)} >/dev/null 2>&1 || true`,
+    `/bin/rm -f ${shellQuote(MAC_POWERMETRICS_HELPER_SOCKET_PATH)}`,
+    `/bin/rm -f ${shellQuote(MAC_POWERMETRICS_HELPER_PLIST_PATH)}`,
+    `/bin/rm -f ${shellQuote(MAC_POWERMETRICS_HELPER_BINARY_PATH)}`,
+  ].join('\n')
+}
+
+async function runAppleScriptAsAdministrator(shellScript) {
+  return execFileAsync('/usr/bin/osascript', [
+    '-e',
+    'on run argv',
+    '-e',
+    'do shell script item 1 of argv with administrator privileges',
+    '-e',
+    'end run',
+    shellScript,
+  ], {
+    timeout: 30000,
+    windowsHide: true,
+  })
+}
+
+async function isMacPowermetricsHelperLoaded() {
+  if (!isMacOS()) return false
+
+  try {
+    await execFileAsync('/bin/launchctl', ['print', `system/${MAC_POWERMETRICS_HELPER_LABEL}`], {
+      timeout: 1500,
+      windowsHide: true,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function getMacPowermetricsHelperStatus() {
+  const platform = process.platform === 'darwin' ? 'darwin' : 'other'
+  const bundledHelper = isMacOS() ? ensurePhysicalMacPowermetricsHelper() : {
+    bundledPath: getBundledMacPowermetricsHelperPath(),
+    runtimePath: getBundledMacPowermetricsHelperPath(),
+    exists: false,
+  }
+  const bundledExists = isMacOS() && bundledHelper.exists
+  const installed = isMacOS() && fs.existsSync(MAC_POWERMETRICS_HELPER_BINARY_PATH) && fs.existsSync(MAC_POWERMETRICS_HELPER_PLIST_PATH)
+  const socketExists = isMacOS() && fs.existsSync(MAC_POWERMETRICS_HELPER_SOCKET_PATH)
+  const loaded = installed ? await isMacPowermetricsHelperLoaded() : false
+
+  return {
+    platform,
+    supported: isMacOS(),
+    label: MAC_POWERMETRICS_HELPER_LABEL,
+    bundledExists,
+    bundledPath: bundledHelper.bundledPath,
+    runtimePath: bundledHelper.runtimePath,
+    insideAsar: Boolean(bundledHelper.insideAsar),
+    installed,
+    loaded,
+    socketExists,
+    installPath: MAC_POWERMETRICS_HELPER_BINARY_PATH,
+    plistPath: MAC_POWERMETRICS_HELPER_PLIST_PATH,
+    socketPath: MAC_POWERMETRICS_HELPER_SOCKET_PATH,
+    reason: !isMacOS()
+      ? 'MACOS_POWERMETRICS_HELPER_UNSUPPORTED_PLATFORM'
+      : !bundledExists
+        ? bundledHelper.reason || 'MACOS_POWERMETRICS_HELPER_BUNDLE_MISSING'
+        : installed && loaded && socketExists
+          ? 'MACOS_POWERMETRICS_HELPER_READY'
+          : installed
+            ? 'MACOS_POWERMETRICS_HELPER_INSTALLED_NOT_READY'
+            : 'MACOS_POWERMETRICS_HELPER_NOT_INSTALLED',
+    suggestion: !isMacOS()
+      ? 'powermetrics helper 仅支持 macOS。'
+      : !bundledExists
+        ? bundledHelper.suggestion || '请先重新构建插件，确保 vendor/macos/hwinfox-powermetrics-helper 存在。'
+        : installed && loaded && socketExists
+          ? ''
+          : installed
+            ? 'helper 已安装但未就绪，可尝试重新安装。'
+            : '安装 helper 后可免每次授权读取 powermetrics CPU 频率。',
+  }
+}
+
+async function waitForMacPowermetricsHelperReady(timeoutMs = 5000) {
+  const startedAt = Date.now()
+  let latestStatus = await getMacPowermetricsHelperStatus()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (latestStatus.loaded && latestStatus.socketExists) {
+      return latestStatus
+    }
+
+    await sleep(350)
+    latestStatus = await getMacPowermetricsHelperStatus()
+  }
+
+  return latestStatus
+}
+
+async function installMacPowermetricsHelper() {
+  if (!isMacOS()) {
+    return {
+      ...(await getMacPowermetricsHelperStatus()),
+      ok: false,
+      reason: 'MACOS_POWERMETRICS_HELPER_UNSUPPORTED_PLATFORM',
+      suggestion: 'powermetrics helper 仅支持 macOS。',
+    }
+  }
+
+  const bundledHelper = ensurePhysicalMacPowermetricsHelper()
+  if (!bundledHelper.exists) {
+    return {
+      ...(await getMacPowermetricsHelperStatus()),
+      ok: false,
+      reason: bundledHelper.reason || 'MACOS_POWERMETRICS_HELPER_BUNDLE_MISSING',
+      suggestion: bundledHelper.suggestion || '缺少 bundled helper，请先运行 npm run build。',
+    }
+  }
+
+  try {
+    await runAppleScriptAsAdministrator(buildMacPowermetricsHelperInstallScript())
+    const status = await waitForMacPowermetricsHelperReady()
+    invalidateRuntimeServiceCache('cpuCurrentSpeed')
+    return {
+      ...status,
+      ok: status.loaded && status.socketExists,
+      reason: status.loaded && status.socketExists
+        ? 'MACOS_POWERMETRICS_HELPER_READY'
+        : 'MACOS_POWERMETRICS_HELPER_INSTALLED_NOT_READY',
+      suggestion: status.loaded && status.socketExists
+        ? 'HWInfoX powermetrics helper 已安装并运行。'
+        : 'helper 已安装，但 LaunchDaemon 或 socket 还未就绪，请稍后检测状态。',
+    }
+  } catch (error) {
+    return {
+      ...(await getMacPowermetricsHelperStatus()),
+      ok: false,
+      reason: /User canceled|-128/i.test(String(error?.stderr || error?.message || error))
+        ? 'MACOS_POWERMETRICS_HELPER_INSTALL_CANCELLED'
+        : 'MACOS_POWERMETRICS_HELPER_INSTALL_FAILED',
+      suggestion: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+async function uninstallMacPowermetricsHelper() {
+  if (!isMacOS()) {
+    return {
+      ...(await getMacPowermetricsHelperStatus()),
+      ok: false,
+      reason: 'MACOS_POWERMETRICS_HELPER_UNSUPPORTED_PLATFORM',
+      suggestion: 'powermetrics helper 仅支持 macOS。',
+    }
+  }
+
+  try {
+    await runAppleScriptAsAdministrator(buildMacPowermetricsHelperUninstallScript())
+    invalidateRuntimeServiceCache('cpuCurrentSpeed')
+    return {
+      ...(await getMacPowermetricsHelperStatus()),
+      ok: true,
+      reason: 'MACOS_POWERMETRICS_HELPER_UNINSTALLED',
+      suggestion: 'HWInfoX powermetrics helper 已卸载。',
+    }
+  } catch (error) {
+    return {
+      ...(await getMacPowermetricsHelperStatus()),
+      ok: false,
+      reason: /User canceled|-128/i.test(String(error?.stderr || error?.message || error))
+        ? 'MACOS_POWERMETRICS_HELPER_UNINSTALL_CANCELLED'
+        : 'MACOS_POWERMETRICS_HELPER_UNINSTALL_FAILED',
+      suggestion: error instanceof Error ? error.message : String(error),
+    }
+  }
 }
 
 function getDefaultHardwareSensorSettings() {
@@ -1378,6 +1709,13 @@ async function getHardwareMonitorCpuTemperature() {
 }
 
 async function getHardwareMonitorCpuPower() {
+  if (isMacOS()) {
+    const macCpuPower = await readMacPowermetricsHelperCpuPower()
+    if (typeof macCpuPower?.value === 'number' && macCpuPower.value > 0) {
+      return macCpuPower
+    }
+  }
+
   const sensors = (await getHardwareMonitorSensors('Power')).filter(isCpuSensor)
 
   if (!sensors.length) return undefined
@@ -1420,6 +1758,11 @@ async function getHardwareMonitorCpuVoltage() {
 }
 
 async function getHardwareMonitorCpuFanSpeed() {
+  if (isMacOS()) {
+    const macFanSpeed = readMacSmcFanSpeed({ pluginRoot: configuredPluginRoot })
+    if (macFanSpeed) return macFanSpeed
+  }
+
   const sensors = (await getHardwareMonitorSensors('Fan')).filter((sensor) => {
     const haystack = `${sensor.name} ${sensor.identifier} ${sensor.parent}`.toLowerCase()
     if (haystack.includes('gpu') || haystack.includes('system') || haystack.includes('chassis') || haystack.includes('case') || haystack.includes('pump')) {
@@ -1570,12 +1913,27 @@ async function getCpuTemperature() {
     const systemInfoValue = extractSystemInformationCpuTemperatureValue(temperature)
     const sensorSettings = getHardwareSensorSettings()
     const enhancedSensorEnabled = isWindows() && sensorSettings.enhancedSensorEnabled
+    let macTemperature
 
     if (systemInfoValue.value !== null) {
       return buildCpuTemperatureResult(temperature, 'systeminformation', systemInfoValue.sensorName, systemInfoValue.value)
     }
 
-    const libreTemperature = await getHardwareMonitorCpuTemperatureFromNamespace('root\\LibreHardwareMonitor')
+    if (isMacOS()) {
+      macTemperature = readMacSmcCpuTemperature({ pluginRoot: configuredPluginRoot }) || readMacCpuTemperature({ pluginRoot: configuredPluginRoot })
+      if (macTemperature?.value !== null && macTemperature?.value !== undefined) {
+        return buildCpuTemperatureResult(
+          macTemperature,
+          macTemperature.source,
+          macTemperature.sensorName,
+          macTemperature.value
+        )
+      }
+    }
+
+    const libreTemperature = isWindows()
+      ? await getHardwareMonitorCpuTemperatureFromNamespace('root\\LibreHardwareMonitor')
+      : undefined
     if (libreTemperature && libreTemperature.value !== null) {
       return libreTemperature
     }
@@ -1589,18 +1947,19 @@ async function getCpuTemperature() {
 
     const baseDiagnostics = [
       'systeminformation 未提供有效 CPU 温度',
+      macTemperature?.message ? `macOS 原生传感器: ${macTemperature.message}` : '',
       libreTemperature?.value === null ? 'LibreHardwareMonitor WMI: 无可用温度' : 'LibreHardwareMonitor WMI: 未命中',
       openTemperature?.value === null ? 'OpenHardwareMonitor WMI: 无可用温度' : 'OpenHardwareMonitor WMI: 未命中',
-    ]
+    ].filter(Boolean)
 
     if (!isWindows()) {
       return buildCpuTemperatureResult(
         {
           ...temperature,
-          errorCode: 'CPU_TEMPERATURE_UNAVAILABLE',
-          reason: 'TEMPERATURE_UNAVAILABLE',
+          errorCode: macTemperature?.errorCode || 'CPU_TEMPERATURE_UNAVAILABLE',
+          reason: macTemperature?.reason || 'TEMPERATURE_UNAVAILABLE',
           message: baseDiagnostics.join(' | '),
-          suggestion: '当前系统未返回可用 CPU 温度',
+          suggestion: macTemperature?.suggestion || (isMacOS() ? 'macOS 原生温度探针不可用，后续需要接入 SMC/IOReport 探针或授权 helper' : '当前系统未返回可用 CPU 温度'),
           confidence: 'unsupported',
         },
         'unsupported',
@@ -1811,8 +2170,17 @@ function normalizeMemoryInfo(memory, pressure = MAC_MEMORY_PRESSURE_FALLBACK) {
 async function readGpuInfo() {
   return readSystemInfo('graphics', [], async () => {
     const graphics = await si.graphics()
-    const fallbackTelemetry = await getHardwareMonitorGpuTelemetry()
     const isMacOS = typeof process !== 'undefined' && process.platform === 'darwin'
+    const helperGpuTelemetry = isMacOS ? await readMacPowermetricsHelperGpuTelemetry() : undefined
+    const nativeMacGpuTemperature = isMacOS ? readMacGpuTemperature({ pluginRoot: configuredPluginRoot }) : undefined
+    const smcMacGpuTemperature = isMacOS ? readMacSmcGpuTemperature({ pluginRoot: configuredPluginRoot }) : undefined
+    const macGpuTemperature = isMacOS
+      ? pickPreferredMacGpuTemperature(nativeMacGpuTemperature, smcMacGpuTemperature)
+      : undefined
+    const macGpuTemperatureFallback = isMacOS
+      ? buildMacGpuTemperatureFallbackDiagnostics(nativeMacGpuTemperature, macGpuTemperature)
+      : undefined
+    const fallbackTelemetry = isMacOS ? undefined : await getHardwareMonitorGpuTelemetry()
 
     function hasGpuIdentity(controller) {
       return Boolean(
@@ -1840,30 +2208,107 @@ async function readGpuInfo() {
 
     return graphics.controllers
       .filter(isLikelyGpuController)
-      .map((controller) => ({
-        ...controller,
-        vram: controller.vram || 0,
-        bus: controller.bus || '',
-        vendor: controller.vendor || '',
-        subVendor: controller.subVendor || '',
-        vendorId: controller.vendorId || '',
-        deviceId: controller.deviceId || '',
-        cores: controller.cores ?? null,
-        memoryTotal: controller.memoryTotal ?? controller.vram ?? 0,
-        memoryUsed: controller.memoryUsed ?? null,
-        memoryFree: controller.memoryFree ?? null,
-        utilizationGpu: controller.utilizationGpu ?? fallbackTelemetry?.utilizationGpu ?? null,
-        utilizationMemory: controller.utilizationMemory ?? null,
-        temperatureGpu: controller.temperatureGpu ?? fallbackTelemetry?.temperatureGpu ?? null,
-        temperatureMemory: controller.temperatureMemory ?? null,
-        powerDraw: controller.powerDraw ?? fallbackTelemetry?.powerDraw ?? null,
-        powerLimit: controller.powerLimit ?? null,
-        clockCore: controller.clockCore ?? null,
-        clockMemory: controller.clockMemory ?? null,
-        fanSpeed: controller.fanSpeed ?? null,
-        driverVersion: controller.driverVersion || '',
-        pciBus: controller.pciBus || '',
-      }))
+      .map((controller) => {
+        const helperHasTelemetry = Boolean(
+          helperGpuTelemetry
+          && (
+            typeof helperGpuTelemetry.utilizationGpu === 'number'
+            || typeof helperGpuTelemetry.idleResidencyGpu === 'number'
+            || typeof helperGpuTelemetry.clockCore === 'number'
+            || typeof helperGpuTelemetry.powerDraw === 'number'
+          )
+        )
+        const nativeHasTemperature = Boolean(
+          macGpuTemperature
+          && (
+            typeof macGpuTemperature.temperatureGpu === 'number'
+            || (Array.isArray(macGpuTemperature.gpuCoreTemperatures) && macGpuTemperature.gpuCoreTemperatures.length > 0)
+          )
+        )
+
+        return {
+          ...controller,
+          vram: controller.vram || 0,
+          bus: controller.bus || '',
+          vendor: controller.vendor || '',
+          subVendor: controller.subVendor || '',
+          vendorId: controller.vendorId || '',
+          deviceId: controller.deviceId || '',
+          cores: controller.cores ?? null,
+          memoryTotal: controller.memoryTotal ?? controller.vram ?? 0,
+          memoryUsed: controller.memoryUsed ?? null,
+          memoryFree: controller.memoryFree ?? null,
+          utilizationGpu: isMacOS
+            ? helperGpuTelemetry?.utilizationGpu ?? controller.utilizationGpu ?? null
+            : controller.utilizationGpu ?? fallbackTelemetry?.utilizationGpu ?? null,
+          idleResidencyGpu: isMacOS
+            ? helperGpuTelemetry?.idleResidencyGpu ?? null
+            : null,
+          utilizationMemory: controller.utilizationMemory ?? null,
+          temperatureGpu: isMacOS
+            ? macGpuTemperature?.temperatureGpu ?? controller.temperatureGpu ?? null
+            : controller.temperatureGpu ?? fallbackTelemetry?.temperatureGpu ?? null,
+          gpuCoreTemperatures: isMacOS
+            ? macGpuTemperature?.gpuCoreTemperatures ?? []
+            : [],
+          temperatureMemory: controller.temperatureMemory ?? null,
+          powerDraw: isMacOS
+            ? helperGpuTelemetry?.powerDraw ?? controller.powerDraw ?? null
+            : controller.powerDraw ?? fallbackTelemetry?.powerDraw ?? null,
+          powerLimit: controller.powerLimit ?? null,
+          clockCore: isMacOS
+            ? helperGpuTelemetry?.clockCore ?? controller.clockCore ?? null
+            : controller.clockCore ?? null,
+          clockMemory: controller.clockMemory ?? null,
+          fanSpeed: controller.fanSpeed ?? null,
+          driverVersion: controller.driverVersion || '',
+          pciBus: controller.pciBus || '',
+          helper: isMacOS ? helperHasTelemetry : false,
+          telemetrySource: isMacOS
+            ? helperHasTelemetry
+              ? 'powermetrics'
+              : (
+                  typeof controller.utilizationGpu === 'number'
+                  || typeof controller.idleResidencyGpu === 'number'
+                  || typeof controller.clockCore === 'number'
+                  || typeof controller.powerDraw === 'number'
+                )
+                ? 'systeminformation'
+                : undefined
+            : fallbackTelemetry && (
+                typeof fallbackTelemetry.utilizationGpu === 'number'
+                || typeof fallbackTelemetry.powerDraw === 'number'
+              ) && (
+                controller.utilizationGpu == null
+                || controller.powerDraw == null
+              )
+              ? 'OpenHardwareMonitor'
+              : (
+                  typeof controller.utilizationGpu === 'number'
+                  || typeof controller.clockCore === 'number'
+                  || typeof controller.powerDraw === 'number'
+                )
+                ? 'systeminformation'
+                : undefined,
+          temperatureSource: isMacOS
+            ? nativeHasTemperature
+              ? macGpuTemperature?.source === 'apple-smc'
+                ? 'apple-smc'
+                : 'macos-temperature-sensor'
+              : typeof controller.temperatureGpu === 'number'
+                ? 'systeminformation'
+                : undefined
+            : fallbackTelemetry && typeof fallbackTelemetry.temperatureGpu === 'number' && controller.temperatureGpu == null
+              ? 'OpenHardwareMonitor'
+              : typeof controller.temperatureGpu === 'number'
+                ? 'systeminformation'
+                : undefined,
+          nativeTemperatureErrorCode: isMacOS ? macGpuTemperatureFallback?.nativeTemperatureErrorCode : undefined,
+          nativeTemperatureReason: isMacOS ? macGpuTemperatureFallback?.nativeTemperatureReason : undefined,
+          nativeTemperatureMessage: isMacOS ? macGpuTemperatureFallback?.nativeTemperatureMessage : undefined,
+          nativeTemperatureSuggestion: isMacOS ? macGpuTemperatureFallback?.nativeTemperatureSuggestion : undefined,
+        }
+      })
   })
 }
 
@@ -1889,6 +2334,12 @@ export const systemService = {
   startOpenHardwareMonitor: startOpenHardwareMonitorManually,
 
   openOpenHardwareMonitorDirectory,
+
+  getMacPowermetricsHelperStatus,
+
+  installMacPowermetricsHelper,
+
+  uninstallMacPowermetricsHelper,
 
   getCpuInfo: () =>
     readCachedServiceValue(
@@ -1941,6 +2392,33 @@ export const systemService = {
       async () => {
         const fallback = { min: 0, max: 0, avg: 0, cores: [] }
 
+        if (isMacOS()) {
+          const helperCpuSpeed = await readMacPowermetricsHelperCpuSpeed()
+          if (hasCpuSpeedValue(helperCpuSpeed)) {
+            return helperCpuSpeed
+          }
+
+          const macCpuSpeed = readMacPowermetricsCpuSpeed()
+          if (hasCpuSpeedValue(macCpuSpeed)) {
+            return macCpuSpeed
+          }
+
+          const nativeFailure = helperCpuSpeed?.errorCode === 'MACOS_POWERMETRICS_HELPER_UNAVAILABLE'
+            ? macCpuSpeed
+            : helperCpuSpeed || macCpuSpeed
+          const systemInfoSpeed = await readSystemInfo('cpuCurrentSpeed', fallback, () => si.cpuCurrentSpeed())
+          return {
+            ...systemInfoSpeed,
+            source: 'systeminformation',
+            sensorName: 'systeminformation.cpuCurrentSpeed',
+            nativeSource: 'powermetrics',
+            nativeErrorCode: nativeFailure?.errorCode,
+            nativeReason: nativeFailure?.reason,
+            nativeMessage: nativeFailure?.message,
+            nativeSuggestion: nativeFailure?.suggestion,
+          }
+        }
+
         if (isWindows()) {
           const hardwareMonitorSpeed = await readSystemInfo(
             'cpuClockSensors',
@@ -1952,7 +2430,12 @@ export const systemService = {
           }
         }
 
-        return readSystemInfo('cpuCurrentSpeed', fallback, () => si.cpuCurrentSpeed())
+        const systemInfoSpeed = await readSystemInfo('cpuCurrentSpeed', fallback, () => si.cpuCurrentSpeed())
+        return {
+          ...systemInfoSpeed,
+          source: 'systeminformation',
+          sensorName: 'systeminformation.cpuCurrentSpeed',
+        }
       }
     ),
 

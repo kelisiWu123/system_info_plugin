@@ -2,12 +2,14 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
 import { clampPercent, formatDisplayResolution } from '../../utils'
+import { formatGpuTemperatureSensorLabel, getGraphicsPlatformPanelVisibility } from '../../utils/gpu'
+import { normalizeOsPlatform } from '../../utils/platform'
 
 const props = defineProps<{
   active?: boolean
 }>()
 
-type MetricHistoryKey = 'load' | 'temp' | 'clock' | 'memory' | 'power' | 'fan'
+type MetricHistoryKey = 'load' | 'temp' | 'clock' | 'memory' | 'power'
 
 interface MonitorCard {
   id: string
@@ -52,7 +54,6 @@ const metricHistory: Record<MetricHistoryKey, number[]> = {
   clock: hardwareStore.metricHistory.gpuClock,
   memory: hardwareStore.metricHistory.gpuMemory,
   power: hardwareStore.metricHistory.gpuPower,
-  fan: hardwareStore.metricHistory.gpuFan,
 }
 
 const subscribed = ref(false)
@@ -125,15 +126,18 @@ function formatTemperature(value: number | null) {
 }
 
 function formatPower(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} W` : '暂不支持'
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '暂不支持'
+  if (value < 1) return `${Math.round(value * 1000)} mW`
+  if (value < 10) return `${value.toFixed(1)} W`
+  return `${Math.round(value)} W`
 }
 
 function formatClock(value: number | null) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} MHz` : '暂不支持'
 }
 
-function formatFan(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} RPM` : '暂不支持'
+function formatPercent(value: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? `${Math.round(value)}%` : '暂不支持'
 }
 
 function formatMemoryAmount(value: number | null | undefined) {
@@ -147,6 +151,28 @@ function formatMemoryBandwidth(gpu: GpuData | undefined) {
   if (!vram || !gpu.clockMemory) return '--'
   const estimated = ((gpu.clockMemory * 2 * (gpu.bus.toLowerCase().includes('x') ? 128 : 192)) / 8) / 1000
   return Number.isFinite(estimated) && estimated > 0 ? `${estimated.toFixed(0)} GB/s` : '--'
+}
+
+function formatGpuTelemetrySource(gpu: GpuData | undefined) {
+  if (!gpu?.telemetrySource) return '--'
+  if (gpu.telemetrySource === 'powermetrics' && gpu.helper) return 'powermetrics helper'
+  if (gpu.telemetrySource === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  return 'systeminformation'
+}
+
+function formatGpuTemperatureSource(gpu: GpuData | undefined) {
+  if (!gpu?.temperatureSource) return '--'
+  if (gpu.temperatureSource === 'macos-temperature-sensor') return 'macOS 原生传感器'
+  if (gpu.temperatureSource === 'apple-smc') return 'AppleSMC'
+  if (gpu.temperatureSource === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  return 'systeminformation'
+}
+
+function formatGpuNativeFallbackReason(gpu: GpuData | undefined) {
+  if (!gpu || gpu.temperatureSource !== 'apple-smc') return ''
+  return cleanText(gpu.nativeTemperatureMessage)
+    || cleanText(gpu.nativeTemperatureReason)
+    || cleanText(gpu.nativeTemperatureErrorCode)
 }
 
 function formatDisplayLine(item: DisplayData) {
@@ -259,6 +285,8 @@ const connectedDisplays = computed(() =>
   displaysData.value.filter((item) => (item.resolutionX && item.resolutionY) || (item.currentResX && item.currentResY))
 )
 const mainDisplay = computed(() => connectedDisplays.value.find((item) => item.main) || connectedDisplays.value[0])
+const normalizedGraphicsPlatform = computed(() => normalizeOsPlatform(osInfo.value))
+const graphicsPlatformPanels = computed(() => getGraphicsPlatformPanelVisibility(normalizedGraphicsPlatform.value))
 const healthState = computed(() => inferHealthState(primaryGpu.value))
 const badgeMeta = computed(() => gpuBadgeData(primaryGpu.value))
 
@@ -307,24 +335,36 @@ const quickStats = computed(() => {
 const monitorCards = computed<MonitorCard[]>(() => {
   const gpu = primaryGpu.value
   const gpuLoad = safeNumber(gpu?.utilizationGpu)
+  const gpuIdle = safeNumber(gpu?.idleResidencyGpu)
   const gpuTemp = safeNumber(gpu?.temperatureGpu)
   const gpuClock = safeNumber(gpu?.clockCore)
   const memoryUsed = safeNumber(gpu?.memoryUsed)
   const memoryTotal = safeNumber(gpu?.memoryTotal || gpu?.vram)
   const power = safeNumber(gpu?.powerDraw)
-  const fan = safeNumber(gpu?.fanSpeed)
+  const idleTrend = metricHistory.load.map((value) => Math.max(0, 100 - value))
 
   return [
     {
       id: 'load',
       label: 'GPU 使用率',
-      value: typeof gpuLoad === 'number' ? `${Math.round(gpuLoad)}%` : '暂不支持',
+      value: formatPercent(gpuLoad),
       accent: 'var(--accent-blue)',
       percent: clampPercent(gpuLoad || 0),
       trend: metricHistory.load,
       footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.load))}%`,
       footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.load, gpuLoad || 0))}%`,
       unsupported: gpuLoad === null,
+    },
+    {
+      id: 'idle',
+      label: 'GPU 空闲率',
+      value: formatPercent(gpuIdle),
+      accent: '#6be2b8',
+      percent: clampPercent(gpuIdle || 0),
+      trend: idleTrend,
+      footerLeft: `最低 ${Math.round(getHistoryMin(idleTrend))}%`,
+      footerRight: `最高 ${Math.round(getHistoryMax(idleTrend, gpuIdle || 0))}%`,
+      unsupported: gpuIdle === null,
     },
     {
       id: 'temp',
@@ -373,29 +413,34 @@ const monitorCards = computed<MonitorCard[]>(() => {
       footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.power, power || 0))} W`,
       unsupported: power === null,
     },
-    {
-      id: 'fan',
-      label: '风扇转速',
-      value: formatFan(fan),
-      unit: fan ? 'RPM' : '',
-      accent: '#46d4eb',
-      percent: clampMetricPercent(fan, Math.max(fan || 0, 2000)),
-      trend: metricHistory.fan,
-      footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.fan))} RPM`,
-      footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.fan, fan || 0))} RPM`,
-      unsupported: fan === null,
-    },
   ]
 })
 
 const telemetryRows = computed<StatRow[]>(() => {
   const gpu = primaryGpu.value
-  return [
+
+  const rows: StatRow[] = [
     {
       label: 'GPU 核心频率',
       value: formatClock(safeNumber(gpu?.clockCore)),
       status: safeNumber(gpu?.clockCore) ? '加速' : '暂无',
       statusTone: safeNumber(gpu?.clockCore) ? 'good' : 'normal',
+    },
+    {
+      label: 'GPU 空闲率',
+      value: formatPercent(safeNumber(gpu?.idleResidencyGpu)),
+      status:
+        typeof gpu?.idleResidencyGpu !== 'number'
+          ? '暂无'
+          : gpu.idleResidencyGpu >= 50
+            ? '空闲'
+            : '繁忙',
+      statusTone:
+        typeof gpu?.idleResidencyGpu !== 'number'
+          ? 'normal' as const
+          : gpu.idleResidencyGpu >= 50
+            ? 'good' as const
+            : 'warn' as const,
     },
     {
       label: '显存频率',
@@ -440,7 +485,33 @@ const telemetryRows = computed<StatRow[]>(() => {
       statusTone: 'normal',
     },
   ]
+
+  return rows
 })
+
+const gpuCoreTemperatureRows = computed(() => {
+  const sensors = Array.isArray(primaryGpu.value?.gpuCoreTemperatures) ? primaryGpu.value.gpuCoreTemperatures : []
+
+  return sensors.map((sensor, index) => ({
+    id: sensor.identifier || `gpu-core-${index}`,
+    label: formatGpuTemperatureSensorLabel(sensor, index),
+    value: formatTemperature(safeNumber(sensor.value)),
+    subtitle: sensor.hardwareName === 'AppleSMC' ? 'AppleSMC 传感器' : 'GPU 温度探针',
+    accent:
+      typeof sensor.value === 'number' && sensor.value >= 85
+        ? 'var(--accent-orange)'
+        : typeof sensor.value === 'number' && sensor.value >= 75
+          ? 'var(--accent-yellow)'
+          : 'var(--accent-blue)',
+  }))
+})
+
+const gpuNativeFallbackReason = computed(() => formatGpuNativeFallbackReason(primaryGpu.value))
+const gpuNativeFallbackSuggestion = computed(() => (
+  primaryGpu.value?.temperatureSource === 'apple-smc'
+    ? cleanText(primaryGpu.value?.nativeTemperatureSuggestion)
+    : ''
+))
 
 const portChips = computed<PortChip[]>(() => {
   const displays = connectedDisplays.value
@@ -494,6 +565,14 @@ const platformRows = computed(() => {
     { label: '主板', value: joinParts([boardData.value?.manufacturer, boardData.value?.model]) || '--' },
     { label: 'BIOS 版本', value: joinParts([biosData.value?.version, biosData.value?.releaseDate ? `(${biosData.value.releaseDate})` : '']) || '--' },
     { label: '显卡驱动', value: cleanText(gpu?.driverVersion) || '--' },
+    { label: '遥测来源', value: formatGpuTelemetrySource(gpu) },
+    { label: '温度来源', value: formatGpuTemperatureSource(gpu) },
+    ...(gpuNativeFallbackReason.value
+      ? [{ label: '原生回退原因', value: gpuNativeFallbackReason.value }]
+      : []),
+    ...(graphicsPlatformPanels.value.temperatureProbes
+      ? [{ label: 'GPU 温度测点', value: gpuCoreTemperatureRows.value.length ? `${gpuCoreTemperatureRows.value.length} 个` : '--' }]
+      : []),
     { label: '显示器', value: cleanText(mainDisplay.value?.model || mainDisplay.value?.deviceName) || '--' },
     { label: '操作系统', value: joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release, osInfo.value?.arch]) || '--' },
   ]
@@ -508,11 +587,21 @@ const graphicsReportText = computed(() => {
     `显卡：${gpu?.model || gpu?.name || '--'}`,
     `厂商：${gpu?.vendor || '--'}`,
     `总线：${joinParts([gpu?.bus, gpu?.pciBus], ' / ') || '--'}`,
+    `遥测来源：${formatGpuTelemetrySource(gpu)}`,
+    `温度来源：${formatGpuTemperatureSource(gpu)}`,
     `温度：${formatTemperature(safeNumber(gpu?.temperatureGpu))}`,
+    `空闲率：${formatPercent(safeNumber(gpu?.idleResidencyGpu))}`,
     `功耗：${formatPower(safeNumber(gpu?.powerDraw))}`,
-    `使用率：${typeof gpu?.utilizationGpu === 'number' ? `${Math.round(gpu.utilizationGpu)}%` : '暂不支持'}`,
+    `使用率：${formatPercent(safeNumber(gpu?.utilizationGpu))}`,
     `当前频率：${formatClock(safeNumber(gpu?.clockCore))}`,
     `显存占用：${joinParts([formatMemoryAmount(safeNumber(gpu?.memoryUsed)), '/', formatMemoryAmount(safeNumber(gpu?.memoryTotal || gpu?.vram))], ' ')}`,
+    ...(graphicsPlatformPanels.value.temperatureProbes
+      ? (
+          gpu?.gpuCoreTemperatures?.length
+            ? gpu.gpuCoreTemperatures.map((sensor, index) => `${formatGpuTemperatureSensorLabel(sensor, index)}：${formatTemperature(safeNumber(sensor.value))}`)
+            : ['GPU 温度测点：暂不支持']
+        )
+      : []),
     '',
     ...detailSpecs.value.map((item) => `${item.label}：${item.value}`),
     '',
@@ -641,7 +730,7 @@ onUnmounted(() => {
         <div class="panel-title">
           <div>
             <h3>实时监控</h3>
-            <p>聚焦 GPU 负载、温度、频率、显存与风扇转速</p>
+            <p>聚焦 GPU 负载、空闲率、温度、频率、显存与功耗</p>
           </div>
           <button type="button" class="panel-action">监控设置</button>
         </div>
@@ -667,7 +756,30 @@ onUnmounted(() => {
       </section>
 
       <section class="graphics-grid">
-        <article class="graphics-panel">
+        <article v-if="graphicsPlatformPanels.temperatureProbes" class="graphics-panel">
+          <div class="graphics-panel__title">
+            <h3>GPU 温度测点</h3>
+            <p>{{ gpuCoreTemperatureRows.length ? `已识别 ${gpuCoreTemperatureRows.length} 个温度测点` : '当前温度源未返回分测点数据' }}</p>
+          </div>
+
+          <p v-if="gpuNativeFallbackReason" class="graphics-panel__hint">
+            当前回退到 AppleSMC。原生探针失败：{{ gpuNativeFallbackReason }}
+          </p>
+          <p v-if="gpuNativeFallbackSuggestion" class="graphics-panel__hint">
+            建议：{{ gpuNativeFallbackSuggestion }}
+          </p>
+
+          <div v-if="gpuCoreTemperatureRows.length" class="gpu-core-grid">
+            <article v-for="row in gpuCoreTemperatureRows" :key="row.id" class="gpu-core-chip">
+              <strong :style="{ color: row.accent }">{{ row.label }}</strong>
+              <span>{{ row.value }}</span>
+              <em>{{ row.subtitle }}</em>
+            </article>
+          </div>
+          <div v-else class="gpu-core-empty">当前机器暂未返回分测点 GPU 温度</div>
+        </article>
+
+        <article v-if="graphicsPlatformPanels.telemetryDetails" class="graphics-panel">
           <div class="graphics-panel__title">
             <h3>核心 / 显存详情</h3>
             <p>当前 GPU 遥测与链路状态</p>
@@ -1005,6 +1117,13 @@ onUnmounted(() => {
   }
 }
 
+.graphics-panel__hint {
+  margin: -4px 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .panel-action {
   min-height: 34px;
   padding: 0 14px;
@@ -1106,6 +1225,50 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.gpu-core-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gpu-core-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 10px 8px;
+  border: 1px solid rgba(84, 104, 132, 0.28);
+  border-radius: 10px;
+  background: rgba(18, 29, 44, 0.72);
+
+  strong {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  span {
+    color: #f3f6fb;
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  em {
+    color: var(--text-subtle);
+    font-style: normal;
+    font-size: 12px;
+  }
+}
+
+.gpu-core-empty {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  border: 1px dashed rgba(84, 104, 132, 0.28);
+  border-radius: 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 .stat-table__row {
@@ -1242,6 +1405,7 @@ onUnmounted(() => {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .gpu-core-grid,
   .platform-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1254,6 +1418,7 @@ onUnmounted(() => {
 
   .quick-stats,
   .monitor-grid,
+  .gpu-core-grid,
   .port-grid,
   .platform-grid {
     grid-template-columns: 1fr;

@@ -18,12 +18,18 @@ const props = defineProps<{
 
 const cpuTemperature = computed(() => {
   const main = props.temperature?.main
-  return typeof main === 'number' && main > 0 ? `${main.toFixed(1)} ℃` : '未暴露'
+  if (typeof main === 'number' && main > 0) return `${main.toFixed(1)} ℃`
+  const reason = props.temperature?.reason || props.temperature?.errorCode || ''
+  if (reason === 'MACOS_SMC_PERMISSION_REQUIRED') return '需要管理员权限'
+  if (reason.startsWith('MACOS_SMC_')) return 'AppleSMC 读取失败'
+  return '未暴露'
 })
 
 const cpuTemperatureMeta = computed(() => {
   if (!props.temperature?.source) return ''
   if (props.temperature.source === 'systeminformation') return '系统传感器'
+  if (props.temperature.source === 'apple-smc') return 'AppleSMC'
+  if (props.temperature.source === 'macos-temperature-sensor') return 'macOS 原生传感器'
   return props.temperature.sensorName ? `${props.temperature.source} / ${props.temperature.sensorName}` : props.temperature.source
 })
 

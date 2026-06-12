@@ -262,6 +262,18 @@ const cpuTemperatureValue = computed(() => {
   return null
 })
 const cpuTemperatureUnsupported = computed(() => cpuTemperature.value?.source === 'unsupported' && cpuTemperatureValue.value === null)
+const cpuTemperatureIssueLabel = computed(() => {
+  const reason = cpuTemperature.value?.reason || cpuTemperature.value?.errorCode || ''
+  if (reason === 'MACOS_SMC_PERMISSION_REQUIRED') return '需要管理员权限'
+  if (reason.startsWith('MACOS_SMC_')) return 'AppleSMC 读取失败'
+  return cpuTemperatureUnsupported.value ? '暂不支持' : '--'
+})
+const cpuTemperatureIssueDetail = computed(() => {
+  const reason = cpuTemperature.value?.reason || cpuTemperature.value?.errorCode || ''
+  if (reason === 'MACOS_SMC_PERMISSION_REQUIRED') return 'AppleSMC 需要授权'
+  if (reason.startsWith('MACOS_SMC_')) return 'AppleSMC 探针不可用'
+  return cpuTemperatureUnsupported.value ? '当前机器暂不支持' : undefined
+})
 
 const summaryCards = computed(() => [
   {
@@ -311,13 +323,13 @@ const statusCards = computed<MetricCard[]>(() => [
   {
     id: 'cpu-temperature',
     label: 'CPU 温度',
-    value: typeof cpuTemperatureValue.value === 'number' ? `${Math.round(cpuTemperatureValue.value)}°C` : cpuTemperatureUnsupported.value ? '暂不支持' : '--',
+    value: typeof cpuTemperatureValue.value === 'number' ? `${Math.round(cpuTemperatureValue.value)}°C` : cpuTemperatureIssueLabel.value,
     accent: 'var(--accent-blue)',
     percent: clampPercent(cpuTemperatureValue.value || 0),
     trend: metricHistory.cpuTemp,
     footerStart: cpuTemperatureUnsupported.value ? '' : formatTemperatureRange(metricHistory.cpuTemp, cpuTemperature.value?.max || 0).low,
     footerEnd: cpuTemperatureUnsupported.value ? '' : formatTemperatureRange(metricHistory.cpuTemp, cpuTemperature.value?.max || 0).high,
-    footerCenter: cpuTemperatureUnsupported.value ? '当前机器暂不支持' : undefined,
+    footerCenter: cpuTemperatureValue.value === null ? cpuTemperatureIssueDetail.value : undefined,
   },
   {
     id: 'gpu-temperature',

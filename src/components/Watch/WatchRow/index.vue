@@ -1,11 +1,22 @@
 <script setup lang="ts">
 defineProps<{
+  accent?: string
+  border?: string
+  sideWidth?: string
   tone?: 'cpu' | 'gpu' | 'memory'
 }>()
 </script>
 
 <template>
-  <section :class="['watch-metric-card', tone ? `watch-metric-card--${tone}` : '']">
+  <section
+    :class="['watch-metric-card', tone ? `watch-metric-card--${tone}` : '']"
+    :style="{
+      '--watch-card-accent': accent,
+      '--watch-card-border': border,
+      '--watch-card-strong': accent,
+      '--watch-card-side-width': sideWidth,
+    }"
+  >
     <div class="watch-metric-card__icon">
       <slot name="icon" />
     </div>
@@ -44,8 +55,9 @@ defineProps<{
   --watch-card-accent: #35b6ff;
   --watch-card-border: rgba(102, 124, 161, 0.28);
   --watch-card-icon-bg: rgba(255, 255, 255, 0.05);
+  --watch-card-side-width: 82px;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 82px;
+  grid-template-columns: 40px minmax(0, 1fr) var(--watch-card-side-width);
   align-items: stretch;
   gap: 8px;
   min-height: 82px;
@@ -62,18 +74,18 @@ defineProps<{
 }
 
 .watch-metric-card--cpu {
-  --watch-card-accent: #35b6ff;
-  --watch-card-border: rgba(67, 176, 255, 0.34);
+  --watch-card-accent: #a775ff;
+  --watch-card-border: rgba(167, 117, 255, 0.34);
 }
 
 .watch-metric-card--gpu {
-  --watch-card-accent: #83df55;
-  --watch-card-border: rgba(121, 214, 82, 0.34);
+  --watch-card-accent: #79e7ff;
+  --watch-card-border: rgba(121, 231, 255, 0.40);
 }
 
 .watch-metric-card--memory {
-  --watch-card-accent: #a775ff;
-  --watch-card-border: rgba(157, 113, 255, 0.34);
+  --watch-card-accent: #79d84f;
+  --watch-card-border: rgba(121, 216, 79, 0.34);
 }
 
 .watch-metric-card__icon {
