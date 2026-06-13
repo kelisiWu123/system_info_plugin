@@ -568,21 +568,6 @@ const monitorCards = computed<MonitorCard[]>(() => [
     footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.power, cpuPowerValue.value || 0))} W`,
     unsupported: cpuPowerValue.value === null,
   },
-  ...(processorAuxDisplayMode.value === 'fan'
-    ? []
-    : [{
-        id: 'fan',
-        label: 'CPU 风扇',
-        value: formatFanSpeed(cpuFanSpeedValue.value),
-        unit: '',
-        accent: 'var(--accent-blue)',
-        percent: cpuFanSpeedValue.value ? clampPercent((cpuFanSpeedValue.value / Math.max(cpuFanSpeedValue.value, safeNumber(cpuFanSpeed.value?.max) || 4000)) * 100) : 0,
-        trend: [],
-        footerLeft: cpuFanSpeed.value?.sensorName || '风扇传感器',
-        footerRight: cpuFanSpeed.value?.source === 'apple-smc' ? 'AppleSMC' : cpuFanSpeed.value?.source || '',
-        unsupported: cpuFanSpeedValue.value === null,
-      }]
-    ),
 ])
 
 const allCoreRows = computed<CoreRow[]>(() => {

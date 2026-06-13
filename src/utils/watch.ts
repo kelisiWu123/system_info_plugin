@@ -164,5 +164,5 @@ export function buildWatchCpuOverviewSideItems(input: {
 }
 
 export function getWatchCpuAuxMetricIds(platform?: string): WatchCpuAuxMetricId[] {
-  return platform === 'darwin' ? ['fan'] : ['voltage', 'fan']
+  return platform === 'darwin' ? ['fan'] : ['voltage']
 }
