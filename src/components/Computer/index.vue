@@ -371,15 +371,13 @@ const statusCards = computed<MetricCard[]>(() => [
   {
     id: 'storage-usage',
     label: '存储使用率',
-    value: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin' ? '--' : `${Math.round(storageUsage.value.percent)}%`,
+    value: `${Math.round(storageUsage.value.percent)}%`,
     accent: 'var(--accent-yellow)',
-    percent: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin' ? 0 : storageUsage.value.percent,
-    trend: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin' ? [] : metricHistory.storageLoad,
-    footerCenter: cleanText(osInfo.value?.platform).toLowerCase() === 'darwin'
-      ? 'macOS 暂不显示已用存储'
-      : storageUsage.value.total
-        ? `${formatBytes(storageUsage.value.used)} / ${formatBytes(storageUsage.value.total)}`
-        : '等待磁盘数据',
+    percent: storageUsage.value.percent,
+    trend: metricHistory.storageLoad,
+    footerCenter: storageUsage.value.total
+      ? `${formatBytes(storageUsage.value.used)} / ${formatBytes(storageUsage.value.total)}`
+      : '等待磁盘数据',
   },
 ])
 

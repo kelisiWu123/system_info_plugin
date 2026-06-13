@@ -146,16 +146,115 @@ function getPhysicalDiskTotalBytes(disks: DiskLayoutData[]): number {
   return getPhysicalDiskLayout(disks).reduce((sum, disk) => sum + (disk.size || 0), 0)
 }
 
+function hasDiskHealthTelemetry(disk: DiskLayoutData | undefined): boolean {
+  if (!disk) return false
+
+  const smartPassed = disk.smartData?.smart_status?.passed
+  if (typeof smartPassed === 'boolean') return true
+
+  if (cleanStorageText(disk.smartStatus)) return true
+
+  if (disk.smartData?.nvme_smart_health_information_log) return true
+
+  const smartRows = disk.smartData?.ata_smart_attributes?.table
+  if (Array.isArray(smartRows) && smartRows.length > 0) return true
+
+  return false
+}
+
+function getMacStorageVolumeMount(volume: Pick<DiskData, 'mount'>): string {
+  return cleanStorageText(volume.mount)
+}
+
+function getMacStorageVolumeFs(volume: Pick<DiskData, 'fs'>): string {
+  return cleanStorageText(volume.fs)
+}
+
+function isMacSystemDataVolume(volume: Pick<DiskData, 'mount'>): boolean {
+  return getMacStorageVolumeMount(volume) === '/System/Volumes/Data'
+}
+
+function isMacSystemRootVolume(volume: Pick<DiskData, 'mount'>): boolean {
+  return getMacStorageVolumeMount(volume) === '/'
+}
+
+function isMacRecoveryVolume(volume: Pick<DiskData, 'mount'>): boolean {
+  return getMacStorageVolumeMount(volume).toLowerCase() === '/volumes/recovery'
+}
+
+function isMacUserMountedVolume(volume: Pick<DiskData, 'mount'>): boolean {
+  const mount = getMacStorageVolumeMount(volume)
+  return mount.startsWith('/Volumes/') && !isMacRecoveryVolume(volume)
+}
+
+function getMacStorageVolumeGroupKey(volume: Pick<DiskData, 'fs' | 'size' | 'available' | 'mount'>): string {
+  const fs = getMacStorageVolumeFs(volume)
+  const diskMatch = fs.match(/^\/dev\/(disk\d+)/i)
+  if (diskMatch?.[1]) return `device:${diskMatch[1].toLowerCase()}`
+
+  return `size:${volume.size || 0}:available:${volume.available || 0}:mount:${getMacStorageVolumeMount(volume).toLowerCase()}`
+}
+
+function scoreMacStorageVolume(volume: Pick<DiskData, 'mount' | 'used'>): number {
+  if (isMacSystemDataVolume(volume)) return 400
+  if (isMacSystemRootVolume(volume)) return 300
+  if (isMacUserMountedVolume(volume)) return 200
+  return 100
+}
+
+function pickPreferredMacStorageVolume(current: DiskData | undefined, next: DiskData): DiskData {
+  if (!current) return next
+
+  const currentScore = scoreMacStorageVolume(current)
+  const nextScore = scoreMacStorageVolume(next)
+
+  if (nextScore !== currentScore) {
+    return nextScore > currentScore ? next : current
+  }
+
+  return (next.used || 0) > (current.used || 0) ? next : current
+}
+
+function dedupeMacStorageVolumes(volumes: DiskData[]): DiskData[] {
+  const grouped = new Map<string, DiskData>()
+
+  volumes.forEach((volume) => {
+    const key = getMacStorageVolumeGroupKey(volume)
+    grouped.set(key, pickPreferredMacStorageVolume(grouped.get(key), volume))
+  })
+
+  return [...grouped.values()]
+}
+
 function getDisplayStorageVolumes(volumes: DiskData[], platform?: string): DiskData[] {
   const list = volumes.filter((volume) => (volume.size || 0) > 0)
   if (platform !== 'darwin') return list
 
-  const visible = list.filter((volume) => {
-    const mount = cleanStorageText(volume.mount)
-    return mount === '/' || mount.startsWith('/Volumes/')
-  })
+  const primarySystemVolume = list.find(isMacSystemDataVolume) || list.find(isMacSystemRootVolume)
+  const visible = dedupeMacStorageVolumes([
+    ...(primarySystemVolume ? [primarySystemVolume] : []),
+    ...list.filter(isMacUserMountedVolume),
+  ])
 
   return visible.length ? visible : list
+}
+
+function getStorageUsageSummary(volumes: DiskData[], disks: DiskLayoutData[], platform?: string) {
+  const list = getDisplayStorageVolumes(volumes, platform)
+
+  if (platform === 'darwin') {
+    const total = list.reduce((sum, item) => sum + (item.size || 0), 0)
+    const used = list.reduce((sum, item) => sum + (item.used || 0), 0)
+    const percent = total > 0 ? Math.round(clampPercent((used / total) * 100) * 10) / 10 : 0
+    return { total, used, percent }
+  }
+
+  const physicalTotal = getPhysicalDiskTotalBytes(disks)
+  const total = physicalTotal > 0 ? physicalTotal : list.reduce((sum, item) => sum + (item.size || 0), 0)
+  const rawUsed = list.reduce((sum, item) => sum + (item.used || 0), 0)
+  const used = total > 0 ? Math.min(rawUsed, total) : rawUsed
+  const percent = total > 0 ? clampPercent((used / total) * 100) : 0
+  return { total, used, percent }
 }
 
 function isDarwinMemoryData(memory?: MemoData): boolean {
@@ -232,7 +331,9 @@ export {
   getDisplayCpuCurrentSpeedGHz,
   getPhysicalDiskLayout,
   getPhysicalDiskTotalBytes,
+  hasDiskHealthTelemetry,
   getDisplayStorageVolumes,
+  getStorageUsageSummary,
   getDisplayMemoryUsedBytes,
   getDisplayMemoryAvailableBytes,
   getDisplayMemoryUsagePercent,

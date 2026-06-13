@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
-import { clampPercent, formatBytes, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes } from '../../utils'
+import { clampPercent, formatBytes, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes, hasDiskHealthTelemetry } from '../../utils'
 
 const props = defineProps<{
   active?: boolean
@@ -24,9 +24,10 @@ interface PhysicalDiskRow {
   serial: string
   protocol: string
   devicePath: string
-  healthText: string
-  healthVariant: 'good' | 'warn' | 'muted'
-  healthPercentText: string
+  hasHealthData: boolean
+  healthText?: string
+  healthVariant?: 'good' | 'warn' | 'muted'
+  healthPercentText?: string
   temperature: number | null
   smartRows: Array<{
     id: number
@@ -84,6 +85,7 @@ function getVolumeDisplayName(volume: { name?: unknown; mount?: unknown; fs?: un
   if (name) return name
 
   const mount = cleanText(volume.mount)
+  if (mount === '/System/Volumes/Data') return '系统数据'
   if (mount) return getMountBasename(mount)
 
   return cleanText(volume.fs) || '--'
@@ -126,7 +128,7 @@ function formatHealthText(disk: DiskLayoutData) {
   if (smartStatus === 'ok' || smartStatus === 'passed') return { text: '良好', variant: 'good' as const }
   if (smartStatus) return { text: cleanText(disk.smartStatus), variant: 'warn' as const }
 
-  return { text: '未提供', variant: 'muted' as const }
+  return undefined
 }
 
 function normalizeSmartStatus(row: { when_failed?: string; raw?: { value?: number | string } }) {
@@ -176,6 +178,7 @@ async function writeClipboard(text: string) {
 
 const physicalDisks = computed<PhysicalDiskRow[]>(() =>
   getPhysicalDiskLayout(diskLayoutData.value).map((disk, index) => {
+      const hasHealthData = hasDiskHealthTelemetry(disk)
       const health = formatHealthText(disk)
       const nvmeHealth = disk.smartData?.nvme_smart_health_information_log
       const smartRows = (disk.smartData?.ata_smart_attributes?.table || []).slice(0, 8).map((row) => ({
@@ -198,9 +201,10 @@ const physicalDisks = computed<PhysicalDiskRow[]>(() =>
         serial: cleanText(disk.serialNum) || '--',
         protocol: cleanText(disk.smartData?.device?.protocol) || cleanText(disk.interfaceType) || '--',
         devicePath: cleanText(disk.device) || '--',
-        healthText: health.text,
-        healthVariant: health.variant,
-        healthPercentText: typeof nvmeHealth?.percentage_used === 'number' ? `${Math.max(0, 100 - nvmeHealth.percentage_used)}%` : '--',
+        hasHealthData,
+        healthText: health?.text,
+        healthVariant: health?.variant,
+        healthPercentText: hasHealthData && typeof nvmeHealth?.percentage_used === 'number' ? `${Math.max(0, 100 - nvmeHealth.percentage_used)}%` : undefined,
         temperature: safeNumber(disk.temperature),
         smartRows,
         features: buildFeatures(disk),
@@ -234,8 +238,11 @@ const interfaceTypes = computed(() => {
 })
 
 const totalPhysicalCapacity = computed(() => getPhysicalDiskTotalBytes(diskLayoutData.value))
+const displayCapacityTotal = computed(() => totalPhysicalCapacity.value > 0 ? totalPhysicalCapacity.value : storageUsage.value.total)
 const mountedVolumeUsed = computed(() => volumeRows.value.reduce((sum, volume) => sum + volume.used, 0))
 const mountedVolumeAvailable = computed(() => volumeRows.value.reduce((sum, volume) => sum + volume.available, 0))
+const disksWithHealthData = computed(() => physicalDisks.value.filter((disk) => disk.hasHealthData))
+const hasDiskHealthSupport = computed(() => disksWithHealthData.value.length > 0)
 
 const selectedDisk = computed(() => physicalDisks.value.find((disk) => disk.id === selectedDiskId.value) || physicalDisks.value[0])
 
@@ -253,17 +260,17 @@ const selectedDiskMountedUsage = computed(() => {
 })
 
 const overviewCards = computed<OverviewCard[]>(() => {
-  const healthyCount = physicalDisks.value.filter((disk) => disk.healthVariant === 'good').length
+  const healthyCount = disksWithHealthData.value.filter((disk) => disk.healthVariant === 'good').length
   const healthLabel =
-    physicalDisks.value.length === 0
+    disksWithHealthData.value.length === 0
       ? '未识别'
-      : healthyCount === physicalDisks.value.length
+      : healthyCount === disksWithHealthData.value.length
         ? '良好'
         : healthyCount > 0
           ? '部分关注'
           : '需检查'
 
-  return [
+  const cards: OverviewCard[] = [
     {
       label: '设备数量',
       value: `${physicalDisks.value.length}`,
@@ -272,15 +279,9 @@ const overviewCards = computed<OverviewCard[]>(() => {
     },
     {
       label: '总容量',
-      value: formatBytes(totalPhysicalCapacity.value),
-      subvalue: isDarwin.value ? 'macOS 暂不显示已用存储' : `挂载卷已用 ${formatBytes(mountedVolumeUsed.value)}`,
+      value: formatBytes(displayCapacityTotal.value),
+      subvalue: `挂载卷已用 ${formatBytes(storageUsage.value.used)}`,
       tone: 'purple',
-    },
-    {
-      label: '健康状态',
-      value: healthLabel,
-      subvalue: physicalDisks.value.length ? `${healthyCount} / ${physicalDisks.value.length} 设备状态良好` : '未识别到物理磁盘',
-      tone: 'green',
     },
     {
       label: '接口类型',
@@ -289,6 +290,17 @@ const overviewCards = computed<OverviewCard[]>(() => {
       tone: 'amber',
     },
   ]
+
+  if (hasDiskHealthSupport.value) {
+    cards.splice(2, 0, {
+      label: '健康状态',
+      value: healthLabel,
+      subvalue: `${healthyCount} / ${disksWithHealthData.value.length} 设备状态良好`,
+      tone: 'green',
+    })
+  }
+
+  return cards
 })
 
 const selectedDiskRingStyle = computed(() => {
@@ -318,8 +330,8 @@ const storageReportText = computed(() => {
     '',
     `物理磁盘：${physicalDisks.value.length}`,
     `挂载卷：${volumeRows.value.length}`,
-    `物理总容量：${formatBytes(totalPhysicalCapacity.value)}`,
-    isDarwin.value ? '挂载卷已用：macOS 暂不显示' : `挂载卷已用：${formatBytes(mountedVolumeUsed.value)}`,
+    `总容量：${formatBytes(displayCapacityTotal.value)}`,
+    `挂载卷已用：${formatBytes(storageUsage.value.used)}`,
     '',
     '[物理磁盘]',
     ...physicalDisks.value.map((disk) =>
@@ -328,7 +340,7 @@ const storageReportText = computed(() => {
         `类型：${disk.type}`,
         `接口：${disk.interfaceType}`,
         `容量：${formatBytes(disk.capacity)}`,
-        `健康：${disk.healthText}`,
+        ...(disk.hasHealthData && disk.healthText ? [`健康：${disk.healthText}`] : []),
         `温度：${formatTemperature(disk.temperature)}`,
       ].join(' / ')
     ),
@@ -446,7 +458,14 @@ onUnmounted(() => {
             v-for="disk in physicalDisks"
             :key="disk.id"
             type="button"
-            :class="['storage-device-row', { 'storage-device-row--active': selectedDisk?.id === disk.id }]"
+            :class="[
+              'storage-device-row',
+              {
+                'storage-device-row--active': selectedDisk?.id === disk.id,
+                'storage-device-row--with-health': hasDiskHealthSupport,
+                'storage-device-row--compact': !hasDiskHealthSupport,
+              },
+            ]"
             @click="selectedDiskId = disk.id"
           >
             <div class="storage-device-row__name">
@@ -456,7 +475,9 @@ onUnmounted(() => {
             <span>{{ disk.type }}</span>
             <span>{{ disk.interfaceType }}</span>
             <span>{{ formatBytes(disk.capacity) }}</span>
-            <span :class="['health-chip', `health-chip--${disk.healthVariant}`]">{{ disk.healthText }}</span>
+            <span v-if="hasDiskHealthSupport" class="storage-device-row__health">
+              <span v-if="disk.hasHealthData && disk.healthText && disk.healthVariant" :class="['health-chip', `health-chip--${disk.healthVariant}`]">{{ disk.healthText }}</span>
+            </span>
             <span>{{ formatTemperature(disk.temperature) }}</span>
           </button>
         </div>
@@ -471,9 +492,9 @@ onUnmounted(() => {
               <h2>{{ selectedDisk.name }}</h2>
               <p>{{ selectedDisk.type }} / {{ selectedDisk.interfaceType }} / {{ selectedDisk.protocol }}</p>
             </div>
-            <div class="storage-focus-card__health">
+            <div v-if="selectedDisk.hasHealthData && selectedDisk.healthText && selectedDisk.healthVariant" class="storage-focus-card__health">
               <span :class="['health-chip', `health-chip--${selectedDisk.healthVariant}`]">{{ selectedDisk.healthText }}</span>
-              <span>{{ selectedDisk.healthPercentText !== '--' ? `剩余健康 ${selectedDisk.healthPercentText}` : '健康百分比未提供' }}</span>
+              <span v-if="selectedDisk.healthPercentText">{{ `剩余健康 ${selectedDisk.healthPercentText}` }}</span>
             </div>
           </div>
 
@@ -550,7 +571,7 @@ onUnmounted(() => {
           <div v-else class="storage-empty storage-empty--inline">未识别到可用挂载卷。</div>
         </section>
 
-        <section class="storage-section">
+        <section v-if="hasDiskHealthSupport" class="storage-section">
           <div class="storage-section__header">
             <h2>SMART 摘要</h2>
             <span>仅展示当前数据源实际提供的属性</span>
@@ -593,16 +614,16 @@ onUnmounted(() => {
               <strong>{{ interfaceTypes.join(' / ') || '--' }}</strong>
             </div>
             <div class="storage-detail-item">
-              <span>物理总容量</span>
-              <strong>{{ formatBytes(totalPhysicalCapacity) }}</strong>
+              <span>总容量</span>
+              <strong>{{ formatBytes(displayCapacityTotal) }}</strong>
             </div>
             <div class="storage-detail-item">
-              <span>{{ isDarwin ? '挂载卷数量' : '已识别卷已用' }}</span>
-              <strong>{{ isDarwin ? `${volumeRows.length} 个` : formatBytes(storageUsage.used) }}</strong>
+              <span>已识别卷已用</span>
+              <strong>{{ formatBytes(storageUsage.used) }}</strong>
             </div>
             <div class="storage-detail-item">
-              <span>{{ isDarwin ? '当前状态' : '估算剩余空间' }}</span>
-              <strong>{{ isDarwin ? 'macOS 暂不显示已用存储' : formatBytes(Math.max(totalPhysicalCapacity - storageUsage.used, 0)) }}</strong>
+              <span>估算剩余空间</span>
+              <strong>{{ formatBytes(Math.max(displayCapacityTotal - storageUsage.used, 0)) }}</strong>
             </div>
           </div>
         </section>
@@ -739,7 +760,6 @@ onUnmounted(() => {
 }
 
 .storage-device-row {
-  grid-template-columns: minmax(220px, 1.7fr) 0.8fr 0.8fr 0.9fr 0.8fr 0.6fr;
   width: 100%;
   padding: 14px 16px;
   border: 0;
@@ -749,6 +769,14 @@ onUnmounted(() => {
   text-align: left;
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.storage-device-row--with-health {
+  grid-template-columns: minmax(220px, 1.7fr) 0.8fr 0.8fr 0.9fr 0.8fr 0.6fr;
+}
+
+.storage-device-row--compact {
+  grid-template-columns: minmax(220px, 1.9fr) 0.9fr 0.9fr 1fr 0.7fr;
 }
 
 .storage-device-row:first-child {
@@ -779,6 +807,11 @@ onUnmounted(() => {
     color: var(--text-muted);
     font-size: 12px;
   }
+}
+
+.storage-device-row__health {
+  display: flex;
+  justify-content: center;
 }
 
 .health-chip {

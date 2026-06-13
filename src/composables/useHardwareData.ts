@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsagePercent, getDisplayStorageVolumes, getPhysicalDiskTotalBytes } from '../utils'
+import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsagePercent, getStorageUsageSummary } from '../utils'
 
 export type FetchStatus = 'pending' | 'ok' | 'missing' | 'error'
 
@@ -268,13 +268,7 @@ const usedMemoPercent = computed(() => {
 
 const storageUsage = computed(() => {
   const platform = osInfo.value?.platform?.toLowerCase?.() || ''
-  const list = getDisplayStorageVolumes(diskData.value, platform)
-  const physicalTotal = getPhysicalDiskTotalBytes(diskLayoutData.value)
-  const total = physicalTotal > 0 ? physicalTotal : list.reduce((sum, item) => sum + item.size, 0)
-  const rawUsed = list.reduce((sum, item) => sum + item.used, 0)
-  const used = total > 0 ? Math.min(rawUsed, total) : rawUsed
-  const percent = total > 0 ? clampPercent((used / total) * 100) : 0
-  return { total, used, percent }
+  return getStorageUsageSummary(diskData.value, diskLayoutData.value, platform)
 })
 
 async function refreshDynamicMetrics(force = false) {
