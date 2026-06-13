@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareStoreDynamicMetrics } from '../../composables/useHardwareData'
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
 import { getSensorEnhancementActionLabel, getSensorEnhancementPlatform } from '../../utils/platform'
-import { getProcessorAuxDisplayMode } from '../../utils/processor'
+import { getProcessorAuxDisplayMode, getProcessorIdlePercent } from '../../utils/processor'
 
 const props = defineProps<{
   active?: boolean
@@ -355,6 +355,7 @@ const cpuPowerValue = computed(() => safeNumber(cpuPower.value?.value))
 const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? parseVoltageString(cpuData.value?.voltage))
 const cpuFanSpeedValue = computed(() => safeNumber(cpuFanSpeed.value?.value))
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
+const cpuIdlePercent = computed(() => getProcessorIdlePercent(cpuLoadData.value))
 const currentSpeedValue = computed(() => {
   const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
   return value > 0 ? value : null
@@ -607,6 +608,12 @@ const efficiencyCoreRows = computed(() => allCoreRows.value.filter((item) => ite
 const genericCoreRows = computed(() => allCoreRows.value.filter((item) => item.type === 'Core'))
 
 const detailSpecs = computed(() => [
+  ...(isWindowsPlatform.value
+    ? [{
+        label: '空闲率',
+        value: `${Math.round(cpuIdlePercent.value)}%`,
+      }]
+    : []),
   {
     label: 'L1 缓存',
     value: formatCacheSize((cpuData.value?.cache?.l1d || 0) + (cpuData.value?.cache?.l1i || 0)),

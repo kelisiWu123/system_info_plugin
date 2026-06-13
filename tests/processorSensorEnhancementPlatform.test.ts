@@ -6,7 +6,7 @@ import {
   getSensorEnhancementPlatform,
   normalizeOsPlatform,
 } from '../src/utils/platform'
-import { getProcessorAuxDisplayMode } from '../src/utils/processor'
+import { getProcessorAuxDisplayMode, getProcessorIdlePercent } from '../src/utils/processor'
 import { formatGpuTemperatureSensorLabel, getGraphicsPlatformPanelVisibility } from '../src/utils/gpu'
 
 test('normalizes Windows platform variants to win32', () => {
@@ -41,6 +41,14 @@ test('uses CPU fan instead of voltage on macOS processor panel', () => {
   assert.equal(getProcessorAuxDisplayMode('macos'), 'fan')
   assert.equal(getProcessorAuxDisplayMode('windows'), 'voltage')
   assert.equal(getProcessorAuxDisplayMode('unsupported'), 'voltage')
+})
+
+test('computes CPU idle percent from currentLoadIdle when available', () => {
+  assert.equal(getProcessorIdlePercent({ currentLoadIdle: 73.6 }), 73.6)
+})
+
+test('falls back to 100 - currentLoad when idle percent is missing', () => {
+  assert.equal(getProcessorIdlePercent({ currentLoad: 42.4 }), 57.6)
 })
 
 test('formats raw AppleSMC GPU sensor labels into human-readable names', () => {
