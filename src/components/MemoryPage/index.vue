@@ -153,7 +153,7 @@ const pressureDescription = computed(() => getMemoryPressureDescription(pressure
 const pressureAccent = computed(() => {
   if (pressureLevel.value === 'normal') return 'var(--accent-green)'
   if (pressureLevel.value === 'warning') return 'var(--accent-yellow)'
-  if (pressureLevel.value === 'critical') return '#ff7f87'
+  if (pressureLevel.value === 'critical') return 'var(--accent-danger)'
   return 'var(--text-muted)'
 })
 const moduleCount = computed(() => memoryModules.value.length)
@@ -183,7 +183,7 @@ const statusStats = computed<SummaryStat[]>(() => {
       { label: '物理内存', value: `${systemMemoryGB.value} GB`, accent: 'var(--accent-purple)' },
       { label: '内存压力', value: pressureLabel.value, accent: pressureAccent.value },
       { label: usedMemoryLabel.value, value: `${usedMemoryGB.value} GB`, accent: 'var(--accent-purple)', barPercent: usagePercent.value },
-      { label: availableMemoryLabel.value, value: `${freeMemoryGB.value} GB`, accent: '#73c1ff', barPercent: clampPercent((freeMemoryGB.value / Math.max(systemMemoryGB.value, 1)) * 100) },
+      { label: availableMemoryLabel.value, value: `${freeMemoryGB.value} GB`, accent: 'var(--accent-cyan)', barPercent: clampPercent((freeMemoryGB.value / Math.max(systemMemoryGB.value, 1)) * 100) },
       { label: '已使用交换', value: `${swapUsedGB.value} GB`, accent: 'var(--accent-yellow)' },
     ]
   }
@@ -192,7 +192,7 @@ const statusStats = computed<SummaryStat[]>(() => {
     { label: '使用率', value: formatUsage(usagePercent.value), accent: 'var(--accent-blue)' },
     { label: usedMemoryLabel.value, value: `${usedMemoryGB.value} GB`, accent: 'var(--accent-purple)', barPercent: usagePercent.value },
     { label: availableMemoryLabel.value, value: `${freeMemoryGB.value} GB`, accent: 'var(--accent-blue)', barPercent: clampPercent((freeMemoryGB.value / Math.max(systemMemoryGB.value, 1)) * 100) },
-    { label: '当前频率', value: formatFrequency(memoryClock.value), accent: '#5eb4ff' },
+    { label: '当前频率', value: formatFrequency(memoryClock.value), accent: 'var(--accent-cyan)' },
     { label: '模组数量', value: `${moduleCount.value} / ${slotCount.value || moduleCount.value}`, accent: 'var(--accent-green)' },
     { label: '系统总量', value: `${systemMemoryGB.value} GB`, accent: 'var(--accent-purple)' },
   ]
@@ -340,12 +340,12 @@ defineExpose({
 async function ensureStoreActive() {
   if (subscribed.value) return
   subscribed.value = true
-  await activateHardwareStore()
+  await activateHardwareStore('memory')
 }
 
 function releaseStore() {
   if (!subscribed.value) return
-  deactivateHardwareStore()
+  deactivateHardwareStore('memory')
   subscribed.value = false
 }
 
@@ -491,7 +491,7 @@ onUnmounted(() => {
                 <span>0%</span>
               </div>
               <svg class="usage-chart__svg" viewBox="0 0 220 96" preserveAspectRatio="none" aria-hidden="true">
-                <polyline :points="sparklinePoints(metricHistory.memoryLoad)" fill="none" stroke="#42a3ff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+                <polyline :points="sparklinePoints(metricHistory.memoryLoad)" fill="none" stroke="var(--accent-blue)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <div class="usage-chart__axis">
                 <span>96秒前</span>
@@ -593,21 +593,19 @@ onUnmounted(() => {
 .status-card,
 .memory-panel,
 .memory-detail {
-  border: 1px solid rgba(84, 104, 132, 0.2);
-  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--surface-radius);
   background:
-    linear-gradient(180deg, rgba(26, 36, 50, 0.96), rgba(19, 28, 41, 0.94)),
-    radial-gradient(circle at top right, rgba(74, 126, 255, 0.12), transparent 34%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 18px 34px rgba(5, 10, 18, 0.16);
+    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
+    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  box-shadow: var(--panel-shadow);
 }
 
 .hero-card,
 .status-card,
 .memory-panel,
 .memory-detail {
-  padding: 16px 18px 18px;
+  padding: var(--surface-padding);
 }
 
 .hero-card__head {
@@ -670,25 +668,26 @@ onUnmounted(() => {
 .hero-card__title {
   h2 {
     margin: 0;
-    color: #f3f7fd;
-    font-size: 20px;
+    color: var(--text-primary);
+    font-size: 22px;
     font-weight: 700;
-    line-height: 1.25;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
   }
 
   p {
-    margin: 8px 0 0;
+    margin: 0;
     color: var(--text-muted);
     font-size: 14px;
+    overflow-wrap: anywhere;
   }
 }
 
 .hero-specs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0 14px;
   margin-top: 18px;
-  padding-top: 14px;
   border-top: 1px solid rgba(86, 101, 126, 0.18);
 }
 
@@ -696,7 +695,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 0 10px;
+  padding: 14px 12px 10px 0;
+  border-bottom: 1px solid rgba(86, 101, 126, 0.12);
 
   span {
     color: var(--text-subtle);
@@ -704,7 +704,7 @@ onUnmounted(() => {
   }
 
   strong {
-    color: #f5f8fd;
+    color: var(--text-primary);
     font-size: 15px;
     font-weight: 700;
   }
@@ -715,13 +715,13 @@ onUnmounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: var(--surface-heading-gap);
+  margin-bottom: var(--surface-heading-margin);
 
   h3 {
     margin: 0;
-    color: #f4f7fd;
-    font-size: 16px;
+    color: var(--text-primary);
+    font-size: var(--surface-title-size);
     font-weight: 700;
   }
 
@@ -753,7 +753,7 @@ onUnmounted(() => {
   strong {
     display: block;
     margin-top: 8px;
-    color: #f6f9ff;
+    color: var(--text-primary);
     font-size: 16px;
     font-weight: 700;
   }
@@ -829,7 +829,7 @@ onUnmounted(() => {
   }
 
   strong {
-    color: #eef3fb;
+    color: var(--text-primary);
     font-size: 13px;
     font-weight: 600;
   }
@@ -837,18 +837,21 @@ onUnmounted(() => {
 
 .slot-state {
   justify-self: start;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(37, 49, 67, 0.8);
-  color: var(--text-muted);
+  min-height: var(--pill-height);
+  padding: 0 10px;
+  border-radius: var(--pill-radius);
+  background: var(--state-neutral-bg);
+  color: var(--state-neutral-fg);
   font-style: normal;
   font-size: 12px;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
 }
 
 .slot-state--active {
-  background: rgba(45, 90, 34, 0.42);
-  color: #8fda69;
+  background: var(--state-good-bg);
+  color: var(--state-good-fg);
 }
 
 .usage-panel {
@@ -904,7 +907,7 @@ onUnmounted(() => {
   }
 
   strong {
-    color: #f3f7fd;
+    color: var(--text-primary);
     font-size: 15px;
     font-weight: 700;
   }
@@ -924,7 +927,7 @@ onUnmounted(() => {
 }
 
 .channel-card__label {
-  color: #63b7ff;
+  color: var(--state-info-fg);
   font-size: 14px;
   font-weight: 700;
 }
@@ -962,7 +965,7 @@ onUnmounted(() => {
 
   span,
   strong {
-    color: #eef4ff;
+    color: var(--text-primary);
   }
 }
 

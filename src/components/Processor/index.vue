@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareStoreDynamicMetrics } from '../../composables/useHardwareData'
+import {
+  activateProcessorHardwareStore,
+  deactivateProcessorHardwareStore,
+  processorHardwareStore,
+  refreshProcessorHardwareDynamicMetrics,
+} from '../../composables/useProcessorHardwareData'
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
 import { getSensorEnhancementActionLabel, getSensorEnhancementPlatform } from '../../utils/platform'
 import { getProcessorAuxDisplayMode, getProcessorIdlePercent } from '../../utils/processor'
@@ -48,14 +53,14 @@ const {
   biosData,
   osInfo,
   timeInfo,
-} = hardwareStore
+} = processorHardwareStore
 
 const metricHistory: Record<MetricHistoryKey, number[]> = {
-  load: hardwareStore.metricHistory.cpuLoad,
-  temp: hardwareStore.metricHistory.cpuTemp,
-  speed: hardwareStore.metricHistory.cpuSpeed,
-  voltage: hardwareStore.metricHistory.cpuVoltage,
-  power: hardwareStore.metricHistory.cpuPower,
+  load: processorHardwareStore.metricHistory.cpuLoad,
+  temp: processorHardwareStore.metricHistory.cpuTemp,
+  speed: processorHardwareStore.metricHistory.cpuSpeed,
+  voltage: processorHardwareStore.metricHistory.cpuVoltage,
+  power: processorHardwareStore.metricHistory.cpuPower,
 }
 
 const subscribed = ref(false)
@@ -778,7 +783,7 @@ async function installMacPowermetricsHelper() {
     macHelperActionMessage.value = macHelperStatus.value.loaded && macHelperStatus.value.socketExists
       ? 'helper 已就绪，正在刷新频率来源...'
       : 'helper 已安装，仍在等待系统服务就绪'
-    await refreshHardwareStoreDynamicMetrics()
+    await refreshProcessorHardwareDynamicMetrics()
     macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
   } catch (error) {
     console.error('安装 macOS powermetrics helper 失败:', error)
@@ -796,7 +801,7 @@ async function uninstallMacPowermetricsHelper() {
   try {
     macHelperActionMessage.value = '正在卸载 helper...'
     macHelperStatus.value = await window.services.uninstallMacPowermetricsHelper()
-    await refreshHardwareStoreDynamicMetrics()
+    await refreshProcessorHardwareDynamicMetrics()
     macHelperActionMessage.value = 'helper 已卸载'
   } catch (error) {
     console.error('卸载 macOS powermetrics helper 失败:', error)
@@ -902,7 +907,7 @@ async function ensureStoreActive() {
   if (subscribed.value) return
 
   subscribed.value = true
-  await activateHardwareStore()
+  await activateProcessorHardwareStore()
   await Promise.all([
     refreshHardwareSensorState(),
     refreshMacPowermetricsHelperState(),
@@ -912,7 +917,7 @@ async function ensureStoreActive() {
 function releaseStore() {
   if (!subscribed.value) return
 
-  deactivateHardwareStore()
+  deactivateProcessorHardwareStore()
   subscribed.value = false
 }
 
@@ -1248,7 +1253,7 @@ onUnmounted(() => {
   place-items: center;
   min-height: 320px;
   border: 1px solid var(--panel-border);
-  border-radius: 18px;
+  border-radius: var(--surface-radius);
   background: linear-gradient(180deg, rgba(19, 28, 40, 0.94), rgba(16, 24, 35, 0.96));
   color: var(--text-muted);
   font-size: 15px;
@@ -1266,7 +1271,7 @@ onUnmounted(() => {
 .processor-panel,
 .platform-panel {
   border: 1px solid var(--panel-border);
-  border-radius: 16px;
+  border-radius: var(--surface-radius);
   background:
     linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
     radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
@@ -1274,7 +1279,7 @@ onUnmounted(() => {
 }
 
 .hero-card {
-  padding: 18px 20px 16px;
+  padding: var(--surface-padding);
 }
 
 .hero-card__head {
@@ -1416,7 +1421,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 12px 14px;
-  padding: 18px 20px 16px;
+  padding: var(--surface-padding);
 }
 
 .health-card__badge {
@@ -1427,7 +1432,7 @@ onUnmounted(() => {
 .health-card__copy {
   h3 {
     margin: 0;
-    color: #eef4ff;
+    color: var(--text-primary);
     font-size: 18px;
     font-weight: 700;
   }
@@ -1460,7 +1465,7 @@ onUnmounted(() => {
   }
 
   strong {
-    color: #f7f9fd;
+    color: var(--text-primary);
     font-size: 18px;
     font-weight: 700;
   }
@@ -1479,7 +1484,7 @@ onUnmounted(() => {
 
 .monitor-panel,
 .platform-panel {
-  padding: 16px 18px 18px;
+  padding: var(--surface-padding);
 }
 
 .panel-title,
@@ -1487,13 +1492,13 @@ onUnmounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: var(--surface-heading-gap);
+  margin-bottom: var(--surface-heading-margin);
 
   h3 {
     margin: 0;
-    color: #f4f7fd;
-    font-size: 16px;
+    color: var(--text-primary);
+    font-size: var(--surface-title-size);
     font-weight: 700;
   }
 
@@ -1505,12 +1510,12 @@ onUnmounted(() => {
 }
 
 .panel-action {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 14px;
-  border: 1px solid rgba(84, 104, 132, 0.34);
-  border-radius: 10px;
-  background: rgba(20, 29, 42, 0.7);
-  color: #e7eefb;
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  color: var(--control-fg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1534,7 +1539,7 @@ onUnmounted(() => {
 
   h4 {
     margin: 0;
-    color: #f5f7fb;
+    color: var(--text-primary);
     font-size: 15px;
     font-weight: 700;
   }
@@ -1549,17 +1554,20 @@ onUnmounted(() => {
 
 .sensor-enhancement-panel__status {
   flex-shrink: 0;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(59, 74, 98, 0.46);
-  color: #cfd8eb;
+  min-height: var(--pill-height);
+  padding: 0 10px;
+  border-radius: var(--pill-radius);
+  background: var(--state-neutral-bg);
+  color: var(--state-neutral-fg);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
 }
 
 .sensor-enhancement-panel__status--active {
-  background: rgba(54, 116, 233, 0.18);
-  color: #8fc4ff;
+  background: var(--state-info-bg);
+  color: var(--state-info-fg);
 }
 
 .sensor-enhancement-grid {
@@ -1583,7 +1591,7 @@ onUnmounted(() => {
   }
 
   strong {
-    color: #edf2fb;
+    color: var(--text-primary);
     font-size: 14px;
     font-weight: 700;
   }
@@ -1596,12 +1604,12 @@ onUnmounted(() => {
 }
 
 .sensor-button {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 14px;
-  border: 1px solid rgba(84, 104, 132, 0.34);
-  border-radius: 10px;
-  background: rgba(20, 29, 42, 0.8);
-  color: #e7eefb;
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  color: var(--control-fg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1621,7 +1629,7 @@ onUnmounted(() => {
 
 .sensor-enhancement-hint {
   margin: 0;
-  color: #9fc1ea;
+  color: var(--accent-cyan);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1646,7 +1654,7 @@ onUnmounted(() => {
 }
 
 .monitor-card__label {
-  color: #e5ebf6;
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   text-align: center;
@@ -1672,7 +1680,7 @@ onUnmounted(() => {
   background: rgba(17, 25, 36, 0.96);
 
   strong {
-    color: #f5f7fb;
+    color: var(--text-primary);
     font-size: 16px;
     font-weight: 700;
   }
@@ -1713,7 +1721,7 @@ onUnmounted(() => {
   flex-direction: column;
   min-height: 0;
   height: 420px;
-  padding: 16px 18px 18px;
+  padding: var(--surface-padding);
 }
 
 .processor-panel__body {
@@ -1783,19 +1791,19 @@ onUnmounted(() => {
 .core-badge--pcore {
   border: 1px solid rgba(68, 150, 255, 0.34);
   background: rgba(31, 60, 105, 0.34);
-  color: #70beff;
+  color: var(--accent-blue);
 }
 
 .core-badge--ecore {
   border: 1px solid rgba(132, 219, 97, 0.3);
   background: rgba(41, 80, 30, 0.34);
-  color: #98dd6f;
+  color: var(--accent-green);
 }
 
 .core-badge--core {
   border: 1px solid rgba(120, 138, 171, 0.26);
   background: rgba(32, 44, 61, 0.4);
-  color: #d4dceb;
+  color: var(--text-secondary);
 }
 
 .core-group {
@@ -1809,13 +1817,13 @@ onUnmounted(() => {
 }
 
 .core-group__label {
-  color: #69b9ff;
+  color: var(--accent-blue);
   font-size: 14px;
   font-weight: 700;
 }
 
 .core-group__label--green {
-  color: #97da6f;
+  color: var(--accent-green);
 }
 
 .core-chip-grid {
@@ -1834,7 +1842,7 @@ onUnmounted(() => {
   background: rgba(18, 29, 44, 0.72);
 
   strong {
-    color: #f3f6fb;
+    color: var(--text-primary);
     font-size: 13px;
     font-weight: 700;
   }

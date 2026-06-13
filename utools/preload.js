@@ -1,14 +1,15 @@
-import path from 'node:path'
+import { getUtoolsPluginRoot, resolveUtoolsRuntime } from './runtime'
 import { configureSystemServiceContext, systemService } from './services/system'
 import { setupWindowBridge, windowService } from './services/window'
 
 setupWindowBridge()
 
-const pluginRoot = utools.isDev() ? path.resolve(__dirname, '..') : __dirname
+const runtimeUtools = resolveUtoolsRuntime(typeof utools !== 'undefined' ? utools : undefined)
+const pluginRoot = getUtoolsPluginRoot(runtimeUtools, __dirname)
 
 configureSystemServiceContext({
   pluginRoot,
-  utools,
+  utools: runtimeUtools,
 })
 
 const windowPresets = {
@@ -24,16 +25,16 @@ const windowPresets = {
 
 function openPresetWindow(name) {
   const presetGroup = windowPresets[name] || {}
-  const preset = utools.isDev() ? presetGroup.dev || presetGroup.prod : presetGroup.prod || presetGroup.dev
+  const preset = runtimeUtools.isDev() ? presetGroup.dev || presetGroup.prod : presetGroup.prod || presetGroup.dev
 
   if (!preset) {
     window.services.createWindow(name)
-    utools.outPlugin()
+    runtimeUtools.outPlugin()
     return
   }
 
   window.services.createWindow(name, preset.height, preset.width, preset.backgroundColor)
-  utools.outPlugin()
+  runtimeUtools.outPlugin()
 }
 
 window.services = {

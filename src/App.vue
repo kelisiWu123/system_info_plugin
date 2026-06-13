@@ -8,6 +8,8 @@ import {
   Memory,
 } from '@icon-park/vue-next'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { overviewHardwareStore, updateOverviewMonitoringRefreshSettings } from './composables/useOverviewHardwareData'
+import { resolveDevPageCopyTarget } from './utils/devPageCopy'
 
 type PageName = 'computer' | 'watch'
 
@@ -18,8 +20,27 @@ interface SidebarItem {
   page?: PageName
 }
 
+interface CopyablePageHandle {
+  copyOverviewInfo?: () => Promise<boolean>
+  copyProcessorInfo?: () => Promise<boolean>
+  copyGraphicsInfo?: () => Promise<boolean>
+  copyBoardInfo?: () => Promise<boolean>
+  copyMemoryInfo?: () => Promise<boolean>
+  copyStorageInfo?: () => Promise<boolean>
+}
+
 const currentHash = ref(window.location.hash)
 const selectedSection = ref('overview')
+const isDev = import.meta.env.DEV
+const copyPending = ref(false)
+const copyFeedback = ref<'idle' | 'success' | 'error'>('idle')
+const computerRef = ref<CopyablePageHandle | null>(null)
+const processorRef = ref<CopyablePageHandle | null>(null)
+const graphicsRef = ref<CopyablePageHandle | null>(null)
+const boardRef = ref<CopyablePageHandle | null>(null)
+const memoryRef = ref<CopyablePageHandle | null>(null)
+const storageRef = ref<CopyablePageHandle | null>(null)
+let copyFeedbackTimerId: number | undefined
 
 const primaryNavItems: SidebarItem[] = [
   { id: 'overview', label: '概览', icon: ComputerIcon, page: 'computer' },
@@ -43,6 +64,17 @@ function resolvePage(hash: string): PageName {
 
 const currentPage = computed<PageName>(() => resolvePage(currentHash.value))
 const isWatchPage = computed(() => currentPage.value === 'watch')
+const currentDevCopyTarget = computed(() => resolveDevPageCopyTarget(selectedSection.value))
+const isOverviewSection = computed(() => currentPage.value === 'computer' && selectedSection.value === 'overview')
+const overviewRefreshSettings = overviewHardwareStore.monitoringRefreshSettings
+const overviewBackgroundThrottled = overviewHardwareStore.backgroundThrottled
+const refreshSettingsPending = ref(false)
+
+const refreshProfiles = [
+  { id: 'eco', label: '省电' },
+  { id: 'balanced', label: '平衡' },
+  { id: 'realtime', label: '实时' },
+] as const
 
 function syncBodyMode() {
   document.body.classList.toggle('watch-window-body', isWatchPage.value)
@@ -60,6 +92,94 @@ function selectSection(id: string) {
     window.location.hash = 'computer'
   }
 }
+
+function resetCopyFeedbackLater() {
+  if (copyFeedbackTimerId) {
+    window.clearTimeout(copyFeedbackTimerId)
+  }
+
+  copyFeedbackTimerId = window.setTimeout(() => {
+    copyFeedback.value = 'idle'
+    copyFeedbackTimerId = undefined
+  }, 1800)
+}
+
+function getCurrentCopyHandle() {
+  switch (selectedSection.value) {
+    case 'overview':
+      return computerRef.value
+    case 'processor':
+      return processorRef.value
+    case 'graphics':
+      return graphicsRef.value
+    case 'board':
+      return boardRef.value
+    case 'memory':
+      return memoryRef.value
+    case 'storage':
+      return storageRef.value
+    default:
+      return null
+  }
+}
+
+async function copyCurrentSectionInfo() {
+  if (!currentDevCopyTarget.value || copyPending.value) return
+
+  const handle = getCurrentCopyHandle()
+  const method = handle?.[currentDevCopyTarget.value.methodName]
+  if (typeof method !== 'function') {
+    copyFeedback.value = 'error'
+    resetCopyFeedbackLater()
+    return
+  }
+
+  copyPending.value = true
+  try {
+    const ok = await method()
+    copyFeedback.value = ok ? 'success' : 'error'
+    resetCopyFeedbackLater()
+  } finally {
+    copyPending.value = false
+  }
+}
+
+async function applyOverviewRefreshProfile(profile: MonitoringRefreshSettingsData['profile']) {
+  if (refreshSettingsPending.value || overviewRefreshSettings.value.profile === profile) return
+
+  refreshSettingsPending.value = true
+  try {
+    await updateOverviewMonitoringRefreshSettings({ profile })
+  } finally {
+    refreshSettingsPending.value = false
+  }
+}
+
+async function toggleOverviewBackgroundThrottle() {
+  if (refreshSettingsPending.value) return
+
+  refreshSettingsPending.value = true
+  try {
+    await updateOverviewMonitoringRefreshSettings({
+      backgroundThrottleEnabled: !overviewRefreshSettings.value.backgroundThrottleEnabled,
+    })
+  } finally {
+    refreshSettingsPending.value = false
+  }
+}
+
+const devCopyButtonClass = computed(() => [
+  'debug-button',
+  copyFeedback.value === 'success' ? 'debug-button--success' : '',
+  copyFeedback.value === 'error' ? 'debug-button--error' : '',
+])
+
+const devCopyButtonText = computed(() => {
+  if (copyPending.value) return '拷贝中...'
+  if (copyFeedback.value === 'success') return '已拷贝'
+  if (copyFeedback.value === 'error') return '拷贝失败'
+  return currentDevCopyTarget.value?.buttonLabel || '拷贝当前页信息'
+})
 
 const headerMeta = computed(() => {
   if (selectedSection.value === 'processor') {
@@ -130,6 +250,10 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('hashchange', syncHash)
   document.body.classList.remove('watch-window-body')
+  if (copyFeedbackTimerId) {
+    window.clearTimeout(copyFeedbackTimerId)
+    copyFeedbackTimerId = undefined
+  }
 })
 </script>
 
@@ -193,15 +317,52 @@ onUnmounted(() => {
           <h1>{{ headerMeta.title }}</h1>
           <p>{{ headerMeta.description }}</p>
         </div>
+
+        <div v-if="isOverviewSection || (isDev && currentPage === 'computer' && currentDevCopyTarget)" class="main-header__actions">
+          <div v-if="isOverviewSection" class="header-refresh-group">
+            <div class="header-refresh-chips">
+              <button
+                v-for="profile in refreshProfiles"
+                :key="profile.id"
+                type="button"
+                :disabled="refreshSettingsPending"
+                :class="['header-chip', { 'header-chip--active': overviewRefreshSettings.profile === profile.id }]"
+                @click="applyOverviewRefreshProfile(profile.id)"
+              >
+                {{ profile.label }}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              :disabled="refreshSettingsPending"
+              :class="['header-toggle', { 'header-toggle--active': overviewRefreshSettings.backgroundThrottleEnabled }]"
+              @click="toggleOverviewBackgroundThrottle()"
+            >
+              后台降频
+              <em>{{ overviewBackgroundThrottled ? '生效中' : overviewRefreshSettings.backgroundThrottleEnabled ? '已开启' : '已关闭' }}</em>
+            </button>
+          </div>
+
+          <button
+            v-if="isDev && currentPage === 'computer' && currentDevCopyTarget"
+            type="button"
+            :disabled="copyPending"
+            :class="devCopyButtonClass"
+            @click="copyCurrentSectionInfo()"
+          >
+            {{ devCopyButtonText }}
+          </button>
+        </div>
       </header>
 
       <main class="main-content">
-        <Computer v-show="selectedSection === 'overview'" :active="selectedSection === 'overview'" />
-        <Processor v-show="selectedSection === 'processor'" :active="selectedSection === 'processor'" />
-        <GraphicsPage v-show="selectedSection === 'graphics'" :active="selectedSection === 'graphics'" />
-        <BoardPage v-show="selectedSection === 'board'" :active="selectedSection === 'board'" />
-        <MemoryPage v-show="selectedSection === 'memory'" :active="selectedSection === 'memory'" />
-        <StoragePage v-show="selectedSection === 'storage'" :active="selectedSection === 'storage'" />
+        <Computer ref="computerRef" v-show="selectedSection === 'overview'" :active="selectedSection === 'overview'" />
+        <Processor ref="processorRef" v-show="selectedSection === 'processor'" :active="selectedSection === 'processor'" />
+        <GraphicsPage ref="graphicsRef" v-show="selectedSection === 'graphics'" :active="selectedSection === 'graphics'" />
+        <BoardPage ref="boardRef" v-show="selectedSection === 'board'" :active="selectedSection === 'board'" />
+        <MemoryPage ref="memoryRef" v-show="selectedSection === 'memory'" :active="selectedSection === 'memory'" />
+        <StoragePage ref="storageRef" v-show="selectedSection === 'storage'" :active="selectedSection === 'storage'" />
         <section v-if="selectedSection !== 'overview' && selectedSection !== 'processor' && selectedSection !== 'graphics' && selectedSection !== 'board' && selectedSection !== 'memory' && selectedSection !== 'storage'" class="placeholder-panel">
           <div class="placeholder-panel__body">
             <h2>{{ headerMeta.title }}</h2>
@@ -250,11 +411,11 @@ onUnmounted(() => {
   width: 30px;
   height: 30px;
   border-radius: 10px;
-  background: linear-gradient(180deg, rgba(68, 150, 255, 0.88), rgba(40, 108, 255, 0.68));
-  color: #f5f8ff;
+  background: var(--brand-bg);
+  color: var(--brand-fg);
   font-size: 15px;
   font-weight: 800;
-  box-shadow: 0 8px 20px rgba(46, 105, 255, 0.24);
+  box-shadow: var(--brand-shadow);
 }
 
 .sidebar-brand__text {
@@ -263,7 +424,7 @@ onUnmounted(() => {
   gap: 3px;
 
   strong {
-    color: #f4f7fd;
+    color: var(--brand-fg);
     font-size: 18px;
     font-weight: 700;
   }
@@ -293,15 +454,15 @@ onUnmounted(() => {
   min-height: 48px;
   padding: 0 14px;
   border: 1px solid transparent;
-  border-radius: 14px;
-  color: var(--text-muted);
+  border-radius: var(--frame-radius);
+  color: var(--frame-fg);
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 
 .nav-item:hover {
   background: rgba(255, 255, 255, 0.03);
-  color: #ebf1fb;
+  color: var(--frame-fg-strong);
 }
 
 .nav-item--secondary {
@@ -309,11 +470,11 @@ onUnmounted(() => {
 }
 
 .nav-item--active {
-  background: linear-gradient(180deg, rgba(28, 39, 55, 0.98), rgba(24, 35, 49, 0.98));
-  border-color: rgba(67, 133, 255, 0.22);
-  color: #f6f9ff;
+  background: var(--frame-active-bg);
+  border-color: var(--frame-active-border);
+  color: var(--frame-fg-strong);
   box-shadow:
-    inset 3px 0 0 #42a3ff,
+    inset 3px 0 0 var(--accent-blue),
     0 10px 24px rgba(4, 10, 18, 0.24);
 }
 
@@ -324,7 +485,7 @@ onUnmounted(() => {
 
 .sidebar-version {
   padding: 10px 14px 0;
-  color: rgba(167, 179, 198, 0.72);
+  color: var(--text-subtle);
   font-size: 12px;
 }
 
@@ -344,11 +505,11 @@ onUnmounted(() => {
   min-height: 42px;
   margin-bottom: 14px;
   padding: 6px 12px 8px 14px;
-  border: 1px solid rgba(126, 153, 197, 0.24);
-  border-radius: 16px;
+  border: 1px solid var(--frame-border);
+  border-radius: var(--surface-radius);
   background:
     radial-gradient(circle at top left, rgba(53, 119, 255, 0.12), transparent 32%),
-    linear-gradient(180deg, rgba(24, 38, 66, 0.78), rgba(15, 24, 41, 0.72));
+    linear-gradient(180deg, rgba(21, 31, 44, 0.88), rgba(17, 25, 35, 0.82));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 12px 24px rgba(3, 8, 15, 0.12);
@@ -366,7 +527,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  color: rgba(236, 242, 251, 0.94);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -397,6 +558,87 @@ onUnmounted(() => {
   border-bottom: 1px solid rgba(96, 116, 146, 0.1);
 }
 
+.main-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
+.header-refresh-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.header-refresh-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid var(--frame-border);
+  border-radius: var(--frame-radius);
+  background: var(--frame-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.header-chip,
+.header-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-height);
+  border-radius: var(--control-radius);
+  border: 1px solid var(--control-border);
+  color: var(--control-fg);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.header-chip {
+  min-width: 52px;
+  padding: 0 12px;
+  background: transparent;
+}
+
+.header-chip:hover,
+.header-toggle:hover {
+  color: var(--control-fg-strong);
+  border-color: var(--control-border-strong);
+}
+
+.header-chip--active {
+  border-color: var(--control-active-border);
+  background: var(--control-active-bg);
+  color: var(--control-fg-strong);
+  box-shadow: var(--control-active-shadow);
+}
+
+.header-toggle {
+  gap: 8px;
+  padding: 0 14px;
+  background: var(--control-bg);
+}
+
+.header-toggle em {
+  color: var(--text-subtle);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.header-toggle--active {
+  border-color: rgba(126, 214, 113, 0.3);
+  background: linear-gradient(180deg, rgba(67, 153, 74, 0.14), rgba(36, 88, 43, 0.08));
+  color: var(--control-fg-strong);
+}
+
 .main-header__copy {
   position: relative;
   padding-left: 16px;
@@ -415,7 +657,7 @@ onUnmounted(() => {
 
   h1 {
     margin: 0;
-    color: #f7f9fd;
+    color: var(--text-primary);
     font-size: 28px;
     font-weight: 700;
     letter-spacing: -0.03em;
@@ -432,12 +674,12 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
+  min-height: var(--button-height-lg);
   padding: 0 18px;
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  background: rgba(20, 29, 42, 0.86);
-  color: #e8edf8;
+  border: 1px solid var(--button-border);
+  border-radius: var(--button-radius-lg);
+  background: var(--button-bg);
+  color: var(--button-fg);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
@@ -448,12 +690,12 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
+  min-height: var(--button-height-lg);
   padding: 0 18px;
-  border: 1px solid rgba(66, 163, 255, 0.52);
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(18, 84, 161, 0.44), rgba(12, 54, 106, 0.46));
-  color: #eaf5ff;
+  border: 1px solid var(--button-primary-border);
+  border-radius: var(--button-radius-lg);
+  background: var(--button-primary-bg);
+  color: var(--button-primary-fg);
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
@@ -461,15 +703,15 @@ onUnmounted(() => {
 }
 
 .primary-button:hover {
-  background: linear-gradient(180deg, rgba(25, 103, 192, 0.5), rgba(14, 63, 122, 0.58));
-  border-color: rgba(90, 186, 255, 0.62);
+  background: var(--button-primary-hover-bg);
+  border-color: var(--button-primary-hover-border);
 }
 
 .debug-button {
-  min-height: 44px;
+  min-height: var(--button-height-lg);
   padding: 0 16px;
   border: 1px dashed rgba(92, 112, 144, 0.48);
-  border-radius: 12px;
+  border-radius: var(--button-radius-lg);
   background: rgba(20, 29, 42, 0.5);
   color: var(--text-muted);
   font-size: 14px;
@@ -481,22 +723,22 @@ onUnmounted(() => {
 .debug-button:hover {
   background: rgba(28, 39, 55, 0.76);
   border-color: rgba(108, 130, 166, 0.58);
-  color: #edf3ff;
+  color: var(--text-primary);
 }
 
 .debug-button--success {
   border-color: rgba(89, 201, 118, 0.54);
-  color: #b8f3c8;
+  color: var(--button-feedback-success);
 }
 
 .debug-button--error {
   border-color: rgba(255, 126, 107, 0.56);
-  color: #ffb1a5;
+  color: var(--button-feedback-error);
 }
 
 .export-button:hover {
-  background: rgba(28, 39, 55, 0.96);
-  border-color: rgba(92, 112, 144, 0.42);
+  background: var(--button-hover-bg);
+  border-color: var(--button-hover-border);
 }
 
 .main-content {
@@ -512,7 +754,7 @@ onUnmounted(() => {
   height: 100%;
   min-height: 0;
   border: 1px solid var(--panel-border);
-  border-radius: 18px;
+  border-radius: var(--surface-radius);
   background: linear-gradient(180deg, rgba(19, 28, 40, 0.94), rgba(16, 24, 35, 0.96));
   box-shadow: var(--panel-shadow);
 }
@@ -523,7 +765,7 @@ onUnmounted(() => {
 
   h2 {
     margin: 0;
-    color: #f5f7fb;
+    color: var(--text-primary);
     font-size: 22px;
   }
 

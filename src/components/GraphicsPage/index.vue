@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
+import {
+  activateGraphicsHardwareStore,
+  deactivateGraphicsHardwareStore,
+  graphicsHardwareStore,
+} from '../../composables/useGraphicsHardwareData'
 import { clampPercent, formatDisplayResolution } from '../../utils'
 import { formatGpuTemperatureSensorLabel, getGraphicsPlatformPanelVisibility } from '../../utils/gpu'
 import { normalizeOsPlatform } from '../../utils/platform'
@@ -46,14 +50,14 @@ const {
   biosData,
   osInfo,
   primaryGpu,
-} = hardwareStore
+} = graphicsHardwareStore
 
 const metricHistory: Record<MetricHistoryKey, number[]> = {
-  load: hardwareStore.metricHistory.gpuLoad,
-  temp: hardwareStore.metricHistory.gpuTemp,
-  clock: hardwareStore.metricHistory.gpuClock,
-  memory: hardwareStore.metricHistory.gpuMemory,
-  power: hardwareStore.metricHistory.gpuPower,
+  load: graphicsHardwareStore.metricHistory.gpuLoad,
+  temp: graphicsHardwareStore.metricHistory.gpuTemp,
+  clock: graphicsHardwareStore.metricHistory.gpuClock,
+  memory: graphicsHardwareStore.metricHistory.gpuMemory,
+  power: graphicsHardwareStore.metricHistory.gpuPower,
 }
 
 const subscribed = ref(false)
@@ -359,7 +363,7 @@ const monitorCards = computed<MonitorCard[]>(() => {
       id: 'idle',
       label: 'GPU 空闲率',
       value: formatPercent(gpuIdle),
-      accent: '#6be2b8',
+      accent: 'var(--accent-cyan)',
       percent: clampPercent(gpuIdle || 0),
       trend: idleTrend,
       footerLeft: `最低 ${Math.round(getHistoryMin(idleTrend))}%`,
@@ -649,13 +653,13 @@ async function ensureStoreActive() {
   if (subscribed.value) return
 
   subscribed.value = true
-  await activateHardwareStore()
+  await activateGraphicsHardwareStore()
 }
 
 function releaseStore() {
   if (!subscribed.value) return
 
-  deactivateHardwareStore()
+  deactivateGraphicsHardwareStore()
   subscribed.value = false
 }
 
@@ -863,7 +867,7 @@ onUnmounted(() => {
   place-items: center;
   min-height: 320px;
   border: 1px solid var(--panel-border);
-  border-radius: 18px;
+  border-radius: var(--surface-radius);
   background: linear-gradient(180deg, rgba(19, 28, 40, 0.94), rgba(16, 24, 35, 0.96));
   color: var(--text-muted);
   font-size: 15px;
@@ -881,7 +885,7 @@ onUnmounted(() => {
 .graphics-panel,
 .platform-panel {
   border: 1px solid var(--panel-border);
-  border-radius: 16px;
+  border-radius: var(--surface-radius);
   background:
     linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
     radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
@@ -889,7 +893,7 @@ onUnmounted(() => {
 }
 
 .hero-card {
-  padding: 18px 20px 16px;
+  padding: var(--surface-padding);
 }
 
 .hero-card__head {
@@ -906,9 +910,9 @@ onUnmounted(() => {
   min-height: 82px;
   padding: 12px 10px;
   border-radius: 14px;
-  background: linear-gradient(160deg, rgba(83, 201, 42, 0.92), rgba(29, 82, 22, 0.88));
-  color: #f2f9ec;
-  box-shadow: 0 18px 36px rgba(14, 50, 10, 0.32);
+  background: linear-gradient(160deg, rgba(69, 181, 255, 0.94), rgba(35, 79, 162, 0.9));
+  color: var(--text-primary);
+  box-shadow: 0 18px 36px rgba(13, 39, 80, 0.28);
   overflow: hidden;
 
   span {
@@ -1029,7 +1033,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 12px 14px;
-  padding: 18px 20px 16px;
+  padding: var(--surface-padding);
 }
 
 .health-card__badge {
@@ -1040,7 +1044,7 @@ onUnmounted(() => {
 .health-card__copy {
   h3 {
     margin: 0;
-    color: #eef4ff;
+    color: var(--text-primary);
     font-size: 18px;
     font-weight: 700;
   }
@@ -1073,7 +1077,7 @@ onUnmounted(() => {
   }
 
   strong {
-    color: #f7f9fd;
+    color: var(--text-primary);
     font-size: 18px;
     font-weight: 700;
   }
@@ -1092,7 +1096,7 @@ onUnmounted(() => {
 
 .monitor-panel,
 .platform-panel {
-  padding: 16px 18px 18px;
+  padding: var(--surface-padding);
 }
 
 .panel-title,
@@ -1100,13 +1104,13 @@ onUnmounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: var(--surface-heading-gap);
+  margin-bottom: var(--surface-heading-margin);
 
   h3 {
     margin: 0;
-    color: #f4f7fd;
-    font-size: 16px;
+    color: var(--text-primary);
+    font-size: var(--surface-title-size);
     font-weight: 700;
   }
 
@@ -1125,12 +1129,12 @@ onUnmounted(() => {
 }
 
 .panel-action {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 14px;
-  border: 1px solid rgba(84, 104, 132, 0.34);
-  border-radius: 10px;
-  background: rgba(20, 29, 42, 0.7);
-  color: #e7eefb;
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  color: var(--control-fg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1155,7 +1159,7 @@ onUnmounted(() => {
 }
 
 .monitor-card__label {
-  color: #e5ebf6;
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   text-align: center;
@@ -1181,7 +1185,7 @@ onUnmounted(() => {
   background: rgba(17, 25, 36, 0.96);
 
   strong {
-    color: #f5f7fb;
+    color: var(--text-primary);
     font-size: 16px;
     font-weight: 700;
   }
@@ -1218,7 +1222,7 @@ onUnmounted(() => {
 
 .graphics-panel {
   min-height: 0;
-  padding: 16px 18px 18px;
+  padding: var(--surface-padding);
 }
 
 .stat-table {
@@ -1248,7 +1252,7 @@ onUnmounted(() => {
   }
 
   span {
-    color: #f3f6fb;
+    color: var(--text-primary);
     font-size: 15px;
     font-weight: 700;
   }
@@ -1293,28 +1297,31 @@ onUnmounted(() => {
 
 .status-pill {
   justify-self: start;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(37, 49, 67, 0.8);
-  color: var(--text-muted);
+  min-height: var(--pill-height);
+  padding: 0 10px;
+  border-radius: var(--pill-radius);
+  background: var(--state-neutral-bg);
+  color: var(--state-neutral-fg);
   font-style: normal;
   font-size: 12px;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
 }
 
 .status-pill--good {
-  background: rgba(45, 90, 34, 0.42);
-  color: #8fda69;
+  background: var(--state-good-bg);
+  color: var(--state-good-fg);
 }
 
 .status-pill--warn {
-  background: rgba(101, 63, 26, 0.44);
-  color: #ffc36a;
+  background: var(--state-warn-bg);
+  color: var(--state-warn-fg);
 }
 
 .status-pill--normal {
-  background: rgba(37, 49, 67, 0.8);
-  color: var(--text-muted);
+  background: var(--state-neutral-bg);
+  color: var(--state-neutral-fg);
 }
 
 .port-grid {
@@ -1334,7 +1341,7 @@ onUnmounted(() => {
   background: rgba(18, 29, 44, 0.72);
 
   strong {
-    color: #f3f6fb;
+    color: var(--text-primary);
     font-size: 13px;
     font-weight: 700;
   }
@@ -1349,7 +1356,7 @@ onUnmounted(() => {
   border-color: rgba(84, 211, 88, 0.28);
 
   span {
-    color: #8fda69;
+    color: var(--accent-green);
   }
 }
 

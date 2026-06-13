@@ -25,10 +25,15 @@ const MAC_POWERMETRICS_HELPER_BINARY_PATH = `${MAC_POWERMETRICS_HELPER_INSTALL_D
 const MAC_POWERMETRICS_HELPER_PLIST_PATH = `/Library/LaunchDaemons/${MAC_POWERMETRICS_HELPER_LABEL}.plist`
 const MAC_POWERMETRICS_HELPER_SOCKET_PATH = '/var/run/hwinfox-powermetrics-helper.sock'
 const HARDWARE_SENSOR_SETTINGS_STORAGE_KEY = 'hardwareSensorSettings'
+const MONITORING_REFRESH_SETTINGS_STORAGE_KEY = 'monitoringRefreshSettings'
 const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
   enhancedSensorEnabled: false,
   openHardwareMonitorAutoStart: false,
   openHardwareMonitorPort: 18085,
+}
+const DEFAULT_MONITORING_REFRESH_SETTINGS = {
+  profile: 'balanced',
+  backgroundThrottleEnabled: true,
 }
 const OPEN_HARDWARE_MONITOR_PROCESS_NAME = 'OpenHardwareMonitor.exe'
 const OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS = 1500
@@ -549,6 +554,42 @@ function writeHardwareSensorSettingsRaw(value) {
   }
 }
 
+function readMonitoringRefreshSettingsRaw() {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.getItem) {
+    return storage.getItem(MONITORING_REFRESH_SETTINGS_STORAGE_KEY)
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const value = localStorage.getItem(MONITORING_REFRESH_SETTINGS_STORAGE_KEY)
+      return value ? JSON.parse(value) : null
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+function writeMonitoringRefreshSettingsRaw(value) {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.setItem) {
+    storage.setItem(MONITORING_REFRESH_SETTINGS_STORAGE_KEY, value)
+    return
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MONITORING_REFRESH_SETTINGS_STORAGE_KEY, JSON.stringify(value))
+    } catch {
+      // ignore storage fallback failures
+    }
+  }
+}
+
 function normalizeHardwareSensorSettings(input) {
   const portCandidate = Number(input?.openHardwareMonitorPort)
   const port = Number.isInteger(portCandidate) && portCandidate >= 1 && portCandidate <= 65535
@@ -562,6 +603,20 @@ function normalizeHardwareSensorSettings(input) {
   }
 }
 
+function normalizeMonitoringRefreshSettings(input) {
+  const profile = input?.profile === 'eco' || input?.profile === 'balanced' || input?.profile === 'realtime'
+    ? input.profile
+    : DEFAULT_MONITORING_REFRESH_SETTINGS.profile
+
+  return {
+    profile,
+    backgroundThrottleEnabled:
+      typeof input?.backgroundThrottleEnabled === 'boolean'
+        ? input.backgroundThrottleEnabled
+        : DEFAULT_MONITORING_REFRESH_SETTINGS.backgroundThrottleEnabled,
+  }
+}
+
 function getHardwareSensorSettings() {
   if (!isWindows()) {
     return normalizeHardwareSensorSettings(getDefaultHardwareSensorSettings())
@@ -571,6 +626,10 @@ function getHardwareSensorSettings() {
     ...getDefaultHardwareSensorSettings(),
     ...(readHardwareSensorSettingsRaw() || {}),
   })
+}
+
+function getMonitoringRefreshSettings() {
+  return normalizeMonitoringRefreshSettings(readMonitoringRefreshSettingsRaw() || {})
 }
 
 async function stopPluginManagedOpenHardwareMonitor() {
@@ -628,6 +687,15 @@ async function updateHardwareSensorSettings(patch = {}) {
     await stopPluginManagedOpenHardwareMonitor()
   }
 
+  return next
+}
+
+function updateMonitoringRefreshSettings(patch = {}) {
+  const next = normalizeMonitoringRefreshSettings({
+    ...getMonitoringRefreshSettings(),
+    ...patch,
+  })
+  writeMonitoringRefreshSettingsRaw(next)
   return next
 }
 
@@ -2328,6 +2396,10 @@ export const systemService = {
   getHardwareSensorSettings: async () => getHardwareSensorSettings(),
 
   updateHardwareSensorSettings: async (patch) => updateHardwareSensorSettings(patch),
+
+  getMonitoringRefreshSettings: async () => getMonitoringRefreshSettings(),
+
+  updateMonitoringRefreshSettings: async (patch) => updateMonitoringRefreshSettings(patch),
 
   getOpenHardwareMonitorStatus,
 

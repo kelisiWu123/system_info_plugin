@@ -2,6 +2,13 @@
 import { Chip, HardDisk, Memory, Signal } from '@icon-park/vue-next'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
+import {
+  filterBoardReportRows,
+  getBoardDisplayName,
+  getBoardMemorySlotLabel,
+  inferBoardChipsetName,
+} from '../../utils/board'
+import { selectPrimaryGpu } from '../../utils/gpu'
 import { bytesToGB, formatBytes } from '../../utils'
 
 const props = defineProps<{
@@ -30,6 +37,9 @@ const {
 
 const activeTab = ref<BoardTabKey>('slots')
 const subscribed = ref(false)
+const boardPrimaryGpu = ref<GpuData>()
+const boardGpuSnapshotLoading = ref(false)
+const boardGpuSnapshotLoaded = ref(false)
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -46,15 +56,13 @@ function formatDate(value?: string) {
   return cleanText(value) || '--'
 }
 
-function normalizeModelToken(token: string) {
-  return token.replace(/[-_]/g, '').toUpperCase()
-}
-
 function inferChipset() {
-  const model = cleanText(boardData.value?.model)
-  const match = model.match(/(Z\d{3,4}|B\d{3,4}|H\d{3,4}|X\d{3,4}E?|TRX\d{2,3}|A\d{3}|Q\d{3}|W\d{3})/i)
-  if (match) return normalizeModelToken(match[1])
-  return cleanText(cpuData.value?.family) || '--'
+  return inferBoardChipsetName({
+    platform: osInfo.value?.platform,
+    boardModel: boardData.value?.model,
+    cpuFamily: cpuData.value?.family,
+    cpuSocket: cpuData.value?.socket,
+  })
 }
 
 function inferVendorWebsite() {
@@ -80,7 +88,12 @@ function buildMemorySlots() {
   const slotCount = boardData.value?.memSlots && boardData.value.memSlots > 0 ? boardData.value.memSlots : actualSlots
   return Array.from({ length: slotCount }, (_, index) => {
     const item = memoLayoutData.value[index]
-    const bank = cleanText(item?.bank) || `DIMM_${String.fromCharCode(65 + Math.floor(index / 2))}${(index % 2) + 1}`
+    const bank = getBoardMemorySlotLabel({
+      platform: osInfo.value?.platform,
+      bank: item?.bank,
+      index,
+      totalSlots: slotCount,
+    })
     return {
       bank,
       type: cleanText(item?.type) || cleanText(memoLayoutData.value[0]?.type) || '--',
@@ -91,10 +104,13 @@ function buildMemorySlots() {
 }
 
 function formatBoardMissingState() {
-  if (loading.value) return '主板信息读取中'
-  const platform = cleanText(osInfo.value?.platform).toLowerCase()
-  if (platform === 'darwin') return '当前平台未提供主板型号'
-  return '未识别主板信息'
+  return getBoardDisplayName({
+    platform: osInfo.value?.platform,
+    loading: loading.value,
+    boardManufacturer: '',
+    boardModel: '',
+    biosVendor: biosData.value?.vendor,
+  })
 }
 
 function makePlaceholderRows(message: string): BoardListRow[] {
@@ -120,7 +136,16 @@ async function writeClipboard(text: string) {
   if (!copied) throw new Error('execCommand copy failed')
 }
 
-const boardName = computed(() => joinParts([boardData.value?.manufacturer, boardData.value?.model]) || formatBoardMissingState())
+const isDarwinPlatform = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
+const boardName = computed(() =>
+  getBoardDisplayName({
+    platform: osInfo.value?.platform,
+    loading: loading.value,
+    boardManufacturer: boardData.value?.manufacturer,
+    boardModel: boardData.value?.model,
+    biosVendor: biosData.value?.vendor,
+  }) || formatBoardMissingState()
+)
 const chipsetName = computed(() => inferChipset())
 const memorySlots = computed(() => buildMemorySlots())
 const installedMemoryModules = computed(() => memoLayoutData.value.filter((item) => item.size > 0))
@@ -129,19 +154,19 @@ const reportedMemorySlotCount = computed(() => Math.max(0, boardData.value?.memS
 const inferredMemorySlotCount = computed(() => memoLayoutData.value.length)
 const memorySlotTotal = computed(() => (reportedMemorySlotCount.value > 0 ? reportedMemorySlotCount.value : inferredMemorySlotCount.value))
 const maxMemoryClock = computed(() => Math.max(0, ...memoLayoutData.value.map((item) => item.clockSpeed || 0)))
-const primaryGpu = computed(() => hardwareStore.primaryGpu.value)
-
-const heroSpecs = computed(() => [
-  { label: '厂商', value: cleanText(boardData.value?.manufacturer) || '--' },
-  { label: '芯片组', value: chipsetName.value },
-  { label: '插槽', value: cleanText(cpuData.value?.socket) || '--' },
-  { label: '发布日期', value: formatDate(biosData.value?.releaseDate) },
-  { label: 'PCB 版本', value: cleanText(boardData.value?.version) || '--' },
-  { label: 'BIOS 版本', value: cleanText(biosData.value?.version) || '--' },
-  { label: '内存上限', value: boardData.value?.memMax ? formatBytes(boardData.value.memMax) : '--' },
-  { label: '插槽数量', value: `${memorySlotTotal.value || 0} 个` },
-  { label: '固件模式', value: cleanText(biosData.value?.vendor) ? 'UEFI / Legacy 兼容' : '--' },
-])
+const heroSpecs = computed(() =>
+  filterBoardReportRows([
+    { label: '厂商', value: cleanText(boardData.value?.manufacturer) || '--' },
+    { label: '芯片组', value: chipsetName.value },
+    { label: '插槽', value: cleanText(cpuData.value?.socket) || '--' },
+    { label: '发布日期', value: formatDate(biosData.value?.releaseDate) },
+    { label: 'PCB 版本', value: cleanText(boardData.value?.version) || '--' },
+    { label: 'BIOS 版本', value: cleanText(biosData.value?.version) || '--' },
+    { label: '内存上限', value: boardData.value?.memMax ? formatBytes(boardData.value.memMax) : '--' },
+    { label: '插槽数量', value: `${memorySlotTotal.value || 0} 个` },
+    { label: '固件模式', value: cleanText(biosData.value?.vendor) ? (isDarwinPlatform.value ? 'Apple 平台固件' : 'UEFI / Legacy 兼容') : '--' },
+  ])
+)
 
 const boardTabs = [
   { id: 'slots' as const, label: '扩展插槽', icon: Chip },
@@ -153,11 +178,11 @@ const boardTabs = [
 const tabRows = computed<Record<BoardTabKey, BoardListRow[]>>(() => {
   const slotRows: BoardListRow[] = []
 
-  if (primaryGpu.value) {
+  if (boardPrimaryGpu.value) {
     slotRows.push({
       label: '主显卡插槽',
-      primary: primaryGpu.value.bus || 'PCIe',
-      secondary: joinParts([primaryGpu.value.pciBus, primaryGpu.value.model || primaryGpu.value.name], ' / '),
+      primary: boardPrimaryGpu.value.bus || 'PCIe',
+      secondary: joinParts([boardPrimaryGpu.value.pciBus, boardPrimaryGpu.value.model || boardPrimaryGpu.value.name], ' / '),
     })
   }
 
@@ -218,21 +243,25 @@ const memorySpecRows = computed(() => [
   { label: '当前频率', value: maxMemoryClock.value ? `${maxMemoryClock.value} MHz` : '--' },
 ])
 
-const biosRows = computed(() => [
-  { label: 'BIOS 厂商', value: cleanText(biosData.value?.vendor) || '--' },
-  { label: 'BIOS 版本', value: cleanText(biosData.value?.version) || '--' },
-  { label: 'BIOS 日期', value: formatDate(biosData.value?.releaseDate) },
-  { label: '修订版本', value: cleanText(biosData.value?.revision) || '--' },
-  { label: '固件语言', value: cleanText(biosData.value?.language) || '--' },
-])
+const biosRows = computed(() =>
+  filterBoardReportRows([
+    { label: 'BIOS 厂商', value: cleanText(biosData.value?.vendor) || '--' },
+    { label: 'BIOS 版本', value: cleanText(biosData.value?.version) || '--' },
+    { label: 'BIOS 日期', value: formatDate(biosData.value?.releaseDate) },
+    { label: '修订版本', value: cleanText(biosData.value?.revision) || '--' },
+    { label: '固件语言', value: cleanText(biosData.value?.language) || '--' },
+  ])
+)
 
-const chipsetRows = computed(() => [
-  { label: '主板芯片组', value: chipsetName.value },
-  { label: 'CPU 插槽', value: cleanText(cpuData.value?.socket) || '--' },
-  { label: 'PCB 版本', value: cleanText(boardData.value?.version) || '--' },
-  { label: '默认网卡', value: cleanText(networkInterfaces.value.find((item) => item.default)?.ifaceName) || cleanText(networkInterfaces.value[0]?.ifaceName) || '--' },
-  { label: '默认音频', value: cleanText(audioDevices.value.find((item) => item.default)?.name) || cleanText(audioDevices.value[0]?.name) || '--' },
-])
+const chipsetRows = computed(() =>
+  filterBoardReportRows([
+    { label: '主板芯片组', value: chipsetName.value },
+    { label: 'CPU 插槽', value: cleanText(cpuData.value?.socket) || '--' },
+    { label: 'PCB 版本', value: cleanText(boardData.value?.version) || '--' },
+    { label: '默认网卡', value: cleanText(networkInterfaces.value.find((item) => item.default)?.ifaceName) || cleanText(networkInterfaces.value[0]?.ifaceName) || '--' },
+    { label: '默认音频', value: cleanText(audioDevices.value.find((item) => item.default)?.name) || cleanText(audioDevices.value[0]?.name) || '--' },
+  ])
+)
 
 const featureRows = computed(() => {
   const features = [
@@ -247,13 +276,15 @@ const featureRows = computed(() => {
   return features.length ? features.slice(0, 5) : ['当前机器未返回可展示的主板特性']
 })
 
-const manufacturingRows = computed(() => [
-  { label: '制造商', value: cleanText(boardData.value?.manufacturer) || '--' },
-  { label: '官方网站', value: inferVendorWebsite() },
-  { label: '产品序列号', value: cleanText(boardData.value?.serial) || cleanText(biosData.value?.serial) || '--' },
-  { label: '资产标签', value: cleanText(boardData.value?.assetTag) || '--' },
-  { label: '操作系统', value: joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release, osInfo.value?.arch]) || '--' },
-])
+const manufacturingRows = computed(() =>
+  filterBoardReportRows([
+    { label: '制造商', value: cleanText(boardData.value?.manufacturer) || '--' },
+    { label: '官方网站', value: inferVendorWebsite() },
+    { label: '产品序列号', value: cleanText(boardData.value?.serial) || cleanText(biosData.value?.serial) || '--' },
+    { label: '资产标签', value: cleanText(boardData.value?.assetTag) || '--' },
+    { label: '操作系统', value: joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release, osInfo.value?.arch]) || '--' },
+  ])
+)
 
 const boardReportText = computed(() => {
   const lines = [
@@ -266,8 +297,7 @@ const boardReportText = computed(() => {
     `BIOS：${joinParts([biosData.value?.vendor, biosData.value?.version, biosData.value?.releaseDate], ' / ') || '--'}`,
     '',
     ...memorySlots.value.map((item) => `${item.bank}：${item.status}`),
-    '',
-    ...manufacturingRows.value.map((item) => `${item.label}：${item.value}`),
+    ...(manufacturingRows.value.length ? ['', ...manufacturingRows.value.map((item) => `${item.label}：${item.value}`)] : []),
   ]
 
   return lines.join('\n')
@@ -298,15 +328,32 @@ defineExpose({
   copyBoardInfo,
 })
 
+async function ensureBoardGpuSnapshot() {
+  if (boardGpuSnapshotLoaded.value || boardGpuSnapshotLoading.value) return
+
+  boardGpuSnapshotLoading.value = true
+
+  try {
+    const gpuData = await window.services.getGpuInfo()
+    boardPrimaryGpu.value = selectPrimaryGpu(gpuData || [])
+    boardGpuSnapshotLoaded.value = true
+  } catch (error) {
+    console.error('读取主板页显卡插槽摘要失败:', error)
+  } finally {
+    boardGpuSnapshotLoading.value = false
+  }
+}
+
 async function ensureStoreActive() {
   if (subscribed.value) return
   subscribed.value = true
-  await activateHardwareStore()
+  await activateHardwareStore('board')
+  await ensureBoardGpuSnapshot()
 }
 
 function releaseStore() {
   if (!subscribed.value) return
-  deactivateHardwareStore()
+  deactivateHardwareStore('board')
   subscribed.value = false
 }
 
@@ -521,18 +568,16 @@ onUnmounted(() => {
 .hero-card,
 .board-panel,
 .board-manufacturing {
-  border: 1px solid rgba(84, 104, 132, 0.2);
-  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--surface-radius);
   background:
-    linear-gradient(180deg, rgba(26, 36, 50, 0.96), rgba(19, 28, 41, 0.94)),
-    radial-gradient(circle at top right, rgba(74, 126, 255, 0.12), transparent 34%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 18px 34px rgba(5, 10, 18, 0.16);
+    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
+    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  box-shadow: var(--panel-shadow);
 }
 
 .hero-card {
-  padding: 18px 20px 18px;
+  padding: var(--surface-padding);
 }
 
 .hero-card__head {
@@ -542,14 +587,15 @@ onUnmounted(() => {
 .hero-card__title {
   h2 {
     margin: 0;
-    color: #f3f7fd;
-    font-size: 20px;
+    color: var(--text-primary);
+    font-size: 22px;
     font-weight: 700;
-    line-height: 1.25;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
   }
 
   p {
-    margin: 8px 0 0;
+    margin: 0;
     color: var(--text-muted);
     font-size: 14px;
   }
@@ -558,9 +604,7 @@ onUnmounted(() => {
 .hero-specs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0 14px;
   margin-top: 18px;
-  padding-top: 14px;
   border-top: 1px solid rgba(86, 101, 126, 0.18);
 }
 
@@ -568,7 +612,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 0 10px;
+  padding: 14px 12px 10px 0;
+  border-bottom: 1px solid rgba(86, 101, 126, 0.12);
 
   span {
     color: var(--text-subtle);
@@ -576,7 +621,7 @@ onUnmounted(() => {
   }
 
   strong {
-    color: #f5f8fd;
+    color: var(--text-primary);
     font-size: 15px;
     font-weight: 700;
   }
@@ -584,7 +629,7 @@ onUnmounted(() => {
 
 .board-panel,
 .board-manufacturing {
-  padding: 16px 18px 18px;
+  padding: var(--surface-padding);
 }
 
 .board-panel--wide {
@@ -595,13 +640,13 @@ onUnmounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: var(--surface-heading-gap);
+  margin-bottom: var(--surface-heading-margin);
 
   h3 {
     margin: 0;
-    color: #f4f7fd;
-    font-size: 16px;
+    color: var(--text-primary);
+    font-size: var(--surface-title-size);
     font-weight: 700;
   }
 
@@ -629,22 +674,22 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
+  min-height: var(--control-height);
   padding: 0 14px;
-  border: 1px solid rgba(84, 104, 132, 0.24);
-  border-radius: 12px;
-  background: rgba(18, 29, 44, 0.62);
-  color: var(--text-muted);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  color: var(--control-fg);
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
 }
 
 .board-tab--active {
-  border-color: rgba(67, 133, 255, 0.34);
-  background: rgba(28, 52, 84, 0.68);
-  color: #f5f9ff;
-  box-shadow: inset 0 -2px 0 #3fa7ff;
+  border-color: var(--control-active-border);
+  background: var(--control-active-bg);
+  color: var(--control-fg-strong);
+  box-shadow: var(--control-active-shadow);
 }
 
 .board-panel__body--split {
@@ -696,7 +741,7 @@ onUnmounted(() => {
   position: relative;
   width: 188px;
   height: 270px;
-  border-radius: 18px;
+  border-radius: var(--surface-radius);
   border: 1px solid rgba(124, 144, 173, 0.22);
   background:
     linear-gradient(180deg, rgba(17, 24, 35, 0.94), rgba(13, 20, 30, 0.96)),
@@ -766,7 +811,7 @@ onUnmounted(() => {
 }
 
 .memory-slot--filled em {
-  color: #eef3fb;
+  color: var(--text-primary);
 }
 
 .detail-spec {
@@ -805,7 +850,7 @@ onUnmounted(() => {
   width: 10px;
   height: 10px;
   border-radius: 999px;
-  background: #8fd86a;
+  background: var(--accent-green);
   box-shadow: 0 0 0 3px rgba(90, 155, 57, 0.18);
 }
 

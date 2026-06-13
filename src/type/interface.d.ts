@@ -113,6 +113,10 @@ declare global {
     openHardwareMonitorAutoStart: boolean
     openHardwareMonitorPort: number
   }
+  interface MonitoringRefreshSettingsData {
+    profile: 'eco' | 'balanced' | 'realtime'
+    backgroundThrottleEnabled: boolean
+  }
   interface OpenHardwareMonitorStatusData {
     platform: 'win32' | 'other'
     settings: HardwareSensorSettingsData
@@ -231,6 +235,8 @@ declare global {
     services: {
       getHardwareSensorSettings: () => Promise<HardwareSensorSettingsData>
       updateHardwareSensorSettings: (patch: Partial<HardwareSensorSettingsData>) => Promise<HardwareSensorSettingsData>
+      getMonitoringRefreshSettings: () => Promise<MonitoringRefreshSettingsData>
+      updateMonitoringRefreshSettings: (patch: Partial<MonitoringRefreshSettingsData>) => Promise<MonitoringRefreshSettingsData>
       getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>
       startOpenHardwareMonitor: () => Promise<OpenHardwareMonitorStatusData>
       openOpenHardwareMonitorDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>

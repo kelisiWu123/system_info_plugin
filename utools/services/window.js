@@ -1,6 +1,8 @@
 const { ipcRenderer } = require('electron')
+import { resolveUtoolsRuntime } from '../runtime'
 
 let parentWindowId
+const runtimeUtools = resolveUtoolsRuntime(typeof utools !== 'undefined' ? utools : undefined)
 
 function isDevMode() {
   return typeof process !== 'undefined' && process.env.NODE_ENV === 'development'
@@ -115,12 +117,19 @@ export const windowService = {
 
   createWindow: (fileName, height = 300, width = 300, backgroundColor = 0.3) => {
     const isWatchWindow = ['a_watch', 'watch'].includes(fileName)
-    const windowUrl = utools.isDev()
+    const windowHash = isWatchWindow ? 'watch' : 'computer'
+    const windowUrl = runtimeUtools.isDev()
       ? `http://localhost:9000/index.html#${isWatchWindow ? 'watch' : 'computer'}`
       : isWatchWindow
         ? 'watch.html'
         : 'computer.html'
-    const childWindow = utools.createBrowserWindow(
+
+    if (typeof runtimeUtools.createBrowserWindow !== 'function') {
+      ipcRenderer.invoke('createChildWindow', windowHash)
+      return
+    }
+
+    const childWindow = runtimeUtools.createBrowserWindow(
       windowUrl,
       {
         title: 'system info',

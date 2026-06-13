@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { Chip, Cpu, GraphicDesign, Memory } from '@icon-park/vue-next'
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { activateHardwareStore, deactivateHardwareStore, hardwareStore, overviewServiceLabels, type OverviewServiceKey } from '../../composables/useHardwareData'
+import { graphicsHardwareStore } from '../../composables/useGraphicsHardwareData'
+import { processorHardwareStore } from '../../composables/useProcessorHardwareData'
+import {
+  activateOverviewHardwareStore,
+  deactivateOverviewHardwareStore,
+  overviewHardwareStore,
+  overviewLiteServiceLabels,
+  type OverviewLiteServiceKey,
+} from '../../composables/useOverviewHardwareData'
+import { hardwareStore } from '../../composables/useHardwareData'
 import {
   bytesToGB,
   clampPercent,
@@ -14,6 +23,16 @@ import {
   getDisplayMemoryUsedBytes,
   getDisplayMemoryUsedLabel,
 } from '../../utils'
+import { splitItemsIntoColumns } from '../../utils/layout'
+import { buildMonitoringDiagnosticsCards } from '../../utils/monitoringDebug'
+import {
+  formatOverviewGpuMemory,
+  getOverviewAudioLines,
+  getOverviewGpuLines,
+  getOverviewNetworkLines,
+  getOverviewStorageLines,
+  normalizeOverviewGpuBus,
+} from '../../utils/overview'
 
 const props = defineProps<{
   active?: boolean
@@ -42,6 +61,39 @@ interface DebugSection {
   items: string[]
 }
 
+const diagnosticsCards = computed(() =>
+  buildMonitoringDiagnosticsCards([
+    {
+      id: 'overview-lite',
+      label: '概览轻量',
+      accent: 'var(--accent-blue)',
+      currentMode: backgroundThrottled.value ? 'background' : 'foreground',
+      diagnostics,
+    },
+    {
+      id: 'shared-detail',
+      label: '共享详情',
+      accent: 'var(--accent-yellow)',
+      currentMode: hardwareStore.backgroundThrottled.value ? 'background' : 'foreground',
+      diagnostics: hardwareStore.diagnostics,
+    },
+    {
+      id: 'processor',
+      label: '处理器详情',
+      accent: 'var(--accent-green)',
+      currentMode: processorHardwareStore.backgroundThrottled.value ? 'background' : 'foreground',
+      diagnostics: processorHardwareStore.diagnostics,
+    },
+    {
+      id: 'graphics',
+      label: '显卡详情',
+      accent: 'var(--accent-purple)',
+      currentMode: graphicsHardwareStore.backgroundThrottled.value ? 'background' : 'foreground',
+      diagnostics: graphicsHardwareStore.diagnostics,
+    },
+  ])
+)
+
 const {
   loading,
   lastSyncedAt,
@@ -50,10 +102,8 @@ const {
   cpuLoad,
   memoData,
   memoLayoutData,
-  gpuData,
   boardData,
   biosData,
-  diskLayoutData,
   diskData,
   displaysData,
   osInfo,
@@ -62,14 +112,18 @@ const {
   networkInterfaces,
   metricHistory,
   fetchState,
+  backgroundThrottled,
+  diagnostics,
   primaryGpu,
   usedMemoPercent,
   storageUsage,
-} = hardwareStore
+} = overviewHardwareStore
 
-const serviceLabels = overviewServiceLabels
+const serviceLabels = overviewLiteServiceLabels
 const subscribed = ref(false)
 const uptimeSeconds = ref(0)
+const diagnosticsExpanded = ref(false)
+const isDev = import.meta.env.DEV
 
 let uptimeTimerId: number | undefined
 
@@ -93,19 +147,12 @@ function formatMemoryModule(item: MemoLayoutData) {
   ])
 }
 
-function formatGpuMemory(gpu?: GpuData) {
-  if (!gpu) return '未检测到显卡信息'
-  const memory = gpu.memoryTotal || gpu.vram || 0
-  if (!memory) return '显存未知'
-  return `${(memory / 1024).toFixed(0)} GB`
-}
-
 function formatBoardTitle() {
   const boardName = joinParts([boardData.value?.manufacturer, boardData.value?.model])
   if (boardName) return boardName
+  if (cleanText(biosData.value?.vendor)) return cleanText(biosData.value?.vendor)
   if (loading.value) return '读取中'
-  const platform = cleanText(osInfo.value?.platform).toLowerCase()
-  if (platform === 'darwin') return '当前平台未提供主板型号'
+  if (isDarwinPlatform.value) return 'Apple 平台固件'
   return '未识别主板信息'
 }
 
@@ -143,34 +190,10 @@ function installedMemoryBytes() {
   return memoLayoutData.value.reduce((sum, item) => sum + (item.size || 0), 0)
 }
 
-function formatGpuLine(item: GpuData) {
-  const memory = item.memoryTotal || item.vram || 0
-  return joinParts([
-    item.model || item.name,
-    memory ? `${(memory / 1024).toFixed(0)} GB` : '',
-    item.bus ? item.bus : '',
-  ], ' / ')
-}
-
-function formatDiskLayoutLine(item: DiskLayoutData) {
-  const model = cleanText(item.name) || cleanText(item.device) || cleanText(item.vendor) || '未知硬盘'
-  const sizeText = item.size > 0 ? formatBytes(item.size) : ''
-  return joinParts([model, sizeText, item.interfaceType], ' / ')
-}
-
 function formatDisplayLine(item: DisplayData) {
   const resolutionText = formatDisplayResolution(item)
   const diagonalText = item.sizeX && item.sizeY ? `${(item.sizeX / 25.4).toFixed(1)}"` : ''
   return joinParts([item.model || item.deviceName, diagonalText, resolutionText === '--' ? '' : resolutionText], ' / ')
-}
-
-function formatAudioLine(item: AudioDeviceData) {
-  return cleanText(item.name) || cleanText(item.manufacturer) || '未知音频设备'
-}
-
-function formatNetworkLine(item: NetworkInterfaceData) {
-  const speedText = item.speed ? `${item.speed} Mbps` : ''
-  return joinParts([cleanText(item.ifaceName) || cleanText(item.iface) || '未知网络接口', speedText], ' / ')
 }
 
 function formatSyncTime(value?: number) {
@@ -254,7 +277,33 @@ function startUptimeTicker() {
 }
 
 const displayList = computed(() => displaysData.value || [])
+const isDarwinPlatform = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
+const overviewAudioLines = computed(() => getOverviewAudioLines(audioDevices.value || []))
+const overviewNetworkLines = computed(() => getOverviewNetworkLines(networkInterfaces.value || []))
+const boardCardLines = computed(() => {
+  const versionPrefix = isDarwinPlatform.value ? '固件' : 'BIOS'
+  const versionLine = biosData.value?.version ? `${versionPrefix} ${biosData.value.version}` : ''
+  const secondaryLine = cleanText(isDarwinPlatform.value ? biosData.value?.releaseDate : biosData.value?.releaseDate || biosData.value?.vendor)
 
+  return [versionLine, secondaryLine]
+    .filter(Boolean)
+    .filter((line, index, list) => list.indexOf(line) === index && line !== formatBoardTitle())
+})
+const memoryStatusLabel = computed(() => (memoData.value.normalizedPlatform === 'darwin' ? '内存压力' : '内存使用率'))
+const memoryStatusValue = computed(() =>
+  memoData.value.normalizedPlatform === 'darwin'
+    ? getMemoryPressureLabel(memoData.value.pressure?.level)
+    : `${Math.round(usedMemoPercent.value)}%`
+)
+const memoryStatusFoot = computed(() => {
+  const usageLine = memoData.value.total
+    ? `${bytesToGB(getDisplayMemoryUsedBytes(memoData.value))} GB / ${bytesToGB(memoData.value.total)} GB`
+    : '等待内存数据'
+
+  if (memoData.value.normalizedPlatform !== 'darwin') return usageLine
+
+  return joinParts([usageLine, `交换 ${bytesToGB(memoData.value.swapused || 0)} GB`], ' · ')
+})
 const gpuLoadPercent = computed(() => clampPercent(primaryGpu.value?.utilizationGpu || 0))
 const cpuTemperatureValue = computed(() => {
   if (typeof cpuTemperature.value?.value === 'number') return cpuTemperature.value.value
@@ -294,8 +343,8 @@ const summaryCards = computed(() => [
     icon: GraphicDesign,
     title: primaryGpu.value?.model || primaryGpu.value?.name || '读取中',
     lines: [
-      formatGpuMemory(primaryGpu.value),
-      primaryGpu.value?.bus ? primaryGpu.value.bus : '',
+      formatOverviewGpuMemory(primaryGpu.value),
+      normalizeOverviewGpuBus(primaryGpu.value?.bus),
     ].filter(Boolean),
   },
   {
@@ -312,10 +361,7 @@ const summaryCards = computed(() => [
     accent: 'var(--accent-yellow)',
     icon: Chip,
     title: formatBoardTitle(),
-    lines: [
-      biosData.value?.version ? `BIOS ${biosData.value.version}` : '',
-      biosData.value?.releaseDate || biosData.value?.vendor || '',
-    ].filter(Boolean),
+    lines: boardCardLines.value,
   },
 ])
 
@@ -361,12 +407,12 @@ const statusCards = computed<MetricCard[]>(() => [
   },
   {
     id: 'memory-usage',
-    label: '内存使用率',
-    value: `${Math.round(usedMemoPercent.value)}%`,
+    label: memoryStatusLabel.value,
+    value: memoryStatusValue.value,
     accent: 'var(--accent-purple)',
     percent: usedMemoPercent.value,
     trend: metricHistory.memoryLoad,
-    footerCenter: memoData.value.total ? `${bytesToGB(getDisplayMemoryUsedBytes(memoData.value))} GB / ${bytesToGB(memoData.value.total)} GB` : '等待内存数据',
+    footerCenter: memoryStatusFoot.value,
   },
   {
     id: 'storage-usage',
@@ -382,6 +428,7 @@ const statusCards = computed<MetricCard[]>(() => [
 ])
 
 const detailRows = computed<DetailRow[]>(() => {
+  const boardLine = joinParts([boardData.value?.manufacturer, boardData.value?.model])
   const rows: DetailRow[] = [
   {
     id: 'system',
@@ -393,11 +440,13 @@ const detailRows = computed<DetailRow[]>(() => {
     label: '运行时间',
     lines: [formatUptime(uptimeSeconds.value || timeInfo.value?.uptime || 0)],
   },
-  {
-    id: 'board',
-    label: '主板',
-    lines: [joinParts([boardData.value?.manufacturer, boardData.value?.model])],
-  },
+  ...(boardLine
+    ? [{
+        id: 'board',
+        label: '主板',
+        lines: [boardLine],
+      }]
+    : []),
   {
     id: 'display',
     label: '显示器',
@@ -424,22 +473,22 @@ const detailRows = computed<DetailRow[]>(() => {
   {
     id: 'graphics',
     label: '显卡',
-    lines: gpuData.value.map(formatGpuLine),
+    lines: getOverviewGpuLines(primaryGpu.value),
   },
   {
     id: 'storage',
     label: '存储',
-    lines: diskLayoutData.value.map(formatDiskLayoutLine),
+    lines: getOverviewStorageLines(storageUsage.value),
   },
   {
     id: 'audio',
     label: '音频',
-    lines: audioDevices.value.map(formatAudioLine),
+    lines: overviewAudioLines.value,
   },
   {
     id: 'network',
     label: '网络',
-    lines: networkInterfaces.value.filter((item) => !item.internal).map(formatNetworkLine),
+    lines: overviewNetworkLines.value,
   },
   ]
 
@@ -449,13 +498,12 @@ const detailRows = computed<DetailRow[]>(() => {
   }))
 })
 
-const detailRowsLeft = computed(() => detailRows.value.filter((_, index) => index % 2 === 0))
-const detailRowsRight = computed(() => detailRows.value.filter((_, index) => index % 2 === 1))
+const detailRowColumns = computed(() => splitItemsIntoColumns(detailRows.value, 3))
 
 const missingDebugSections = computed<DebugSection[]>(() => {
   const sections: DebugSection[] = []
 
-  const serviceItems = (Object.keys(serviceLabels) as OverviewServiceKey[])
+  const serviceItems = (Object.keys(serviceLabels) as OverviewLiteServiceKey[])
     .filter((key) => fetchState[key].status !== 'ok')
     .map((key) => {
       const state = fetchState[key]
@@ -491,7 +539,6 @@ const missingDebugSections = computed<DebugSection[]>(() => {
   if (!boardData.value?.model) fieldItems.push('主板型号')
   if (!biosData.value?.version) fieldItems.push('BIOS 版本')
   if (!displayList.value.length) fieldItems.push('显示器信息')
-  if (!diskLayoutData.value.length) fieldItems.push('磁盘硬件信息')
   if (!diskData.value.length) fieldItems.push('磁盘占用信息')
   if (!audioDevices.value.length) fieldItems.push('音频设备')
   if (!networkInterfaces.value.some((item) => !item.internal)) fieldItems.push('外部网络接口')
@@ -529,12 +576,32 @@ const missingDebugText = computed(() => {
   return [...header, ...body].join('\n').trim()
 })
 
+const monitoringDiagnosticsText = computed(() => {
+  return [
+    '监控刷新诊断报告',
+    `生成时间: ${new Date().toLocaleString('zh-CN')}`,
+    '',
+    ...diagnosticsCards.value.flatMap((card) => [
+      `[${card.label}]`,
+      `状态: ${card.statusLabel}`,
+      card.currentModeLabel,
+      card.lastRefreshModeLabel,
+      card.summaryLine,
+      card.subscriberLine,
+      card.trafficLine,
+      card.lastSkipLine,
+      card.lastRefreshLine,
+      '',
+    ]),
+  ].join('\n').trim()
+})
+
 const syncLabel = computed(() => {
   if (loading.value) return '同步中'
   return `已同步 ${formatSyncTime(lastSyncedAt.value)}`
 })
 
-function exportReport() {
+const overviewReportText = computed(() => {
   const reportLines = [
     '系统概览报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
@@ -546,7 +613,11 @@ function exportReport() {
     ...detailRows.value.map((row) => `${row.label}：${row.lines.join('；')}`),
   ]
 
-  const blob = new Blob([reportLines.join('\n')], { type: 'text/plain;charset=utf-8' })
+  return reportLines.join('\n')
+})
+
+function exportReport() {
+  const blob = new Blob([overviewReportText.value], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -565,9 +636,31 @@ async function copyMissingParams() {
   }
 }
 
+async function copyMonitoringDiagnostics() {
+  try {
+    await writeClipboard(monitoringDiagnosticsText.value)
+    return true
+  } catch (error) {
+    console.error('复制监控诊断失败:', error)
+    return false
+  }
+}
+
+async function copyOverviewInfo() {
+  try {
+    await writeClipboard(overviewReportText.value)
+    return true
+  } catch (error) {
+    console.error('复制系统概览失败:', error)
+    return false
+  }
+}
+
 defineExpose({
   exportReport,
+  copyOverviewInfo,
   copyMissingParams,
+  copyMonitoringDiagnostics,
 })
 
 function stopUptimeTicker() {
@@ -581,12 +674,12 @@ async function ensureStoreActive() {
   if (subscribed.value) return
 
   subscribed.value = true
-  await activateHardwareStore()
+  await activateOverviewHardwareStore()
 }
 
 function releaseStore() {
   if (subscribed.value) {
-    deactivateHardwareStore()
+    deactivateOverviewHardwareStore()
     subscribed.value = false
   }
 
@@ -666,23 +759,57 @@ onUnmounted(() => {
           </div>
         </section>
 
+        <section v-if="isDev" class="diagnostics-panel">
+          <div class="panel-heading panel-heading--actions">
+            <div>
+              <h3>开发态刷新诊断</h3>
+              <span>仅开发环境显示，默认折叠</span>
+            </div>
+
+            <div class="diagnostics-actions">
+              <button type="button" class="diagnostics-action" @click="copyMonitoringDiagnostics()">
+                复制报告
+              </button>
+              <button
+                type="button"
+                :class="['diagnostics-action', { 'diagnostics-action--active': diagnosticsExpanded }]"
+                @click="diagnosticsExpanded = !diagnosticsExpanded"
+              >
+                {{ diagnosticsExpanded ? '收起' : '展开' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="diagnosticsExpanded" class="diagnostics-grid">
+            <article v-for="card in diagnosticsCards" :key="card.id" class="diagnostics-card">
+              <div class="diagnostics-card__header">
+                <div class="diagnostics-card__title">
+                  <strong>{{ card.label }}</strong>
+                  <span>{{ card.statusLabel }}</span>
+                </div>
+                <i :style="{ background: card.accent }"></i>
+              </div>
+
+              <div class="diagnostics-card__summary">{{ card.summaryLine }}</div>
+              <div class="diagnostics-card__line">{{ card.currentModeLabel }}</div>
+              <div class="diagnostics-card__line">{{ card.lastRefreshModeLabel }}</div>
+              <div class="diagnostics-card__line">{{ card.subscriberLine }}</div>
+              <div class="diagnostics-card__line">{{ card.trafficLine }}</div>
+              <div class="diagnostics-card__line">{{ card.lastSkipLine }}</div>
+              <div class="diagnostics-card__line">{{ card.lastRefreshLine }}</div>
+            </article>
+          </div>
+        </section>
+
         <section class="detail-panel">
           <div class="panel-heading">
             <h3>详细信息</h3>
+            <span>首屏优先展示常用摘要</span>
           </div>
 
           <div class="detail-grid">
-            <div class="detail-column">
-              <div v-for="row in detailRowsLeft" :id="`section-${row.id}`" :key="row.label" class="detail-row">
-                <div class="detail-row__label">{{ row.label }}</div>
-                <div class="detail-row__value">
-                  <div v-for="line in row.lines" :key="line" class="detail-row__line">{{ line }}</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="detail-column">
-              <div v-for="row in detailRowsRight" :id="`section-${row.id}`" :key="row.label" class="detail-row">
+            <div v-for="(column, columnIndex) in detailRowColumns" :key="`detail-column-${columnIndex}`" class="detail-column">
+              <div v-for="row in column" :id="`section-${row.id}`" :key="row.label" class="detail-row">
                 <div class="detail-row__label">{{ row.label }}</div>
                 <div class="detail-row__value">
                   <div v-for="line in row.lines" :key="line" class="detail-row__line">{{ line }}</div>
@@ -691,6 +818,7 @@ onUnmounted(() => {
             </div>
           </div>
         </section>
+
       </div>
     </div>
   </div>
@@ -712,7 +840,7 @@ onUnmounted(() => {
 .dashboard-shell {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   min-width: 0;
 }
 
@@ -723,73 +851,77 @@ onUnmounted(() => {
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .summary-card,
 .status-panel,
+.diagnostics-panel,
 .detail-panel {
   border: 1px solid var(--panel-border);
-  border-radius: 14px;
-  background: linear-gradient(180deg, rgba(24, 34, 48, 0.98), rgba(21, 30, 43, 0.98));
+  border-radius: var(--surface-radius);
+  background:
+    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
+    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
   box-shadow: var(--panel-shadow);
 }
 
 .summary-card {
-  min-height: 206px;
-  padding: 26px 22px 22px;
+  min-height: 172px;
+  padding: var(--surface-padding);
 }
 
 .summary-card__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
-  margin-bottom: 14px;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 10px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  background: rgba(14, 22, 34, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .summary-card__label {
-  color: var(--text-secondary);
+  color: var(--text-subtle);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .summary-card__title {
-  margin: 10px 0 12px;
+  margin: 8px 0 8px;
   color: var(--text-primary);
   font-size: 18px;
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1.3;
 }
 
 .summary-card__line {
-  margin: 0 0 7px;
+  margin: 0 0 4px;
   color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .status-panel,
+.diagnostics-panel,
 .detail-panel {
-  padding: 22px 28px 26px;
+  padding: var(--surface-padding);
 }
 
 .panel-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 22px;
+  gap: var(--surface-heading-gap);
+  margin-bottom: var(--surface-heading-margin);
 
   h3 {
     margin: 0;
     color: var(--text-primary);
-    font-size: 18px;
+    font-size: var(--surface-title-size);
     font-weight: 700;
   }
 
@@ -799,6 +931,102 @@ onUnmounted(() => {
   }
 }
 
+.panel-heading--actions {
+  align-items: flex-start;
+}
+
+.diagnostics-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.diagnostics-action {
+  min-height: var(--control-height);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  padding: 0 14px;
+  background: var(--control-bg-soft);
+  color: var(--control-fg);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.diagnostics-action:hover {
+  border-color: var(--control-border-strong);
+  color: var(--control-fg-strong);
+  transform: translateY(-1px);
+}
+
+.diagnostics-action--active {
+  border-color: var(--control-active-border);
+  background: var(--control-active-bg);
+  color: var(--control-fg-strong);
+  box-shadow: var(--control-active-shadow);
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.diagnostics-card {
+  border: 1px solid var(--panel-border-soft);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.diagnostics-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+
+  i {
+    display: block;
+    width: 10px;
+    height: 10px;
+    margin-top: 5px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04);
+  }
+}
+
+.diagnostics-card__title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  span {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+}
+
+.diagnostics-card__summary {
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.diagnostics-card__line {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -806,7 +1034,7 @@ onUnmounted(() => {
 }
 
 .status-card {
-  padding: 10px 18px 4px;
+  padding: 8px 12px 2px;
   border-right: 1px solid var(--panel-border-soft);
 }
 
@@ -816,18 +1044,18 @@ onUnmounted(() => {
 
 .status-card__label {
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   text-align: center;
 }
 
 .status-card__ring {
   position: relative;
-  width: 100px;
-  height: 100px;
-  margin: 18px auto 16px;
+  width: 82px;
+  height: 82px;
+  margin: 12px auto 10px;
   border-radius: 50%;
-  padding: 7px;
+  padding: 6px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
@@ -838,18 +1066,18 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: #1a2330;
+  background: rgba(26, 35, 48, 0.96);
   color: var(--text-primary);
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .status-card__sparkline {
   display: block;
-  width: 116px;
-  height: 32px;
-  margin: 0 auto 10px;
+  width: 100px;
+  height: 28px;
+  margin: 0 auto 8px;
   opacity: 0.94;
 }
 
@@ -875,8 +1103,8 @@ onUnmounted(() => {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 26px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .detail-column {
@@ -886,9 +1114,9 @@ onUnmounted(() => {
 
 .detail-row {
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  gap: 18px;
-  padding: 12px 0;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 0;
   border-top: 1px solid var(--panel-border-soft);
 }
 
@@ -899,19 +1127,25 @@ onUnmounted(() => {
 
 .detail-row__label {
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  line-height: 1.7;
+  line-height: 1.55;
 }
 
 .detail-row__value {
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 13px;
   word-break: break-word;
 }
 
 .detail-row__line {
-  line-height: 1.7;
+  line-height: 1.55;
+}
+
+@media (max-width: 1480px) {
+  .detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1280px) {
@@ -922,6 +1156,10 @@ onUnmounted(() => {
   .status-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px 0;
+  }
+
+  .diagnostics-grid {
+    grid-template-columns: 1fr;
   }
 
   .status-card:nth-child(3n) {

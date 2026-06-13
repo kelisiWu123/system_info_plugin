@@ -246,7 +246,7 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
   .subtle-state {
     flex: 0 0 auto;
     margin-bottom: 12px;
-    color: #ff6b6b;
+    color: var(--state-info-fg);
     font-size: 12px;
     font-weight: 800;
     text-transform: uppercase;
@@ -262,53 +262,45 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
     display: flex;
     align-items: center;
     min-width: 0;
-    padding: 11px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 6px;
+    padding: 12px;
+    border: 1px solid var(--panel-border-soft);
+    border-radius: 14px;
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015)),
-      #111722;
-    color: #ff3f3f;
+      linear-gradient(180deg, rgba(24, 34, 48, 0.98), rgba(20, 29, 42, 0.96)),
+      radial-gradient(circle at top left, rgba(69, 181, 255, 0.06), transparent 28%);
+    color: var(--accent-blue);
     box-shadow: inset 3px 0 0 currentColor;
 
     &.thermal {
-      color: #ff3636;
-      background: linear-gradient(180deg, rgba(255, 54, 54, 0.16), rgba(255, 54, 54, 0.035));
+      color: var(--accent-orange);
     }
 
     &.power {
-      color: #8fff65;
-      background: linear-gradient(180deg, rgba(143, 255, 101, 0.12), rgba(143, 255, 101, 0.025));
+      color: var(--accent-yellow);
     }
 
     &.system {
-      color: #dce3ee;
-      background: linear-gradient(180deg, rgba(220, 227, 238, 0.1), rgba(220, 227, 238, 0.018));
+      color: var(--text-secondary);
     }
 
     &.device {
-      color: #42d7ff;
-      background: linear-gradient(180deg, rgba(66, 215, 255, 0.12), rgba(66, 215, 255, 0.025));
+      color: var(--accent-cyan);
     }
 
     &.audio {
-      color: #c084fc;
-      background: linear-gradient(180deg, rgba(192, 132, 252, 0.12), rgba(192, 132, 252, 0.025));
+      color: var(--accent-purple);
     }
 
     &.radio {
-      color: #2dd4bf;
-      background: linear-gradient(180deg, rgba(45, 212, 191, 0.12), rgba(45, 212, 191, 0.025));
+      color: var(--accent-green);
     }
 
     &.print {
-      color: #cbd5e1;
-      background: linear-gradient(180deg, rgba(203, 213, 225, 0.1), rgba(203, 213, 225, 0.018));
+      color: var(--text-muted);
     }
 
     &.network {
-      color: #60a5fa;
-      background: linear-gradient(180deg, rgba(96, 165, 250, 0.12), rgba(96, 165, 250, 0.025));
+      color: var(--accent-blue);
     }
   }
 
@@ -320,10 +312,10 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
     width: 32px;
     height: 32px;
     margin-right: 10px;
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.22);
+    border-radius: 10px;
+    background: rgba(14, 22, 34, 0.5);
     box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
       0 0 14px color-mix(in srgb, currentColor 26%, transparent);
   }
 
@@ -333,7 +325,7 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
 
   .label {
     margin-bottom: 4px;
-    color: #7f8b9d !important;
+    color: var(--text-subtle) !important;
     font-size: 12px;
     font-weight: 800;
     line-height: 1.2;
@@ -342,7 +334,7 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
 
   .value {
     overflow: hidden;
-    color: #f7f9fc;
+    color: var(--text-primary);
     font-family: 'SF Mono', Consolas, 'Cascadia Mono', monospace;
     font-size: 15px;
     font-weight: 850;
@@ -358,8 +350,8 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
   .sensor-source {
     margin-top: 10px;
     padding-left: 10px;
-    border-left: 2px solid rgba(255, 45, 45, 0.55);
-    color: #8d98a8;
+    border-left: 2px solid rgba(69, 181, 255, 0.5);
+    color: var(--text-muted);
     font-size: 12px;
     line-height: 1.4;
   }
@@ -374,7 +366,7 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
 
   .detail-title {
     margin-bottom: 8px;
-    color: #ff5a5a;
+    color: var(--accent-blue);
     font-size: 13px;
     font-weight: 850;
     text-transform: uppercase;
@@ -395,7 +387,7 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
 
   .detail-name {
     overflow: hidden;
-    color: #eef3fa;
+    color: var(--text-secondary);
     font-size: 13px;
     font-weight: 750;
     text-overflow: ellipsis;
@@ -405,7 +397,7 @@ function formatBoolean(value: boolean | undefined, trueText: string, falseText: 
   .detail-meta {
     margin-top: 3px;
     overflow: hidden;
-    color: #8d98a8;
+    color: var(--text-muted);
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
