@@ -176,9 +176,30 @@ function sparklineArea(values: number[]) {
   return `0,64 ${line} 238,64`
 }
 
-function progressBarStyle(percent: number, tone: string) {
+function gpuSparklinePoints(values: number[]) {
+  const source = values.length ? values : [0, 0, 0, 0, 0, 0]
+  const step = source.length > 1 ? 238 / (source.length - 1) : 238
+
+  return source
+    .map((value, index) => {
+      const x = Number((index * step).toFixed(2))
+      const percent = clampPercent(value)
+      const visiblePercent = percent > 0 ? Math.max(percent, 12) : 0
+      const y = Number((58 - (visiblePercent / 100) * 44).toFixed(2))
+      return `${x},${y}`
+    })
+    .join(' ')
+}
+
+function gpuSparklineArea(values: number[]) {
+  const line = gpuSparklinePoints(values)
+  return `0,64 ${line} 238,64`
+}
+
+function progressBarStyle(percent: number, tone: string, minVisiblePercent = 0) {
+  const bounded = clampPercent(percent)
   return {
-    width: `${clampPercent(percent)}%`,
+    width: `${bounded > 0 ? Math.max(bounded, minVisiblePercent) : 0}%`,
     background: tone,
   }
 }
@@ -695,13 +716,15 @@ onUnmounted(() => {
               viewBox="0 0 238 64"
               preserveAspectRatio="none"
             >
-              <polygon :points="sparklineArea(history.gpu)" />
-              <polyline :points="sparklinePoints(history.gpu)" />
+              <line class="metric-sparkline__baseline" x1="0" y1="58" x2="238" y2="58" />
+              <polygon :points="gpuSparklineArea(history.gpu)" />
+              <polyline class="metric-sparkline__halo" :points="gpuSparklinePoints(history.gpu)" />
+              <polyline :points="gpuSparklinePoints(history.gpu)" />
             </svg>
           </template>
           <template #bar>
-            <div class="metric-progress">
-              <span class="metric-progress__fill" :style="progressBarStyle(gpuPercent, gpuWatchPalette.progress)" />
+            <div class="metric-progress metric-progress--gpu">
+              <span class="metric-progress__fill" :style="progressBarStyle(gpuPercent, gpuWatchPalette.progress, 6)" />
             </div>
           </template>
           <template #side>
@@ -1001,7 +1024,7 @@ onUnmounted(() => {
 }
 
 .detail-glass-panel--gpu::before {
-  background: radial-gradient(circle, rgba(121, 231, 255, 0.70), transparent 70%);
+  background: radial-gradient(circle, rgba(143, 244, 255, 0.78), transparent 70%);
 }
 
 .metric-sparkline {
@@ -1022,6 +1045,21 @@ onUnmounted(() => {
   stroke-linejoin: round;
 }
 
+.metric-sparkline__baseline {
+  stroke: rgba(143, 244, 255, 0.28);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.metric-sparkline__halo {
+  fill: none;
+  stroke: rgba(183, 251, 255, 0.55);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.62;
+}
+
 .metric-sparkline--cpu polygon {
   fill: var(--sparkline-fill, rgba(167, 117, 255, 0.22));
 }
@@ -1031,11 +1069,14 @@ onUnmounted(() => {
 }
 
 .metric-sparkline--gpu polygon {
-  fill: var(--sparkline-fill, rgba(121, 231, 255, 0.30));
+  fill: var(--sparkline-fill, rgba(143, 244, 255, 0.42));
+  opacity: 0.36;
 }
 
 .metric-sparkline--gpu polyline {
-  stroke: var(--sparkline-stroke, #79e7ff);
+  stroke: var(--sparkline-stroke, #8ff4ff);
+  stroke-width: 3.6;
+  filter: drop-shadow(0 0 6px rgba(143, 244, 255, 0.74));
 }
 
 .metric-sparkline--memory polygon {
@@ -1245,11 +1286,27 @@ onUnmounted(() => {
   background: rgba(62, 79, 110, 0.34);
 }
 
+.metric-progress--gpu {
+  border: 1px solid rgba(143, 244, 255, 0.26);
+  background:
+    linear-gradient(90deg, rgba(143, 244, 255, 0.18), rgba(143, 244, 255, 0.07)),
+    rgba(28, 58, 76, 0.42);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    0 0 14px rgba(143, 244, 255, 0.14);
+}
+
 .metric-progress__fill {
   display: block;
   height: 100%;
   border-radius: inherit;
   box-shadow: 0 0 16px rgba(77, 178, 255, 0.22);
+}
+
+.metric-progress--gpu .metric-progress__fill {
+  box-shadow:
+    0 0 12px rgba(143, 244, 255, 0.6),
+    0 0 24px rgba(47, 216, 255, 0.28);
 }
 
 .metric-side-item {

@@ -1,3 +1,5 @@
+import { getMemoryPressureAccent } from '../utils'
+
 type WatchMemoryPressureLevel = 'normal' | 'warning' | 'critical' | 'unknown'
 type WatchMode = 'overview' | 'cpu' | 'gpu'
 
@@ -84,33 +86,33 @@ const CPU_WATCH_PALETTE: WatchPalette = {
 }
 
 const GPU_WATCH_PALETTE: WatchPalette = {
-  icon: '#79e7ff',
-  fill: 'rgba(121, 231, 255, 0.30)',
-  stroke: '#79e7ff',
-  progress: 'linear-gradient(90deg, #4bd9ff, #9df2ff)',
-  border: 'rgba(121, 231, 255, 0.40)',
+  icon: '#8ff4ff',
+  fill: 'rgba(143, 244, 255, 0.42)',
+  stroke: '#8ff4ff',
+  progress: 'linear-gradient(90deg, #2fd8ff, #b7fbff)',
+  border: 'rgba(143, 244, 255, 0.56)',
 }
 
 const MEMORY_NORMAL_PALETTE: WatchPalette = {
-  icon: '#79d84f',
+  icon: getMemoryPressureAccent('normal'),
   fill: 'rgba(121, 216, 79, 0.22)',
-  stroke: '#79d84f',
+  stroke: getMemoryPressureAccent('normal'),
   progress: 'linear-gradient(90deg, #67c93f, #8de061)',
   border: 'rgba(121, 216, 79, 0.34)',
 }
 
 const MEMORY_WARNING_PALETTE: WatchPalette = {
-  icon: '#ffb14d',
+  icon: getMemoryPressureAccent('warning'),
   fill: 'rgba(255, 177, 77, 0.22)',
-  stroke: '#ffb14d',
+  stroke: getMemoryPressureAccent('warning'),
   progress: 'linear-gradient(90deg, #ff9f36, #ffc164)',
   border: 'rgba(255, 177, 77, 0.34)',
 }
 
 const MEMORY_CRITICAL_PALETTE: WatchPalette = {
-  icon: '#ff7f87',
+  icon: getMemoryPressureAccent('critical'),
   fill: 'rgba(255, 127, 135, 0.22)',
-  stroke: '#ff7f87',
+  stroke: getMemoryPressureAccent('critical'),
   progress: 'linear-gradient(90deg, #ff6b75, #ff9299)',
   border: 'rgba(255, 127, 135, 0.34)',
 }

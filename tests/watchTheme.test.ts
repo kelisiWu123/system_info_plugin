@@ -12,6 +12,7 @@ import {
   getWatchMemoryPalette,
   WATCH_MODE_POLL_PROFILES,
 } from '../src/utils/watch'
+import { getMemoryPressureAccent } from '../src/utils'
 
 test('uses purple palette for CPU watch charts', () => {
   const palette = getWatchCpuPalette()
@@ -29,11 +30,11 @@ test('uses cyan-blue palette for GPU watch charts', () => {
   const palette = getWatchGpuPalette()
 
   assert.deepEqual(palette, {
-    icon: '#79e7ff',
-    fill: 'rgba(121, 231, 255, 0.30)',
-    stroke: '#79e7ff',
-    progress: 'linear-gradient(90deg, #4bd9ff, #9df2ff)',
-    border: 'rgba(121, 231, 255, 0.40)',
+    icon: '#8ff4ff',
+    fill: 'rgba(143, 244, 255, 0.42)',
+    stroke: '#8ff4ff',
+    progress: 'linear-gradient(90deg, #2fd8ff, #b7fbff)',
+    border: 'rgba(143, 244, 255, 0.56)',
   })
 })
 
@@ -61,6 +62,13 @@ test('uses memory pressure palette on macOS watch charts', () => {
     progress: 'linear-gradient(90deg, #ff6b75, #ff9299)',
     border: 'rgba(255, 127, 135, 0.34)',
   })
+})
+
+test('uses the same memory pressure accent in hardware pages and watch palettes', () => {
+  assert.equal(getMemoryPressureAccent('normal'), getWatchMemoryPalette('darwin', 'normal').icon)
+  assert.equal(getMemoryPressureAccent('warning'), getWatchMemoryPalette('darwin', 'warning').icon)
+  assert.equal(getMemoryPressureAccent('critical'), getWatchMemoryPalette('darwin', 'critical').icon)
+  assert.equal(getMemoryPressureAccent('unknown'), getWatchMemoryPalette('darwin', 'unknown').icon)
 })
 
 test('falls back to green memory palette for unknown macOS pressure and non-macOS', () => {

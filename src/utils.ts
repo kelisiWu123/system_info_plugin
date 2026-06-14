@@ -292,6 +292,13 @@ function getDisplayMemoryAvailableLabel(memory?: MemoData): string {
 
 type MemoryPressureLevel = NonNullable<MemoData['pressure']>['level']
 
+const MEMORY_PRESSURE_ACCENTS: Record<MemoryPressureLevel, string> = {
+  normal: '#79d84f',
+  warning: '#ffb14d',
+  critical: '#ff7f87',
+  unknown: '#79d84f',
+}
+
 function getMemoryPressureLabel(level?: MemoryPressureLevel): string {
   switch (level) {
     case 'normal':
@@ -318,6 +325,10 @@ function getMemoryPressureDescription(level?: MemoryPressureLevel): string {
   }
 }
 
+function getMemoryPressureAccent(level?: MemoryPressureLevel): string {
+  return MEMORY_PRESSURE_ACCENTS[level || 'unknown']
+}
+
 export {
   bytesToGB,
   mbToGB,
@@ -341,4 +352,5 @@ export {
   getDisplayMemoryAvailableLabel,
   getMemoryPressureLabel,
   getMemoryPressureDescription,
+  getMemoryPressureAccent,
 }

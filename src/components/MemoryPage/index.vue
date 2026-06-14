@@ -9,6 +9,7 @@ import {
   getDisplayMemoryUsagePercent,
   getDisplayMemoryUsedBytes,
   getDisplayMemoryUsedLabel,
+  getMemoryPressureAccent,
   getMemoryPressureDescription,
   getMemoryPressureLabel,
 } from '../../utils'
@@ -150,12 +151,7 @@ const swapUsedGB = computed(() => bytesToGBNumber(memoData.value.swapused || 0))
 const pressureLevel = computed(() => memoData.value.pressure?.level || 'unknown')
 const pressureLabel = computed(() => getMemoryPressureLabel(pressureLevel.value))
 const pressureDescription = computed(() => getMemoryPressureDescription(pressureLevel.value))
-const pressureAccent = computed(() => {
-  if (pressureLevel.value === 'normal') return 'var(--accent-green)'
-  if (pressureLevel.value === 'warning') return 'var(--accent-yellow)'
-  if (pressureLevel.value === 'critical') return 'var(--accent-danger)'
-  return 'var(--text-muted)'
-})
+const pressureAccent = computed(() => getMemoryPressureAccent(pressureLevel.value))
 const moduleCount = computed(() => memoryModules.value.length)
 const slotCount = computed(() => Math.max(boardData.value?.memSlots || 0, memoLayoutData.value.length))
 const memoryType = computed(() => cleanText(memoryModules.value[0]?.type) || cleanText(memoLayoutData.value[0]?.type) || '--')
