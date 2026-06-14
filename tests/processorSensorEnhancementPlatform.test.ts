@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  getSensorEnhancementPrimaryActionLabel,
   getSensorEnhancementActionLabel,
   getSensorEnhancementPlatform,
+  isSensorEnhancementDefaultEnabled,
   normalizeOsPlatform,
+  shouldAutoPrepareSensorEnhancement,
 } from '../src/utils/platform'
 import { getProcessorAuxDisplayMode, getProcessorIdlePercent } from '../src/utils/processor'
 import { formatGpuTemperatureSensorLabel, getGraphicsPlatformPanelVisibility } from '../src/utils/gpu'
@@ -35,6 +38,27 @@ test('uses unified sensor enhancement action labels', () => {
   assert.equal(getSensorEnhancementActionLabel('windows', true), '收起增强模式')
   assert.equal(getSensorEnhancementActionLabel('macos', false), '传感器增强')
   assert.equal(getSensorEnhancementActionLabel('macos', true), '收起增强模式')
+})
+
+test('defaults sensor enhancement on for supported platforms', () => {
+  assert.equal(isSensorEnhancementDefaultEnabled('windows'), true)
+  assert.equal(isSensorEnhancementDefaultEnabled('macos'), true)
+  assert.equal(isSensorEnhancementDefaultEnabled('unsupported'), false)
+})
+
+test('uses explicit primary labels for the visible enhancement control', () => {
+  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', true), '关闭增强模式')
+  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', false), '启用增强模式')
+  assert.equal(getSensorEnhancementPrimaryActionLabel('macos', true), '关闭增强模式')
+  assert.equal(getSensorEnhancementPrimaryActionLabel('macos', false), '启用增强模式')
+})
+
+test('auto prepares sensor enhancement only when enabled and not ready', () => {
+  assert.equal(shouldAutoPrepareSensorEnhancement('windows', true, false), true)
+  assert.equal(shouldAutoPrepareSensorEnhancement('macos', true, false), true)
+  assert.equal(shouldAutoPrepareSensorEnhancement('windows', true, true), false)
+  assert.equal(shouldAutoPrepareSensorEnhancement('macos', false, false), false)
+  assert.equal(shouldAutoPrepareSensorEnhancement('unsupported', true, false), false)
 })
 
 test('uses CPU fan instead of voltage on macOS processor panel', () => {

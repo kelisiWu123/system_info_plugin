@@ -37,3 +37,19 @@ export function getSensorEnhancementPlatform(osInfo?: OsPlatformLike): SensorEnh
 export function getSensorEnhancementActionLabel(_platform: SensorEnhancementPlatform, expanded: boolean): string {
   return expanded ? '收起增强模式' : '传感器增强'
 }
+
+export function isSensorEnhancementDefaultEnabled(platform: SensorEnhancementPlatform): boolean {
+  return platform === 'windows' || platform === 'macos'
+}
+
+export function getSensorEnhancementPrimaryActionLabel(_platform: SensorEnhancementPlatform, enabled: boolean): string {
+  return enabled ? '关闭增强模式' : '启用增强模式'
+}
+
+export function shouldAutoPrepareSensorEnhancement(
+  platform: SensorEnhancementPlatform,
+  enabled: boolean,
+  ready: boolean
+): boolean {
+  return isSensorEnhancementDefaultEnabled(platform) && enabled && !ready
+}

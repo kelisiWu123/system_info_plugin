@@ -454,8 +454,10 @@ async function uninstallMacPowermetricsHelper() {
 }
 
 function getDefaultHardwareSensorSettings() {
+  const enhancedSensorEnabled = isWindows() || isMacOS()
+
   return {
-    enhancedSensorEnabled: isWindows(),
+    enhancedSensorEnabled,
     openHardwareMonitorAutoStart: isWindows(),
     openHardwareMonitorPort: DEFAULT_HARDWARE_SENSOR_SETTINGS.openHardwareMonitorPort,
   }
@@ -618,7 +620,7 @@ function normalizeMonitoringRefreshSettings(input) {
 }
 
 function getHardwareSensorSettings() {
-  if (!isWindows()) {
+  if (!isWindows() && !isMacOS()) {
     return normalizeHardwareSensorSettings(getDefaultHardwareSensorSettings())
   }
 
@@ -672,7 +674,7 @@ async function stopPluginManagedOpenHardwareMonitor() {
 }
 
 async function updateHardwareSensorSettings(patch = {}) {
-  if (!isWindows()) {
+  if (!isWindows() && !isMacOS()) {
     return normalizeHardwareSensorSettings(getDefaultHardwareSensorSettings())
   }
 
@@ -683,7 +685,7 @@ async function updateHardwareSensorSettings(patch = {}) {
   })
   writeHardwareSensorSettingsRaw(next)
 
-  if (previous.enhancedSensorEnabled && !next.enhancedSensorEnabled) {
+  if (isWindows() && previous.enhancedSensorEnabled && !next.enhancedSensorEnabled) {
     await stopPluginManagedOpenHardwareMonitor()
   }
 

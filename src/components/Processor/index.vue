@@ -7,7 +7,10 @@ import {
   refreshProcessorHardwareDynamicMetrics,
 } from '../../composables/useProcessorHardwareData'
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
-import { getSensorEnhancementActionLabel, getSensorEnhancementPlatform } from '../../utils/platform'
+import {
+  getSensorEnhancementPlatform,
+  shouldAutoPrepareSensorEnhancement,
+} from '../../utils/platform'
 import { getProcessorAuxDisplayMode, getProcessorIdlePercent } from '../../utils/processor'
 
 const props = defineProps<{
@@ -65,6 +68,7 @@ const metricHistory: Record<MetricHistoryKey, number[]> = {
 
 const subscribed = ref(false)
 const showSensorEnhancementPanel = ref(false)
+const sensorAutoPrepareAttempted = ref(false)
 const sensorSettingsLoading = ref(false)
 const sensorActionLoading = ref(false)
 const macHelperActionMessage = ref('')
@@ -371,9 +375,6 @@ const sensorEnhancementPlatform = computed(() => getSensorEnhancementPlatform(os
 const processorAuxDisplayMode = computed(() => getProcessorAuxDisplayMode(sensorEnhancementPlatform.value))
 const isWindowsPlatform = computed(() => sensorEnhancementPlatform.value === 'windows')
 const isMacPlatform = computed(() => sensorEnhancementPlatform.value === 'macos')
-const sensorEnhancementActionLabel = computed(() =>
-  getSensorEnhancementActionLabel(sensorEnhancementPlatform.value, showSensorEnhancementPanel.value)
-)
 const cpuTemperatureSourceLabel = computed(() => formatTemperatureSource(cpuTemperature.value?.source))
 const cpuTemperatureReasonLabel = computed(() => formatSensorReason(cpuTemperature.value?.reason || cpuTemperature.value?.errorCode))
 const openHardwareMonitorStatusLabel = computed(() => {
@@ -405,7 +406,11 @@ const macHelperSummary = computed(() => {
   return '安装增强组件后可免每次授权读取 CPU 频率，并补齐 Apple Silicon GPU 遥测'
 })
 const macHelperSuggestion = computed(() => macHelperStatus.value?.suggestion || cpuCurrentSpeed.value.nativeSuggestion || '')
-
+const sensorEnhancementReady = computed(() => {
+  if (isWindowsPlatform.value) return Boolean(openHardwareMonitorStatus.value?.running)
+  if (isMacPlatform.value) return Boolean(macHelperStatus.value?.loaded && macHelperStatus.value?.socketExists)
+  return false
+})
 const healthState = computed(() => {
   const temperature = cpuTemperatureValue.value
   const load = cpuLoadPercent.value
@@ -719,22 +724,22 @@ async function copyProcessorInfo() {
 }
 
 async function refreshHardwareSensorState() {
-  if (!isWindowsPlatform.value) return
+  if (sensorEnhancementPlatform.value === 'unsupported') return
 
   sensorSettingsLoading.value = true
 
   try {
-    openHardwareMonitorStatus.value = {
-      ...openHardwareMonitorStatus.value,
-      reason: '检测中...',
-      suggestion: '正在读取 OpenHardwareMonitor 当前状态',
-    } as OpenHardwareMonitorStatusData
-    const [settings, status] = await Promise.all([
-      window.services.getHardwareSensorSettings(),
-      window.services.getOpenHardwareMonitorStatus(),
-    ])
+    const settings = await window.services.getHardwareSensorSettings()
     sensorSettings.value = settings
-    openHardwareMonitorStatus.value = status
+
+    if (isWindowsPlatform.value) {
+      openHardwareMonitorStatus.value = {
+        ...openHardwareMonitorStatus.value,
+        reason: '检测中...',
+        suggestion: '正在读取 OpenHardwareMonitor 当前状态',
+      } as OpenHardwareMonitorStatusData
+      openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+    }
   } catch (error) {
     console.error('读取硬件传感器增强状态失败:', error)
   } finally {
@@ -765,9 +770,15 @@ async function installMacPowermetricsHelper() {
   try {
     macHelperActionMessage.value = '正在安装 helper，并等待 LaunchDaemon 就绪...'
     macHelperStatus.value = await window.services.installMacPowermetricsHelper()
-    macHelperActionMessage.value = macHelperStatus.value.loaded && macHelperStatus.value.socketExists
-      ? 'helper 已就绪，正在刷新频率来源...'
-      : 'helper 已安装，仍在等待系统服务就绪'
+    if (macHelperStatus.value.loaded && macHelperStatus.value.socketExists) {
+      macHelperActionMessage.value = 'helper 已就绪，正在刷新频率来源...'
+    } else if (macHelperStatus.value.reason === 'MACOS_POWERMETRICS_HELPER_INSTALL_CANCELLED') {
+      macHelperActionMessage.value = '已取消 helper 安装授权'
+    } else if (macHelperStatus.value.ok === false) {
+      macHelperActionMessage.value = macHelperStatus.value.suggestion || 'helper 安装失败'
+    } else {
+      macHelperActionMessage.value = 'helper 已安装，仍在等待系统服务就绪'
+    }
     await refreshProcessorHardwareDynamicMetrics()
     macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
   } catch (error) {
@@ -797,13 +808,17 @@ async function uninstallMacPowermetricsHelper() {
 }
 
 async function updateHardwareSensorSetting(patch: Partial<HardwareSensorSettingsData>) {
-  if (!isWindowsPlatform.value) return
+  if (sensorEnhancementPlatform.value === 'unsupported') return
 
   sensorActionLoading.value = true
 
   try {
     sensorSettings.value = await window.services.updateHardwareSensorSettings(patch)
-    openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+    if (isWindowsPlatform.value) {
+      openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+    } else if (isMacPlatform.value) {
+      macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
+    }
   } catch (error) {
     console.error('更新硬件传感器增强设置失败:', error)
   } finally {
@@ -817,6 +832,37 @@ async function toggleEnhancedSensorMode() {
     enhancedSensorEnabled: nextEnabled,
     openHardwareMonitorAutoStart: nextEnabled,
   })
+
+  if (nextEnabled) {
+    sensorAutoPrepareAttempted.value = false
+    await prepareSensorEnhancement(false)
+    return
+  }
+
+  if (isMacPlatform.value && macHelperStatus.value?.installed) {
+    await uninstallMacPowermetricsHelper()
+  }
+}
+
+async function prepareSensorEnhancement(auto: boolean) {
+  if (auto && sensorAutoPrepareAttempted.value) return
+  if (auto) sensorAutoPrepareAttempted.value = true
+
+  if (!shouldAutoPrepareSensorEnhancement(
+    sensorEnhancementPlatform.value,
+    sensorSettings.value.enhancedSensorEnabled,
+    sensorEnhancementReady.value
+  )) {
+    return
+  }
+
+  showSensorEnhancementPanel.value = true
+
+  if (isWindowsPlatform.value) {
+    await startOpenHardwareMonitor()
+  } else if (isMacPlatform.value) {
+    await installMacPowermetricsHelper()
+  }
 }
 
 async function startOpenHardwareMonitor() {
@@ -886,6 +932,15 @@ defineExpose({
   exportReport,
   copyProcessorInfo,
   startStressTest,
+  openSensorEnhancementPanel: () => {
+    showSensorEnhancementPanel.value = true
+  },
+  refreshSensorEnhancementState: async () => {
+    await Promise.all([
+      refreshHardwareSensorState(),
+      refreshMacPowermetricsHelperState(),
+    ])
+  },
 })
 
 async function ensureStoreActive() {
@@ -979,14 +1034,6 @@ onUnmounted(() => {
             <h3>实时监控</h3>
             <p>{{ processorAuxDisplayMode === 'fan' ? '聚焦 CPU 负载、温度、频率、风扇和功耗' : '聚焦 CPU 负载、温度、频率、电压和功耗' }}</p>
           </div>
-          <button
-            v-if="sensorEnhancementPlatform !== 'unsupported'"
-            type="button"
-            class="panel-action"
-            @click="showSensorEnhancementPanel = !showSensorEnhancementPanel"
-          >
-            {{ sensorEnhancementActionLabel }}
-          </button>
         </div>
 
         <div v-if="sensorEnhancementPlatform === 'windows' && showSensorEnhancementPanel" class="sensor-enhancement-panel">
