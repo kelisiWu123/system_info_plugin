@@ -17,6 +17,12 @@ function getWindowHash(fileName) {
   return isWatchWindowName(fileName) ? 'watch?floatingMode=standard&entry=hardwareWatch' : 'computer'
 }
 
+function getProductionWindowUrl(fileName) {
+  if (fileName === 'a_watch_super_lite') return 'a_watch_super_lite/index.html'
+  if (isWatchWindowName(fileName)) return 'watch.html'
+  return 'computer.html'
+}
+
 function buildChildWindowOptions(fileName, height, width, backgroundColor) {
   const isWatchWindow = isWatchWindowName(fileName)
 
@@ -157,9 +163,7 @@ export const windowService = {
     const windowHash = childWindowConfig.hash
     const windowUrl = runtimeUtools.isDev()
       ? `http://localhost:9000/index.html#${windowHash}`
-      : isWatchWindow
-        ? `watch.html#${windowHash}`
-        : 'computer.html'
+      : getProductionWindowUrl(fileName)
 
     if (typeof runtimeUtools.createBrowserWindow !== 'function') {
       ipcRenderer.invoke('createChildWindow', buildChildWindowConfig(fileName, height, width, backgroundColor))

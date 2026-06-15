@@ -34,6 +34,15 @@ test('window service treats a_watch_super_lite as a watch window and passes laun
   assert.match(source, /alwaysOnTop:\s*isWatchWindow/)
 })
 
+test('production child windows load real packaged HTML paths without hash suffixes', () => {
+  const source = readSource('utools/services/window.js')
+
+  assert.match(source, /function getProductionWindowUrl\(fileName\)/)
+  assert.match(source, /a_watch_super_lite\/index\.html/)
+  assert.match(source, /return 'watch\.html'/)
+  assert.doesNotMatch(source, /watch\.html#\$\{windowHash\}/)
+})
+
 test('fallback child window creation receives watch window options', () => {
   const windowService = readSource('utools/services/window.js')
   const electronMain = readSource('electron/main/index.ts')
