@@ -47,3 +47,14 @@ test('Watch switches floating modes, resizes the window, and persists mode and p
   assert.match(watch, /SuperLiteMonitorView/)
   assert.match(watch, /formatSuperLiteRefreshLabel\(getCurrentPollProfile\(\)\.fast\)/)
 })
+
+test('standard watch mode keeps existing modes and actions', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /monitorMode = ref<'overview' \| 'cpu' \| 'gpu'>\('overview'\)/)
+  assert.match(watch, /@click="setMonitorMode\('overview'\)"/)
+  assert.match(watch, /@click="setMonitorMode\('cpu'\)"/)
+  assert.match(watch, /@click="setMonitorMode\('gpu'\)"/)
+  assert.match(watch, /window\.services\.alwaysOnTop\(pinned\.value\)/)
+  assert.match(watch, /window\.services\.closeWindow\(\)/)
+})
