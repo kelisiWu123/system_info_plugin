@@ -10,7 +10,7 @@ import {
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { overviewHardwareStore, updateOverviewMonitoringRefreshSettings } from './composables/useOverviewHardwareData'
 import { resolveDevPageCopyTarget } from './utils/devPageCopy'
-import { resolveInitialFloatingMode, resolvePageName, type PageName } from './utils/hashRoute'
+import { resolveInitialFloatingEntry, resolveInitialFloatingMode, resolvePageName, type PageName } from './utils/hashRoute'
 import {
   getSensorEnhancementPlatform,
   shouldAutoPrepareSensorEnhancement,
@@ -64,6 +64,7 @@ function syncHash() {
 
 const currentPage = computed<PageName>(() => resolvePageName(currentHash.value))
 const initialFloatingMode = computed(() => resolveInitialFloatingMode(currentHash.value))
+const initialFloatingEntry = computed(() => resolveInitialFloatingEntry(currentHash.value))
 const isWatchPage = computed(() => currentPage.value === 'watch')
 const currentDevCopyTarget = computed(() => resolveDevPageCopyTarget(selectedSection.value))
 const overviewRefreshSettings = overviewHardwareStore.monitoringRefreshSettings
@@ -469,7 +470,7 @@ onUnmounted(() => {
 
 <template>
   <div v-if="isWatchPage" class="watch-stage">
-    <Watch :active="true" :initial-floating-mode="initialFloatingMode" />
+    <Watch :active="true" :initial-floating-mode="initialFloatingMode" :initial-floating-entry="initialFloatingEntry" />
   </div>
 
   <div v-else class="desktop-shell">

@@ -51,6 +51,63 @@ function loadWindow(window: BrowserWindow, hash: string) {
     window.loadFile(indexHtml, { hash })
 }
 
+function normalizeChildWindowDimension(value: unknown, fallback: number) {
+    const numericValue = Number(value)
+    return Number.isFinite(numericValue) && numericValue > 0 ? Math.round(numericValue) : fallback
+}
+
+function getChildWindowHash(arg: unknown) {
+    if (typeof arg === 'string') return arg
+    if (arg && typeof arg === 'object' && typeof (arg as { hash?: unknown }).hash === 'string') {
+        return (arg as { hash: string }).hash
+    }
+
+    return 'computer'
+}
+
+function normalizeChildWindowOptions(arg: unknown) {
+    const rawOptions = arg && typeof arg === 'object'
+        ? (arg as { options?: Record<string, unknown> }).options || {}
+        : {}
+    const options = {
+        title: typeof rawOptions.title === 'string' ? rawOptions.title : 'system info',
+        width: normalizeChildWindowDimension(rawOptions.width, 300),
+        height: normalizeChildWindowDimension(rawOptions.height, 300),
+        useContentSize: rawOptions.useContentSize !== false,
+        skipTaskbar: Boolean(rawOptions.skipTaskbar),
+        backgroundColor: typeof rawOptions.backgroundColor === 'string' ? rawOptions.backgroundColor : '#0f1722',
+        minimizable: rawOptions.minimizable !== false,
+        maximizable: rawOptions.maximizable !== false,
+        resizable: rawOptions.resizable !== false,
+        fullscreenable: rawOptions.fullscreenable !== false,
+        transparent: Boolean(rawOptions.transparent),
+        frame: rawOptions.frame !== false,
+        alwaysOnTop: Boolean(rawOptions.alwaysOnTop),
+    }
+
+    return {
+        title: options.title,
+        width: options.width,
+        height: options.height,
+        useContentSize: options.useContentSize,
+        skipTaskbar: options.skipTaskbar,
+        backgroundColor: options.backgroundColor,
+        minimizable: options.minimizable,
+        maximizable: options.maximizable,
+        resizable: options.resizable,
+        fullscreenable: options.fullscreenable,
+        transparent: Boolean(options.transparent),
+        frame: options.frame,
+        alwaysOnTop: Boolean(options.alwaysOnTop),
+        webPreferences: {
+            preload,
+            nodeIntegration: true,
+            contextIsolation: false,
+            nodeIntegrationInWorker: true,
+        },
+    }
+}
+
 function createMainWindow() {
     win = new BrowserWindow({
         title: 'Main window',
@@ -176,17 +233,17 @@ ipcMain.on('window-action', (event, action) => {
 
 // New window example arg: new windows url
 ipcMain.handle('createChildWindow', (_, arg) => {
-    const childWindow = new BrowserWindow({
-        webPreferences: {
-            preload,
-            nodeIntegration: true,
-            contextIsolation: false,
-        },
-    })
+    const options = normalizeChildWindowOptions(arg)
+    const childWindow = new BrowserWindow(options)
+    const hash = getChildWindowHash(arg)
+
+    if (options.alwaysOnTop) {
+        childWindow.setAlwaysOnTop(true)
+    }
 
     if (process.env.VITE_DEV_SERVER_URL) {
-        childWindow.loadURL(`${url}#${arg}`)
+        childWindow.loadURL(`${url}#${hash}`)
     } else {
-        childWindow.loadFile(indexHtml, { hash: arg })
+        childWindow.loadFile(indexHtml, { hash })
     }
 })

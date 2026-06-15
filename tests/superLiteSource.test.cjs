@@ -48,6 +48,14 @@ test('Watch switches floating modes, resizes the window, and persists mode and p
   assert.match(watch, /formatSuperLiteRefreshLabel\(getCurrentPollProfile\(\)\.fast\)/)
 })
 
+test('explicit watch entries override persisted floating mode without mutating defaults', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /props\.initialFloatingEntry === 'hardwareWatch'/)
+  assert.match(watch, /props\.initialFloatingEntry === 'hardwareWatchSuperLite'/)
+  assert.doesNotMatch(watch, /persistFloatingMonitorSettings\(\{\s*mode:\s*'super-lite'/)
+})
+
 test('standard watch mode keeps existing modes and actions', () => {
   const watch = readSource('src/components/Watch/index.vue')
 

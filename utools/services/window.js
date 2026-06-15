@@ -14,7 +14,34 @@ function isWatchWindowName(fileName) {
 
 function getWindowHash(fileName) {
   if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
-  return isWatchWindowName(fileName) ? 'watch' : 'computer'
+  return isWatchWindowName(fileName) ? 'watch?floatingMode=standard&entry=hardwareWatch' : 'computer'
+}
+
+function buildChildWindowOptions(fileName, height, width, backgroundColor) {
+  const isWatchWindow = isWatchWindowName(fileName)
+
+  return {
+    title: 'system info',
+    height,
+    width,
+    useContentSize: true,
+    skipTaskbar: false,
+    backgroundColor: isWatchWindow ? `rgba(255, 255, 255, ${backgroundColor})` : '#0f1722',
+    minimizable: !isWatchWindow,
+    maximizable: !isWatchWindow,
+    resizable: !isWatchWindow,
+    fullscreenable: !isWatchWindow,
+    transparent: isWatchWindow,
+    frame: false,
+    alwaysOnTop: isWatchWindow,
+  }
+}
+
+function buildChildWindowConfig(fileName, height, width, backgroundColor) {
+  return {
+    hash: getWindowHash(fileName),
+    options: buildChildWindowOptions(fileName, height, width, backgroundColor),
+  }
 }
 
 export function setupWindowBridge() {
@@ -126,7 +153,8 @@ export const windowService = {
 
   createWindow: (fileName, height = 300, width = 300, backgroundColor = 0.3) => {
     const isWatchWindow = isWatchWindowName(fileName)
-    const windowHash = getWindowHash(fileName)
+    const childWindowConfig = buildChildWindowConfig(fileName, height, width, backgroundColor)
+    const windowHash = childWindowConfig.hash
     const windowUrl = runtimeUtools.isDev()
       ? `http://localhost:9000/index.html#${windowHash}`
       : isWatchWindow
@@ -134,26 +162,14 @@ export const windowService = {
         : 'computer.html'
 
     if (typeof runtimeUtools.createBrowserWindow !== 'function') {
-      ipcRenderer.invoke('createChildWindow', windowHash)
+      ipcRenderer.invoke('createChildWindow', buildChildWindowConfig(fileName, height, width, backgroundColor))
       return
     }
 
     const childWindow = runtimeUtools.createBrowserWindow(
       windowUrl,
       {
-        title: 'system info',
-        height,
-        width,
-        useContentSize: true,
-        skipTaskbar: false,
-        backgroundColor: isWatchWindow ? `rgba(255, 255, 255, ${backgroundColor})` : '#0f1722',
-        minimizable: !isWatchWindow,
-        maximizable: !isWatchWindow,
-        resizable: !isWatchWindow,
-        fullscreenable: !isWatchWindow,
-        transparent: isWatchWindow,
-        frame: false,
-        alwaysOnTop: isWatchWindow,
+        ...childWindowConfig.options,
         webPreferences: {
           preload: 'preload.js',
           devTools: true,

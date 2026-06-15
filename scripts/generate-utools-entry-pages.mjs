@@ -65,7 +65,7 @@ function writePageEntry(filePath, pageName) {
 
 for (const [entryName, pageName] of [
   ['a_computer', 'computer'],
-  ['a_watch', 'watch'],
+  ['a_watch', 'watch?floatingMode=standard&entry=hardwareWatch'],
   ['a_watch_super_lite', 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'],
 ]) {
   const entryDir = join(distDir, entryName)
@@ -76,7 +76,7 @@ for (const [entryName, pageName] of [
 }
 
 writePageEntry(join(distDir, 'computer.html'), 'computer')
-writePageEntry(join(distDir, 'watch.html'), 'watch')
+writePageEntry(join(distDir, 'watch.html'), 'watch?floatingMode=standard&entry=hardwareWatch')
 
 rmSync(join(distDir, 'native'), { recursive: true, force: true })
 rmSync(join(distDir, 'node_modules'), { recursive: true, force: true })

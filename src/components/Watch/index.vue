@@ -28,13 +28,14 @@ import {
   getWatchMemoryPalette,
   WATCH_MODE_POLL_PROFILES,
 } from '../../utils/watch'
-import type { FloatingMonitorMode } from '../../utils/hashRoute'
+import type { FloatingMonitorEntry, FloatingMonitorMode } from '../../utils/hashRoute'
 
 type SuperLitePage = 'overview' | 'cpu' | 'gpu' | 'memory'
 
 const props = defineProps<{
   active?: boolean
   initialFloatingMode?: 'standard' | 'super-lite'
+  initialFloatingEntry?: FloatingMonitorEntry
 }>()
 
 const memoData = reactive<MemoData>({
@@ -655,11 +656,13 @@ async function loadFloatingMonitorSettings() {
       pinned.value = settings.pinned
     }
 
-    if (props.initialFloatingMode === 'super-lite') {
-      resizeFloatingMode('super-lite')
-      if (settings?.mode !== 'super-lite') {
-        void persistFloatingMonitorSettings({ mode: 'super-lite', pinned: pinned.value })
-      }
+    if (props.initialFloatingEntry === 'hardwareWatch') {
+      applyFloatingMode('standard', false)
+      return
+    }
+
+    if (props.initialFloatingEntry === 'hardwareWatchSuperLite' || props.initialFloatingMode === 'super-lite') {
+      applyFloatingMode('super-lite', false)
       return
     }
 

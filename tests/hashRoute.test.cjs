@@ -41,3 +41,17 @@ test('resolves initial floating mode from watch query parameters', async () => {
   )
   assert.equal(resolveInitialFloatingMode('#watch'), 'standard')
 })
+
+test('resolves the explicit floating monitor launch entry', async () => {
+  const { resolveInitialFloatingEntry } = await loadHashRouteUtils()
+
+  assert.equal(
+    resolveInitialFloatingEntry('#watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'),
+    'hardwareWatchSuperLite'
+  )
+  assert.equal(
+    resolveInitialFloatingEntry('#watch?floatingMode=standard&entry=hardwareWatch'),
+    'hardwareWatch'
+  )
+  assert.equal(resolveInitialFloatingEntry('#watch'), 'unknown')
+})
