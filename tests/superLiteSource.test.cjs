@@ -22,3 +22,17 @@ test('floating monitor settings are exposed through the service bridge', () => {
   assert.match(types, /getFloatingMonitorSettings: \(\) => Promise<FloatingMonitorSettingsData>/)
   assert.match(types, /updateFloatingMonitorSettings: \(patch: Partial<FloatingMonitorSettingsData>\) => Promise<FloatingMonitorSettingsData>/)
 })
+
+test('super-lite view is presentational and Watch owns services and timers', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+  const superLite = readSource('src/components/Watch/SuperLiteMonitorView.vue')
+
+  assert.match(watch, /import SuperLiteMonitorView/)
+  assert.match(watch, /window\.services\.getCpuFullLoad/)
+  assert.match(watch, /window\.setInterval/)
+  assert.match(watch, /history\.cpu/)
+
+  assert.doesNotMatch(superLite, /window\.services/)
+  assert.doesNotMatch(superLite, /setInterval/)
+  assert.doesNotMatch(superLite, /localStorage|dbStorage/)
+})

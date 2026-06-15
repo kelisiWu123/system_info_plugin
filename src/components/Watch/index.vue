@@ -12,6 +12,7 @@ import {
 } from '@icon-park/vue-next'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
+import SuperLiteMonitorView from './SuperLiteMonitorView.vue'
 import {
   buildWatchCpuOverviewSideItems,
   formatWatchRuntime,
@@ -63,6 +64,8 @@ const memoryLayout = ref<MemoLayoutData[]>([])
 const pinned = ref(true)
 const monitorMode = ref<'overview' | 'cpu' | 'gpu'>('overview')
 const floatingMode = ref<FloatingMonitorMode>(props.initialFloatingMode || 'standard')
+const superLitePlaceholderStatus = computed(() => ({ level: 'normal' as const, label: '良好' }))
+const superLitePlaceholderMetrics = computed(() => [])
 
 const history = reactive({
   cpu: [] as number[],
@@ -609,7 +612,19 @@ onUnmounted(() => {
 
 <template>
   <div class="watch-container" :data-floating-mode="floatingMode">
-    <div class="monitor-shell">
+    <SuperLiteMonitorView
+      v-if="floatingMode === 'super-lite'"
+      page="overview"
+      :status="superLitePlaceholderStatus"
+      :metrics="superLitePlaceholderMetrics"
+      footer-left="↻--"
+      footer-right="⏱--:--:--"
+      :pinned="pinned"
+      @set-page="() => undefined"
+      @toggle-pin="togglePin"
+      @switch-standard="floatingMode = 'standard'"
+    />
+    <div v-else class="monitor-shell">
       <header class="monitor-shell__header">
         <div class="monitor-shell__brand">
           <div class="monitor-shell__brand-mark">H</div>
