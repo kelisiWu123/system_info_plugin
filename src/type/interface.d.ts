@@ -117,6 +117,24 @@ declare global {
     profile: 'eco' | 'balanced' | 'realtime'
     backgroundThrottleEnabled: boolean
   }
+  type FloatingMonitorMode = 'standard' | 'super-lite'
+  interface FloatingMonitorSettingsData {
+    mode: FloatingMonitorMode
+    pinned: boolean
+    standardSize: {
+      width: number
+      height: number
+    }
+    superLiteSize: {
+      width: number
+      height: number
+    }
+    position?: {
+      x: number
+      y: number
+    }
+    opacity?: number
+  }
   interface OpenHardwareMonitorStatusData {
     platform: 'win32' | 'other'
     settings: HardwareSensorSettingsData
@@ -237,6 +255,8 @@ declare global {
       updateHardwareSensorSettings: (patch: Partial<HardwareSensorSettingsData>) => Promise<HardwareSensorSettingsData>
       getMonitoringRefreshSettings: () => Promise<MonitoringRefreshSettingsData>
       updateMonitoringRefreshSettings: (patch: Partial<MonitoringRefreshSettingsData>) => Promise<MonitoringRefreshSettingsData>
+      getFloatingMonitorSettings: () => Promise<FloatingMonitorSettingsData>
+      updateFloatingMonitorSettings: (patch: Partial<FloatingMonitorSettingsData>) => Promise<FloatingMonitorSettingsData>
       getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>
       startOpenHardwareMonitor: () => Promise<OpenHardwareMonitorStatusData>
       openOpenHardwareMonitorDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>

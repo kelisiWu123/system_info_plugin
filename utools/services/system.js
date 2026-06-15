@@ -26,6 +26,7 @@ const MAC_POWERMETRICS_HELPER_PLIST_PATH = `/Library/LaunchDaemons/${MAC_POWERME
 const MAC_POWERMETRICS_HELPER_SOCKET_PATH = '/var/run/hwinfox-powermetrics-helper.sock'
 const HARDWARE_SENSOR_SETTINGS_STORAGE_KEY = 'hardwareSensorSettings'
 const MONITORING_REFRESH_SETTINGS_STORAGE_KEY = 'monitoringRefreshSettings'
+const FLOATING_MONITOR_SETTINGS_STORAGE_KEY = 'floatingMonitorSettings'
 const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
   enhancedSensorEnabled: false,
   openHardwareMonitorAutoStart: false,
@@ -34,6 +35,12 @@ const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
 const DEFAULT_MONITORING_REFRESH_SETTINGS = {
   profile: 'balanced',
   backgroundThrottleEnabled: true,
+}
+const DEFAULT_FLOATING_MONITOR_SETTINGS = {
+  mode: 'standard',
+  pinned: true,
+  standardSize: { width: 432, height: 398 },
+  superLiteSize: { width: 200, height: 200 },
 }
 const OPEN_HARDWARE_MONITOR_PROCESS_NAME = 'OpenHardwareMonitor.exe'
 const OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS = 1500
@@ -592,6 +599,42 @@ function writeMonitoringRefreshSettingsRaw(value) {
   }
 }
 
+function readFloatingMonitorSettingsRaw() {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.getItem) {
+    return storage.getItem(FLOATING_MONITOR_SETTINGS_STORAGE_KEY)
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const value = localStorage.getItem(FLOATING_MONITOR_SETTINGS_STORAGE_KEY)
+      return value ? JSON.parse(value) : null
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+function writeFloatingMonitorSettingsRaw(value) {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.setItem) {
+    storage.setItem(FLOATING_MONITOR_SETTINGS_STORAGE_KEY, value)
+    return
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(FLOATING_MONITOR_SETTINGS_STORAGE_KEY, JSON.stringify(value))
+    } catch {
+      // ignore storage fallback failures
+    }
+  }
+}
+
 function normalizeHardwareSensorSettings(input) {
   const portCandidate = Number(input?.openHardwareMonitorPort)
   const port = Number.isInteger(portCandidate) && portCandidate >= 1 && portCandidate <= 65535
@@ -619,6 +662,19 @@ function normalizeMonitoringRefreshSettings(input) {
   }
 }
 
+function normalizeFloatingMonitorSettings(input = {}) {
+  const mode = input?.mode === 'super-lite' ? 'super-lite' : 'standard'
+
+  return {
+    ...DEFAULT_FLOATING_MONITOR_SETTINGS,
+    ...input,
+    mode,
+    pinned: typeof input?.pinned === 'boolean' ? input.pinned : DEFAULT_FLOATING_MONITOR_SETTINGS.pinned,
+    standardSize: DEFAULT_FLOATING_MONITOR_SETTINGS.standardSize,
+    superLiteSize: DEFAULT_FLOATING_MONITOR_SETTINGS.superLiteSize,
+  }
+}
+
 function getHardwareSensorSettings() {
   if (!isWindows() && !isMacOS()) {
     return normalizeHardwareSensorSettings(getDefaultHardwareSensorSettings())
@@ -632,6 +688,10 @@ function getHardwareSensorSettings() {
 
 function getMonitoringRefreshSettings() {
   return normalizeMonitoringRefreshSettings(readMonitoringRefreshSettingsRaw() || {})
+}
+
+function getFloatingMonitorSettings() {
+  return normalizeFloatingMonitorSettings(readFloatingMonitorSettingsRaw() || {})
 }
 
 async function stopPluginManagedOpenHardwareMonitor() {
@@ -698,6 +758,15 @@ function updateMonitoringRefreshSettings(patch = {}) {
     ...patch,
   })
   writeMonitoringRefreshSettingsRaw(next)
+  return next
+}
+
+function updateFloatingMonitorSettings(patch = {}) {
+  const next = normalizeFloatingMonitorSettings({
+    ...getFloatingMonitorSettings(),
+    ...patch,
+  })
+  writeFloatingMonitorSettingsRaw(next)
   return next
 }
 
@@ -2402,6 +2471,10 @@ export const systemService = {
   getMonitoringRefreshSettings: async () => getMonitoringRefreshSettings(),
 
   updateMonitoringRefreshSettings: async (patch) => updateMonitoringRefreshSettings(patch),
+
+  getFloatingMonitorSettings: async () => getFloatingMonitorSettings(),
+
+  updateFloatingMonitorSettings: async (patch) => updateFloatingMonitorSettings(patch),
 
   getOpenHardwareMonitorStatus,
 
