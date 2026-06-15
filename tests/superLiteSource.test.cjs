@@ -36,3 +36,14 @@ test('super-lite view is presentational and Watch owns services and timers', () 
   assert.doesNotMatch(superLite, /setInterval/)
   assert.doesNotMatch(superLite, /localStorage|dbStorage/)
 })
+
+test('Watch switches floating modes, resizes the window, and persists mode and pinned state', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /const floatingMode = ref<FloatingMonitorMode>/)
+  assert.match(watch, /switchFloatingMode/)
+  assert.match(watch, /window\.services\.resizeWindow\(200,\s*200\)/)
+  assert.match(watch, /updateFloatingMonitorSettings/)
+  assert.match(watch, /SuperLiteMonitorView/)
+  assert.match(watch, /formatSuperLiteRefreshLabel\(getCurrentPollProfile\(\)\.fast\)/)
+})

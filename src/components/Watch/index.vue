@@ -12,6 +12,10 @@ import {
 } from '@icon-park/vue-next'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
+import {
+  formatSuperLiteRefreshLabel,
+  resolveSuperLiteOverallStatus,
+} from '../../utils/superLiteMonitor'
 import SuperLiteMonitorView from './SuperLiteMonitorView.vue'
 import {
   buildWatchCpuOverviewSideItems,
@@ -25,6 +29,8 @@ import {
   WATCH_MODE_POLL_PROFILES,
 } from '../../utils/watch'
 import type { FloatingMonitorMode } from '../../utils/hashRoute'
+
+type SuperLitePage = 'overview' | 'cpu' | 'gpu' | 'memory'
 
 const props = defineProps<{
   active?: boolean
@@ -64,8 +70,7 @@ const memoryLayout = ref<MemoLayoutData[]>([])
 const pinned = ref(true)
 const monitorMode = ref<'overview' | 'cpu' | 'gpu'>('overview')
 const floatingMode = ref<FloatingMonitorMode>(props.initialFloatingMode || 'standard')
-const superLitePlaceholderStatus = computed(() => ({ level: 'normal' as const, label: '良好' }))
-const superLitePlaceholderMetrics = computed(() => [])
+const superLitePage = ref<SuperLitePage>('overview')
 
 const history = reactive({
   cpu: [] as number[],
@@ -91,6 +96,7 @@ let lastGpuRefreshAt = 0
 let lastInfoRefreshAt = 0
 let lastTimeRefreshAt = 0
 let watchRefreshGeneration = 0
+let floatingSettingsLoaded = false
 
 const STATIC_INFO_INTERVAL_MS = 20000
 const TIME_INFO_INTERVAL_MS = 10000
@@ -286,6 +292,49 @@ const footerStatus = computed(() => {
   if (!primaryGpu.value) return '未检测到显卡信息'
   return '部分指标暂不支持'
 })
+
+const superLiteStatus = computed(() => resolveSuperLiteOverallStatus({
+  cpuUsage: cpuPercent.value,
+  gpuUsage: gpuPercent.value,
+  memoryUsage: memoryPercent.value,
+  cpuTemperature: cpuTempValue.value,
+  gpuTemperature: gpuTempValue.value,
+  memoryPressure: memoData.pressure?.level,
+}))
+const superLiteFooterLeft = computed(() => formatSuperLiteRefreshLabel(getCurrentPollProfile().fast))
+const superLiteFooterRight = computed(() => `⏱${formatWatchRuntime(timeInfo.value?.uptime)}`)
+const superLiteMetrics = computed(() => [
+  {
+    key: 'cpu' as const,
+    label: 'CPU',
+    usageLabel: formatPercent(cpuPercent.value),
+    primaryExtra: cpuTemperatureDisplay.value,
+    secondaryExtra: formatPower(cpuPowerValue.value),
+    trend: history.cpu,
+    tone: 'cpu' as const,
+    status: superLiteStatus.value.level,
+  },
+  {
+    key: 'gpu' as const,
+    label: 'GPU',
+    usageLabel: formatPercent(gpuPercent.value),
+    primaryExtra: formatTemperature(gpuTempValue.value),
+    secondaryExtra: formatPower(gpuPowerValue.value),
+    trend: history.gpu,
+    tone: 'gpu' as const,
+    status: superLiteStatus.value.level,
+  },
+  {
+    key: 'memory' as const,
+    label: 'MEM',
+    usageLabel: formatPercent(memoryPercent.value),
+    primaryExtra: formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData)),
+    secondaryExtra: memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel.value : '正常',
+    trend: history.memory,
+    tone: 'memory' as const,
+    status: superLiteStatus.value.level,
+  },
+])
 
 const cpuDetailStats = computed(() => {
   const stats = [
@@ -559,9 +608,71 @@ async function startPolling() {
   }, pollProfile.slow)
 }
 
+async function persistFloatingMonitorSettings(patch: Partial<FloatingMonitorSettingsData>) {
+  try {
+    await window.services.updateFloatingMonitorSettings?.(patch)
+  } catch (error) {
+    console.warn('悬浮监控设置持久化失败:', error)
+  }
+}
+
+function resizeFloatingMode(mode: FloatingMonitorMode) {
+  if (mode === 'super-lite') {
+    window.services.resizeWindow(200, 200)
+    return
+  }
+
+  window.services.resizeWindow(432, 398)
+}
+
+function applyFloatingMode(mode: FloatingMonitorMode, persist = true) {
+  if (floatingMode.value === mode) {
+    resizeFloatingMode(mode)
+    return
+  }
+
+  floatingMode.value = mode
+  superLitePage.value = 'overview'
+  resizeFloatingMode(mode)
+
+  if (persist) {
+    void persistFloatingMonitorSettings({ mode })
+  }
+}
+
+function switchFloatingMode(mode: FloatingMonitorMode) {
+  applyFloatingMode(mode)
+}
+
+async function loadFloatingMonitorSettings() {
+  if (floatingSettingsLoaded) return
+  floatingSettingsLoaded = true
+
+  try {
+    const settings = await window.services.getFloatingMonitorSettings?.()
+
+    if (typeof settings?.pinned === 'boolean') {
+      pinned.value = settings.pinned
+    }
+
+    if (props.initialFloatingMode === 'super-lite') {
+      resizeFloatingMode('super-lite')
+      if (settings?.mode !== 'super-lite') {
+        void persistFloatingMonitorSettings({ mode: 'super-lite', pinned: pinned.value })
+      }
+      return
+    }
+
+    applyFloatingMode(settings?.mode === 'super-lite' ? 'super-lite' : 'standard', false)
+  } catch (error) {
+    console.warn('悬浮监控设置读取失败:', error)
+  }
+}
+
 function togglePin() {
   pinned.value = !pinned.value
   window.services.alwaysOnTop(pinned.value)
+  void persistFloatingMonitorSettings({ pinned: pinned.value })
 }
 
 function minimizeWindow() {
@@ -599,6 +710,7 @@ watch(
       return
     }
 
+    await loadFloatingMonitorSettings()
     window.services.alwaysOnTop(pinned.value)
     await startPolling()
   },
@@ -614,15 +726,15 @@ onUnmounted(() => {
   <div class="watch-container" :data-floating-mode="floatingMode">
     <SuperLiteMonitorView
       v-if="floatingMode === 'super-lite'"
-      page="overview"
-      :status="superLitePlaceholderStatus"
-      :metrics="superLitePlaceholderMetrics"
-      footer-left="↻--"
-      footer-right="⏱--:--:--"
+      :page="superLitePage"
+      :status="superLiteStatus"
+      :metrics="superLiteMetrics"
+      :footer-left="superLiteFooterLeft"
+      :footer-right="superLiteFooterRight"
       :pinned="pinned"
-      @set-page="() => undefined"
+      @set-page="superLitePage = $event"
       @toggle-pin="togglePin"
-      @switch-standard="floatingMode = 'standard'"
+      @switch-standard="switchFloatingMode('standard')"
     />
     <div v-else class="monitor-shell">
       <header class="monitor-shell__header">
@@ -656,6 +768,9 @@ onUnmounted(() => {
         </div>
 
         <div class="monitor-shell__actions">
+          <button type="button" class="monitor-action monitor-action--text" title="进入超级轻量模式" @click="switchFloatingMode('super-lite')">
+            轻
+          </button>
           <button type="button" :class="['monitor-action', { 'monitor-action--active': pinned }]" @click="togglePin">
             <Pushpin theme="outline" size="16" fill="currentColor" :strokeWidth="3" />
           </button>
@@ -986,6 +1101,11 @@ onUnmounted(() => {
 
 .monitor-action--active {
   color: #40b8ff;
+}
+
+.monitor-action--text {
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .monitor-action--close:hover {
