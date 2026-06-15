@@ -39,3 +39,14 @@ test('build script generates a super-lite watch alias rather than a second app',
   assert.match(source, /\['a_watch_super_lite',\s*'watch\?floatingMode=super-lite&entry=hardwareWatchSuperLite'\]/)
   assert.doesNotMatch(source, /super-lite\.html/)
 })
+
+test('App parses watch query parameters and passes initial floating mode into Watch', () => {
+  const app = readSource('src/App.vue')
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(app, /resolvePageName/)
+  assert.match(app, /resolveInitialFloatingMode/)
+  assert.match(app, /<Watch[\s\S]*:initial-floating-mode="initialFloatingMode"/)
+  assert.match(watch, /initialFloatingMode\?:\s*'standard' \| 'super-lite'/)
+  assert.match(watch, /data-floating-mode/)
+})

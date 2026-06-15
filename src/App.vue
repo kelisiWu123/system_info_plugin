@@ -10,12 +10,11 @@ import {
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { overviewHardwareStore, updateOverviewMonitoringRefreshSettings } from './composables/useOverviewHardwareData'
 import { resolveDevPageCopyTarget } from './utils/devPageCopy'
+import { resolveInitialFloatingMode, resolvePageName, type PageName } from './utils/hashRoute'
 import {
   getSensorEnhancementPlatform,
   shouldAutoPrepareSensorEnhancement,
 } from './utils/platform'
-
-type PageName = 'computer' | 'watch'
 
 interface SidebarItem {
   id: string
@@ -63,12 +62,8 @@ function syncHash() {
   currentHash.value = window.location.hash
 }
 
-function resolvePage(hash: string): PageName {
-  const page = hash.replace(/^#\/?/, '')
-  return page === 'watch' ? 'watch' : 'computer'
-}
-
-const currentPage = computed<PageName>(() => resolvePage(currentHash.value))
+const currentPage = computed<PageName>(() => resolvePageName(currentHash.value))
+const initialFloatingMode = computed(() => resolveInitialFloatingMode(currentHash.value))
 const isWatchPage = computed(() => currentPage.value === 'watch')
 const currentDevCopyTarget = computed(() => resolveDevPageCopyTarget(selectedSection.value))
 const overviewRefreshSettings = overviewHardwareStore.monitoringRefreshSettings
@@ -474,7 +469,7 @@ onUnmounted(() => {
 
 <template>
   <div v-if="isWatchPage" class="watch-stage">
-    <Watch :active="true" />
+    <Watch :active="true" :initial-floating-mode="initialFloatingMode" />
   </div>
 
   <div v-else class="desktop-shell">

@@ -23,9 +23,11 @@ import {
   getWatchMemoryPalette,
   WATCH_MODE_POLL_PROFILES,
 } from '../../utils/watch'
+import type { FloatingMonitorMode } from '../../utils/hashRoute'
 
 const props = defineProps<{
   active?: boolean
+  initialFloatingMode?: 'standard' | 'super-lite'
 }>()
 
 const memoData = reactive<MemoData>({
@@ -60,6 +62,7 @@ const timeInfo = ref<TimeData>()
 const memoryLayout = ref<MemoLayoutData[]>([])
 const pinned = ref(true)
 const monitorMode = ref<'overview' | 'cpu' | 'gpu'>('overview')
+const floatingMode = ref<FloatingMonitorMode>(props.initialFloatingMode || 'standard')
 
 const history = reactive({
   cpu: [] as number[],
@@ -605,7 +608,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="watch-container">
+  <div class="watch-container" :data-floating-mode="floatingMode">
     <div class="monitor-shell">
       <header class="monitor-shell__header">
         <div class="monitor-shell__brand">
