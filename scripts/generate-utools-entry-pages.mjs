@@ -66,6 +66,7 @@ function writePageEntry(filePath, pageName) {
 for (const [entryName, pageName] of [
   ['a_computer', 'computer'],
   ['a_watch', 'watch'],
+  ['a_watch_super_lite', 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'],
 ]) {
   const entryDir = join(distDir, entryName)
   rmSync(entryDir, { recursive: true, force: true })

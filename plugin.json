@@ -25,6 +25,15 @@
 			"cmds": [
 				"硬件监控"
 			]
+		},
+		{
+			"code": "hardwareWatchSuperLite",
+			"explain": "超级轻量硬件监控",
+			"cmds": [
+				"超级轻量监控",
+				"轻量监控",
+				"硬件轻量监控"
+			]
 		}
 
 	]

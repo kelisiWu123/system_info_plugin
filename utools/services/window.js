@@ -8,6 +8,15 @@ function isDevMode() {
   return typeof process !== 'undefined' && process.env.NODE_ENV === 'development'
 }
 
+function isWatchWindowName(fileName) {
+  return ['a_watch', 'watch', 'a_watch_super_lite'].includes(fileName)
+}
+
+function getWindowHash(fileName) {
+  if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
+  return isWatchWindowName(fileName) ? 'watch' : 'computer'
+}
+
 export function setupWindowBridge() {
   ipcRenderer.on('init', (event) => {
     parentWindowId = event.senderId
@@ -116,12 +125,12 @@ export const windowService = {
   },
 
   createWindow: (fileName, height = 300, width = 300, backgroundColor = 0.3) => {
-    const isWatchWindow = ['a_watch', 'watch'].includes(fileName)
-    const windowHash = isWatchWindow ? 'watch' : 'computer'
+    const isWatchWindow = isWatchWindowName(fileName)
+    const windowHash = getWindowHash(fileName)
     const windowUrl = runtimeUtools.isDev()
-      ? `http://localhost:9000/index.html#${isWatchWindow ? 'watch' : 'computer'}`
+      ? `http://localhost:9000/index.html#${windowHash}`
       : isWatchWindow
-        ? 'watch.html'
+        ? `watch.html#${windowHash}`
         : 'computer.html'
 
     if (typeof runtimeUtools.createBrowserWindow !== 'function') {

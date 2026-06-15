@@ -17,6 +17,10 @@ const windowPresets = {
     prod: { height: 398, width: 432, backgroundColor: 0 },
     dev: { height: 420, width: 456, backgroundColor: 0 },
   },
+  a_watch_super_lite: {
+    prod: { height: 200, width: 200, backgroundColor: 0 },
+    dev: { height: 200, width: 200, backgroundColor: 0 },
+  },
   a_computer: {
     prod: { height: 860, width: 1380, backgroundColor: 1 },
     dev: { height: 900, width: 1440, backgroundColor: 1 },
@@ -48,6 +52,14 @@ window.exports = {
     args: {
       enter: () => {
         openPresetWindow('a_watch')
+      },
+    },
+  },
+  hardwareWatchSuperLite: {
+    mode: 'none',
+    args: {
+      enter: () => {
+        openPresetWindow('a_watch_super_lite')
       },
     },
   },
