@@ -22,6 +22,7 @@ export type OverviewLiteServiceKey =
   | 'diskData'
   | 'diskLayout'
   | 'biosData'
+  | 'systemData'
   | 'displaysData'
   | 'boardData'
   | 'osInfo'
@@ -61,6 +62,7 @@ export const overviewLiteServiceLabels: Record<OverviewLiteServiceKey, string> =
   diskData: '磁盘占用',
   diskLayout: '磁盘布局',
   biosData: 'BIOS 信息',
+  systemData: '整机型号',
   displaysData: '显示器信息',
   boardData: '主板信息',
   osInfo: '操作系统',
@@ -81,11 +83,13 @@ const cpuLoad = ref(0)
 const cpuCurrentSpeed = ref<CpuCurrentSpeedData>({ min: 0, max: 0, avg: 0, cores: [] })
 const memoData = ref<MemoData>(emptyMemoData)
 const memoLayoutData = ref<MemoLayoutData[]>([])
+const gpuData = ref<GpuData[]>([])
 const primaryGpu = ref<GpuData>()
 const diskData = ref<DiskData[]>([])
 const diskLayoutData = ref<DiskLayoutData[]>([])
 const boardData = ref<BoardData>()
 const biosData = ref<BiosInfoData>()
+const systemData = ref<SystemData>()
 const displaysData = ref<DisplayData[]>([])
 const osInfo = ref<OsInfoData>()
 const timeInfo = ref<TimeData>()
@@ -111,6 +115,7 @@ const fetchState = reactive<Record<OverviewLiteServiceKey, { status: FetchStatus
   diskData: { status: 'pending', note: '' },
   diskLayout: { status: 'pending', note: '' },
   biosData: { status: 'pending', note: '' },
+  systemData: { status: 'pending', note: '' },
   displaysData: { status: 'pending', note: '' },
   boardData: { status: 'pending', note: '' },
   osInfo: { status: 'pending', note: '' },
@@ -252,6 +257,7 @@ async function refreshOverviewMetrics(force = false) {
 
       if (needsGpu && gpuRes.status === 'fulfilled') {
         const nextGpuData = gpuRes.value || []
+        gpuData.value = nextGpuData
         primaryGpu.value = selectPrimaryGpu(nextGpuData)
         setFetchState('gpuInfo', nextGpuData.length ? 'ok' : 'missing', nextGpuData.length ? '' : '返回空数组')
         appendMetricHistory(metricHistory.gpuTemp, primaryGpu.value?.temperatureGpu || 0)
@@ -344,9 +350,10 @@ async function initOverviewHardwareData() {
       setFetchState('osInfo', 'error', normalizeErrorMessage(osRes.reason))
     }
 
-    const [diskLayoutRes, biosRes, displaysRes, audioRes, networkRes] = await Promise.allSettled([
+    const [diskLayoutRes, biosRes, systemRes, displaysRes, audioRes, networkRes] = await Promise.allSettled([
       readService(() => window.services.getDiskLayout(), 15000, 1),
       readService(() => window.services.getBiosData(), 10000, 1),
+      readService(() => window.services.getSystemData(), 10000, 1),
       readService(() => window.services.getDisplaysData(), 12000, 1),
       readService(() => window.services.getAudioDevices(), 10000, 1),
       readService(() => window.services.getNetworkInterfaces(), 12000, 1),
@@ -364,6 +371,13 @@ async function initOverviewHardwareData() {
       setFetchState('biosData', biosRes.value ? 'ok' : 'missing', biosRes.value ? '' : '返回为空')
     } else {
       setFetchState('biosData', 'error', normalizeErrorMessage(biosRes.reason))
+    }
+
+    if (systemRes.status === 'fulfilled') {
+      systemData.value = systemRes.value
+      setFetchState('systemData', systemRes.value ? 'ok' : 'missing', systemRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('systemData', 'error', normalizeErrorMessage(systemRes.reason))
     }
 
     if (displaysRes.status === 'fulfilled') {
@@ -485,10 +499,13 @@ export const overviewHardwareStore = {
   cpuCurrentSpeed,
   memoData,
   memoLayoutData,
+  gpuData,
   primaryGpu,
   diskData,
+  diskLayoutData,
   boardData,
   biosData,
+  systemData,
   displaysData,
   osInfo,
   timeInfo,

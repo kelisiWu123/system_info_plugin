@@ -13,31 +13,6 @@ if (!scriptMatch || !styleMatch) {
   throw new Error('无法从 dist/index.html 提取构建资源路径')
 }
 
-const scriptPath = `../${scriptMatch[1]}`
-const stylePath = `../${styleMatch[1]}`
-
-function buildEntryHtml(pageName) {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HWInfoX</title>
-    <script>
-      if (!window.location.hash) {
-        window.location.hash = '${pageName}';
-      }
-    </script>
-    <script type="module" crossorigin src="${scriptPath}"></script>
-    <link rel="stylesheet" crossorigin href="${stylePath}">
-  </head>
-  <body>
-    <div id="app"></div>
-  </body>
-</html>
-`
-}
-
 function buildStandaloneEntryHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -65,6 +40,7 @@ function writePageEntry(filePath, pageName) {
 
 for (const [entryName, pageName] of [
   ['a_computer', 'computer'],
+  ['a_specs_lite', 'deviceSpecs'],
   ['a_watch', 'watch?floatingMode=standard&entry=hardwareWatch'],
   ['a_watch_super_lite', 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'],
 ]) {

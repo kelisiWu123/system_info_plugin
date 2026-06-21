@@ -1,4 +1,4 @@
-export type PageName = 'computer' | 'watch'
+export type PageName = 'computer' | 'watch' | 'deviceSpecs'
 export type FloatingMonitorMode = 'standard' | 'super-lite'
 export type FloatingMonitorEntry = 'hardwareWatch' | 'hardwareWatchSuperLite' | 'unknown'
 
@@ -12,7 +12,11 @@ export function getHashRoute(hash: string) {
 }
 
 export function resolvePageName(hash: string): PageName {
-  return getHashRoute(hash).pageName === 'watch' ? 'watch' : 'computer'
+  const pageName = getHashRoute(hash).pageName
+
+  if (pageName === 'watch') return 'watch'
+  if (pageName === 'deviceSpecs') return 'deviceSpecs'
+  return 'computer'
 }
 
 export function resolveInitialFloatingMode(hash: string): FloatingMonitorMode {

@@ -25,7 +25,7 @@ export function formatWatchRuntime(seconds?: number) {
 }
 
 export interface WatchCpuSpeedSourceLike {
-  source?: 'powermetrics' | 'systeminformation' | 'LibreHardwareMonitor' | 'OpenHardwareMonitor'
+  source?: 'powermetrics' | 'systeminformation' | 'OpenHardwareMonitor'
   helper?: boolean
   nativeErrorCode?: string
 }
@@ -140,7 +140,6 @@ export function formatWatchCpuSpeedSourceLabel(speed: WatchCpuSpeedSourceLike | 
     return '可启用传感器增强'
   }
   if (speed?.source === 'systeminformation') return '内置采集'
-  if (speed?.source === 'LibreHardwareMonitor') return 'LibreHardwareMonitor'
   if (speed?.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
   return '未知来源'
 }

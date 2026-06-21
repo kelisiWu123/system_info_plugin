@@ -9,10 +9,17 @@ import {
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
 import {
+  getSensorEnhancementControlLabel,
   getSensorEnhancementPlatform,
+  getSensorEnhancementPrimaryActionLabel,
   shouldAutoPrepareSensorEnhancement,
 } from '../../utils/platform'
-import { getProcessorAuxDisplayMode, getProcessorIdlePercent } from '../../utils/processor'
+import {
+  getCpuHybridCoreCounts,
+  getProcessorAuxDisplayMode,
+  getProcessorDisplayCoreCount,
+  getProcessorIdlePercent,
+} from '../../utils/processor'
 
 const props = defineProps<{
   active?: boolean
@@ -74,6 +81,7 @@ const sensorAutoPrepareAttempted = ref(false)
 const sensorSettingsLoading = ref(false)
 const sensorActionLoading = ref(false)
 const macHelperActionMessage = ref('')
+const cpuSpeedDiagnosticCopyFeedback = ref<'idle' | 'success' | 'error'>('idle')
 const sensorSettings = ref<HardwareSensorSettingsData>({
   enhancedSensorEnabled: false,
   openHardwareMonitorAutoStart: false,
@@ -81,6 +89,7 @@ const sensorSettings = ref<HardwareSensorSettingsData>({
 })
 const openHardwareMonitorStatus = ref<OpenHardwareMonitorStatusData | null>(null)
 const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
+let cpuSpeedDiagnosticCopyFeedbackTimerId: number | undefined
 
 const pageStateBlock = computed(() => {
   if (fetchState.cpuInfo.status === 'error' || fetchState.cpuTemperature.status === 'error') {
@@ -192,7 +201,7 @@ function formatFanSpeed(value: number | null) {
 function formatSensorReason(reason?: string) {
   switch (reason) {
     case 'ENHANCED_SENSOR_DISABLED':
-      return '增强模式未开启'
+      return 'OHM 未启用'
     case 'OHM_EXE_NOT_FOUND':
       return '组件不存在'
     case 'OHM_NOT_RUNNING':
@@ -235,6 +244,51 @@ function formatSensorReason(reason?: string) {
   }
 }
 
+function formatCpuClockFilterReason(reason?: string) {
+  switch (reason) {
+    case 'EFFECTIVE_CLOCK_IGNORED':
+      return 'Effective 时钟不参与当前频率展示'
+    case 'BEYOND_EXPECTED_CORE_COUNT':
+      return '超出预期物理核心数'
+    case 'OUTLIER_HIGH':
+      return '明显高于其余核心频率'
+    case 'INVALID_VALUE':
+      return '传感器值无效'
+    default:
+      return reason || '已忽略'
+  }
+}
+
+function formatCpuFrequencyDisplayDecision(choice?: 'max_core' | 'avg_fallback' | 'unavailable') {
+  switch (choice) {
+    case 'max_core':
+      return '使用有效单核频率中的最高值'
+    case 'avg_fallback':
+      return '没有可用单核频率，回退到 avg'
+    case 'unavailable':
+      return '未拿到可用频率'
+    default:
+      return '未知决策'
+  }
+}
+
+function formatCpuFrequencyAnomalyReason(reason?: string) {
+  switch (reason) {
+    case 'IGNORED_OHM_SENSORS_PRESENT':
+      return '存在被忽略的 OHM 原始时钟传感器'
+    case 'AVG_FALLBACK_WITH_IGNORED_OHM_SENSORS':
+      return '当前展示值来自 avg fallback，同时存在被忽略的 OHM 读数'
+    case 'DISPLAY_EXCEEDS_CPU_SPEEDMAX':
+      return '当前展示频率明显高于 CPU 标称最大频率'
+    case 'DISPLAY_EXCEEDS_ACCEPTED_CORE_MAX':
+      return '当前展示频率明显高于已采纳核心中的最大频率'
+    case 'DISPLAY_MATCHES_IGNORED_OHM_SENSOR':
+      return '当前展示频率与被忽略的 OHM 原始读数接近'
+    default:
+      return reason || '检测到异常'
+  }
+}
+
 function formatTemperatureSource(source?: CpuTemperatureData['source']) {
   switch (source) {
     case 'systeminformation':
@@ -243,8 +297,6 @@ function formatTemperatureSource(source?: CpuTemperatureData['source']) {
       return 'AppleSMC'
     case 'macos-temperature-sensor':
       return 'macOS 原生传感器'
-    case 'LibreHardwareMonitor':
-      return 'LibreHardwareMonitor WMI'
     case 'OpenHardwareMonitor':
       return 'OpenHardwareMonitor'
     case 'unsupported':
@@ -262,7 +314,6 @@ function formatCpuSpeedSource(speed: CpuCurrentSpeedData) {
     return 'systeminformation fallback / 需安装 helper'
   }
   if (speed.source === 'systeminformation') return 'systeminformation'
-  if (speed.source === 'LibreHardwareMonitor') return 'LibreHardwareMonitor'
   if (speed.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
   return '未知来源'
 }
@@ -270,7 +321,6 @@ function formatCpuSpeedSource(speed: CpuCurrentSpeedData) {
 function formatCpuPowerSource(power?: CpuPowerData) {
   if (power?.source === 'powermetrics' && power.helper) return 'powermetrics helper'
   if (power?.source === 'powermetrics') return 'powermetrics'
-  if (power?.source === 'LibreHardwareMonitor') return 'LibreHardwareMonitor'
   if (power?.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
   return '功耗来源未知'
 }
@@ -389,15 +439,27 @@ const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? pa
 const cpuFanSpeedValue = computed(() => safeNumber(cpuFanSpeed.value?.value))
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
 const cpuIdlePercent = computed(() => getProcessorIdlePercent(cpuLoadData.value))
+const cpuHybridCoreCounts = computed(() => getCpuHybridCoreCounts(cpuData.value))
+const displayPhysicalCoreCount = computed(() => getProcessorDisplayCoreCount(cpuData.value, cpuCurrentSpeed.value, cpuLoadData.value))
 const currentSpeedValue = computed(() => {
   const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
   return value > 0 ? value : null
 })
 const currentSpeedMax = computed(() => safeNumber(cpuCurrentSpeed.value.max) || safeNumber(cpuData.value?.speedMax) || 0)
 const currentSpeedSourceLabel = computed(() => formatCpuSpeedSource(cpuCurrentSpeed.value))
+const currentSpeedDiagnostics = computed(() => cpuCurrentSpeed.value.frequencyDiagnostics || null)
 const sensorEnhancementPlatform = computed(() => getSensorEnhancementPlatform(osInfo.value))
 const processorAuxDisplayMode = computed(() => getProcessorAuxDisplayMode(sensorEnhancementPlatform.value))
 const isWindowsPlatform = computed(() => sensorEnhancementPlatform.value === 'windows')
+const visibleCpuClockSensors = computed(() => isWindowsPlatform.value ? (cpuCurrentSpeed.value.allCpuClockSensors || []) : [])
+const hasCpuClockSensorDiagnostics = computed(() => visibleCpuClockSensors.value.length > 0)
+const hasCpuSpeedDiagnosticsPanel = computed(() => isWindowsPlatform.value && (hasCpuClockSensorDiagnostics.value || Boolean(currentSpeedDiagnostics.value)))
+const hasCpuSpeedAnomaly = computed(() => Boolean(currentSpeedDiagnostics.value?.anomalyDetected))
+const cpuSpeedDiagnosticCopyLabel = computed(() => {
+  if (cpuSpeedDiagnosticCopyFeedback.value === 'success') return '已复制'
+  if (cpuSpeedDiagnosticCopyFeedback.value === 'error') return '复制失败'
+  return hasCpuSpeedAnomaly.value ? '复制异常信息' : '复制频率诊断'
+})
 const isMacPlatform = computed(() => sensorEnhancementPlatform.value === 'macos')
 const cpuTemperatureSourceLabel = computed(() => formatTemperatureSource(cpuTemperature.value?.source))
 const cpuTemperatureReasonLabel = computed(() => formatSensorReason(cpuTemperature.value?.reason || cpuTemperature.value?.errorCode))
@@ -407,10 +469,15 @@ const openHardwareMonitorStatusLabel = computed(() => {
   if (!openHardwareMonitorStatus.value.executableExists) return '组件缺失'
   return formatSensorReason(openHardwareMonitorStatus.value.reason)
 })
+const windowsSensorControlLabel = computed(() => getSensorEnhancementControlLabel('windows'))
+const windowsSensorPrimaryActionLabel = computed(() => getSensorEnhancementPrimaryActionLabel(
+  'windows',
+  sensorSettings.value.enhancedSensorEnabled
+))
 const sensorEnhancementSummary = computed(() => {
-  if (!sensorSettings.value.enhancedSensorEnabled) return '增强模式关闭'
-  if (openHardwareMonitorStatus.value?.running) return '增强模式已启用，OHM 正在运行'
-  return '增强模式已启用，将在温度缺失时自动尝试启动 OHM'
+  if (!sensorSettings.value.enhancedSensorEnabled) return 'OHM 已关闭'
+  if (openHardwareMonitorStatus.value?.running) return 'OHM 已启用，正在运行'
+  return 'OHM 已启用，温度缺失时会自动尝试启动'
 })
 const sensorEnhancementSuggestion = computed(() => {
   if (cpuTemperature.value?.suggestion) return cpuTemperature.value.suggestion
@@ -468,17 +535,17 @@ const primarySpecs = computed(() => [
   {
     label: '核心 / 线程',
     value: joinParts([
-      cpuData.value?.physicalCores ? `${cpuData.value.physicalCores} 核` : '',
+      displayPhysicalCoreCount.value ? `${displayPhysicalCoreCount.value} 核` : '',
       cpuData.value?.cores ? `${cpuData.value.cores} 线程` : '',
     ], ' / ') || '--',
   },
   {
     label: 'P-Core / E-Core',
     value:
-      cpuData.value?.performanceCores || cpuData.value?.efficiencyCores
+      cpuHybridCoreCounts.value.total
         ? joinParts([
-            cpuData.value?.performanceCores ? `${cpuData.value.performanceCores}P` : '',
-            cpuData.value?.efficiencyCores ? `${cpuData.value.efficiencyCores}E` : '',
+            cpuHybridCoreCounts.value.performance ? `${cpuHybridCoreCounts.value.performance}P` : '',
+            cpuHybridCoreCounts.value.efficiency ? `${cpuHybridCoreCounts.value.efficiency}E` : '',
           ], ' + ')
         : '--',
   },
@@ -603,8 +670,7 @@ const allCoreRows = computed<CoreRow[]>(() => {
   const speedCores = cpuCurrentSpeed.value.cores || []
   const loadCores = cpuLoadData.value.cpus || []
   const temperatureCores = cpuTemperature.value?.cores || []
-  const architectureCoreCount = (cpuData.value?.performanceCores || 0) + (cpuData.value?.efficiencyCores || 0)
-  const knownCoreCount = architectureCoreCount || cpuData.value?.physicalCores || 0
+  const knownCoreCount = displayPhysicalCoreCount.value
   const total = Math.max(
     knownCoreCount,
     knownCoreCount ? Math.min(speedCores.length, knownCoreCount) : speedCores.length,
@@ -614,9 +680,9 @@ const allCoreRows = computed<CoreRow[]>(() => {
 
   return Array.from({ length: total }, (_, index) => ({
     id: `core-${index}`,
-    label: `${coreTypeLabel(index, total, cpuData.value?.performanceCores, cpuData.value?.efficiencyCores)} ${index}`,
-    type: coreTypeLabel(index, total, cpuData.value?.performanceCores, cpuData.value?.efficiencyCores),
-    speed: safeNumber(speedCores[index]) ?? currentSpeedValue.value,
+    label: `${coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency)} ${index + 1}`,
+    type: coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency),
+    speed: safeNumber(speedCores[index]) ?? null,
     load: safeNumber(loadCores[index]?.load),
     temperature: safeNumber(temperatureCores[index]) ?? cpuTemperatureValue.value,
   }))
@@ -660,10 +726,10 @@ const detailSpecs = computed(() => [
   {
     label: '核心架构',
     value:
-      cpuData.value?.performanceCores || cpuData.value?.efficiencyCores
+      cpuHybridCoreCounts.value.total
         ? joinParts([
-            cpuData.value?.performanceCores ? 'P-Core' : '',
-            cpuData.value?.efficiencyCores ? 'E-Core' : '',
+            cpuHybridCoreCounts.value.performance ? 'P-Core' : '',
+            cpuHybridCoreCounts.value.efficiency ? 'E-Core' : '',
             '混合架构',
           ])
         : '统一架构',
@@ -705,6 +771,69 @@ const platformSpecs = computed(() => [
   },
 ])
 
+const cpuSpeedDiagnosticDetailLines = computed(() => {
+  if (!isWindowsPlatform.value && !currentSpeedDiagnostics.value && !visibleCpuClockSensors.value.length) return []
+
+  const diagnostics = currentSpeedDiagnostics.value
+  const lines = [
+    `当前展示频率：${formatFrequency(diagnostics?.displayValueGHz ?? currentSpeedValue.value)}`,
+    `当前频率来源：${currentSpeedSourceLabel.value}`,
+    `展示决策：${formatCpuFrequencyDisplayDecision(diagnostics?.displayChosenFrom)}`,
+    `异常判定：${diagnostics?.anomalyDetected ? '检测到异常' : '未检测到异常'}`,
+  ]
+
+  if (diagnostics) {
+    lines.push(
+      `参考 speedMax：${formatFrequency(safeNumber(diagnostics.cpuSpeedMaxGHz))}`,
+      `当前 avg：${formatFrequency(safeNumber(diagnostics.avgGHz))}`,
+      `已采纳核心最大值：${formatFrequency(safeNumber(diagnostics.maxAcceptedCoreGHz))}`,
+      `已忽略核心最大值：${formatFrequency(safeNumber(diagnostics.maxIgnoredCoreGHz))}`,
+      `OHM 原始传感器数：${diagnostics.rawSensorCount}`,
+      `OHM 忽略传感器数：${diagnostics.ignoredSensorCount}`
+    )
+  }
+
+  if (diagnostics?.anomalyReasons?.length) {
+    lines.push(
+      '',
+      '异常原因：',
+      ...diagnostics.anomalyReasons.map((reason) => `- ${formatCpuFrequencyAnomalyReason(reason)}`)
+    )
+  }
+
+  if (visibleCpuClockSensors.value.length) {
+    lines.push(
+      '',
+      'OHM 原始 CPU 时钟传感器：',
+      ...visibleCpuClockSensors.value.map((sensor) =>
+        [
+          `- ${sensor.name || sensor.identifier || '未知传感器'}`,
+          `原始 ${formatFrequency(sensor.value)}`,
+          sensor.accepted === false ? `已忽略（${formatCpuClockFilterReason(sensor.filterReason)}）` : '已采用',
+          sensor.identifier ? `标识 ${sensor.identifier}` : '',
+        ]
+          .filter(Boolean)
+          .join(' | ')
+      )
+    )
+  } else {
+    lines.push('', 'OHM 原始 CPU 时钟传感器：未采集到')
+  }
+
+  return lines
+})
+
+const cpuSpeedDiagnosticReportText = computed(() => {
+  return [
+    'CPU 频率诊断',
+    `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    `处理器：${cpuData.value?.brand || '--'}`,
+    `操作系统：${joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release, osInfo.value?.arch]) || '--'}`,
+    '',
+    ...cpuSpeedDiagnosticDetailLines.value,
+  ].join('\n')
+})
+
 const processorReportText = computed(() => {
   const lines = [
     '处理器页面报告',
@@ -712,7 +841,7 @@ const processorReportText = computed(() => {
     '',
     `处理器：${cpuData.value?.brand || '--'}`,
     `家族信息：${joinParts([cpuData.value?.family, cpuData.value?.vendor], ' / ') || '--'}`,
-    `核心 / 线程：${joinParts([cpuData.value?.physicalCores ? `${cpuData.value.physicalCores} 核` : '', cpuData.value?.cores ? `${cpuData.value.cores} 线程` : ''], ' / ') || '--'}`,
+    `核心 / 线程：${joinParts([displayPhysicalCoreCount.value ? `${displayPhysicalCoreCount.value} 核` : '', cpuData.value?.cores ? `${cpuData.value.cores} 线程` : ''], ' / ') || '--'}`,
     `当前温度：${formatTemperature(cpuTemperatureValue.value)}`,
     `当前功耗：${formatPower(cpuPowerValue.value)}`,
     `${processorAuxDisplayMode.value === 'fan' ? '当前风扇' : '当前电压'}：${processorAuxDisplayMode.value === 'fan' ? formatFanSpeed(cpuFanSpeedValue.value) : formatVoltage(cpuVoltageValue.value)}`,
@@ -722,6 +851,13 @@ const processorReportText = computed(() => {
     ...detailSpecs.value.map((item) => `${item.label}：${item.value}`),
     '',
     ...platformSpecs.value.map((item) => `${item.label}：${item.value}`),
+    ...(cpuSpeedDiagnosticDetailLines.value.length
+      ? [
+          '',
+          'CPU 频率诊断：',
+          ...cpuSpeedDiagnosticDetailLines.value,
+        ]
+      : []),
   ]
 
   return lines.join('\n')
@@ -744,6 +880,29 @@ async function copyProcessorInfo() {
   } catch (error) {
     console.error('复制处理器信息失败:', error)
     return false
+  }
+}
+
+function scheduleCpuSpeedDiagnosticCopyFeedbackReset() {
+  if (cpuSpeedDiagnosticCopyFeedbackTimerId) {
+    window.clearTimeout(cpuSpeedDiagnosticCopyFeedbackTimerId)
+  }
+
+  cpuSpeedDiagnosticCopyFeedbackTimerId = window.setTimeout(() => {
+    cpuSpeedDiagnosticCopyFeedback.value = 'idle'
+    cpuSpeedDiagnosticCopyFeedbackTimerId = undefined
+  }, 1800)
+}
+
+async function copyCpuSpeedDiagnosticReport() {
+  try {
+    await writeClipboard(cpuSpeedDiagnosticReportText.value)
+    cpuSpeedDiagnosticCopyFeedback.value = 'success'
+  } catch (error) {
+    console.error('复制 CPU 频率诊断失败:', error)
+    cpuSpeedDiagnosticCopyFeedback.value = 'error'
+  } finally {
+    scheduleCpuSpeedDiagnosticCopyFeedbackReset()
   }
 }
 
@@ -1007,6 +1166,10 @@ watch(
 )
 
 onUnmounted(() => {
+  if (cpuSpeedDiagnosticCopyFeedbackTimerId) {
+    window.clearTimeout(cpuSpeedDiagnosticCopyFeedbackTimerId)
+    cpuSpeedDiagnosticCopyFeedbackTimerId = undefined
+  }
   releaseStore()
 })
 </script>
@@ -1087,8 +1250,8 @@ onUnmounted(() => {
         <div v-if="sensorEnhancementPlatform === 'windows' && showSensorEnhancementPanel" class="sensor-enhancement-panel">
           <div class="sensor-enhancement-panel__summary">
             <div>
-              <h4>硬件传感器增强模式</h4>
-              <p>Windows 下 CPU 温度没有统一可靠接口。开启后，仅在当前链路拿不到可信温度时，才会尝试使用 OpenHardwareMonitor 本地服务。</p>
+              <h4>{{ windowsSensorControlLabel }}</h4>
+              <p>Windows 下 CPU 温度没有统一可靠接口。启用 OHM 支持后，仅在当前链路拿不到可信温度时，才会尝试使用 OpenHardwareMonitor 本地服务。</p>
             </div>
             <span :class="['sensor-enhancement-panel__status', { 'sensor-enhancement-panel__status--active': sensorSettings.enhancedSensorEnabled }]">
               {{ sensorEnhancementSummary }}
@@ -1097,7 +1260,7 @@ onUnmounted(() => {
 
           <div class="sensor-enhancement-grid">
             <div class="sensor-enhancement-item">
-              <span>增强模式</span>
+              <span>OHM 支持</span>
               <strong>{{ sensorSettings.enhancedSensorEnabled ? '已开启' : '未开启' }}</strong>
             </div>
             <div class="sensor-enhancement-item">
@@ -1110,13 +1273,13 @@ onUnmounted(() => {
             </div>
             <div class="sensor-enhancement-item">
               <span>工作方式</span>
-              <strong>{{ sensorSettings.enhancedSensorEnabled ? '自动尝试启动 OHM' : '仅使用当前内置链路' }}</strong>
+              <strong>{{ sensorSettings.enhancedSensorEnabled ? '温度缺失时自动尝试启动 OHM' : '仅使用当前内置链路' }}</strong>
             </div>
           </div>
 
           <div class="sensor-enhancement-actions">
             <button type="button" class="sensor-button" :disabled="sensorActionLoading" @click="toggleEnhancedSensorMode">
-              {{ sensorSettings.enhancedSensorEnabled ? '关闭增强模式' : '开启增强模式' }}
+              {{ windowsSensorPrimaryActionLabel }}
             </button>
             <button type="button" class="sensor-button" :disabled="sensorSettingsLoading" @click="refreshHardwareSensorState">
               检测状态
@@ -1139,7 +1302,71 @@ onUnmounted(() => {
             <span>原因：{{ cpuTemperatureReasonLabel }}</span>
           </div>
           <p v-if="sensorEnhancementSuggestion" class="sensor-enhancement-hint">建议：{{ sensorEnhancementSuggestion }}</p>
+
         </div>
+
+        <details v-if="hasCpuSpeedDiagnosticsPanel" class="sensor-debug-panel">
+          <summary>CPU 频率诊断信息</summary>
+          <p class="sensor-debug-panel__hint">以下记录当前频率卡片的展示决策、异常判定，以及 OHM 返回的原始 CPU 时钟传感器，便于直接复制给我继续排查。</p>
+          <div class="sensor-debug-panel__actions">
+            <button type="button" class="sensor-button" @click="copyCpuSpeedDiagnosticReport">
+              {{ cpuSpeedDiagnosticCopyLabel }}
+            </button>
+          </div>
+          <div v-if="currentSpeedDiagnostics" class="sensor-debug-list sensor-debug-list--summary">
+            <article class="sensor-debug-item">
+              <div class="sensor-debug-item__head">
+                <strong>当前展示频率</strong>
+                <span>{{ formatFrequency(currentSpeedDiagnostics.displayValueGHz) }}</span>
+              </div>
+              <div class="sensor-debug-item__meta">
+                <span>当前频率来源：{{ currentSpeedSourceLabel }}</span>
+                <span>展示决策：{{ formatCpuFrequencyDisplayDecision(currentSpeedDiagnostics.displayChosenFrom) }}</span>
+              </div>
+              <div class="sensor-debug-item__meta">
+                <span>异常判定：{{ currentSpeedDiagnostics.anomalyDetected ? '检测到异常' : '未检测到异常' }}</span>
+                <span>参考 speedMax：{{ formatFrequency(currentSpeedDiagnostics.cpuSpeedMaxGHz) }}</span>
+              </div>
+              <div class="sensor-debug-item__meta">
+                <span>当前 avg：{{ formatFrequency(currentSpeedDiagnostics.avgGHz) }}</span>
+                <span>已采纳核心最大值：{{ formatFrequency(currentSpeedDiagnostics.maxAcceptedCoreGHz) }}</span>
+              </div>
+              <div class="sensor-debug-item__meta">
+                <span>已忽略核心最大值：{{ formatFrequency(currentSpeedDiagnostics.maxIgnoredCoreGHz) }}</span>
+                <span>OHM 忽略传感器：{{ currentSpeedDiagnostics.ignoredSensorCount }}/{{ currentSpeedDiagnostics.rawSensorCount }}</span>
+              </div>
+              <div v-if="currentSpeedDiagnostics.anomalyReasons.length" class="sensor-debug-reason-list">
+                <span
+                  v-for="reason in currentSpeedDiagnostics.anomalyReasons"
+                  :key="reason"
+                  class="sensor-debug-reason-chip"
+                >
+                  {{ formatCpuFrequencyAnomalyReason(reason) }}
+                </span>
+              </div>
+            </article>
+          </div>
+          <p v-if="!visibleCpuClockSensors.length" class="sensor-debug-panel__hint">本次采样没有拿到 OHM 原始 CPU 时钟传感器，当前诊断仅基于最终展示值与 speedMax 参考值。</p>
+          <div v-if="visibleCpuClockSensors.length" class="sensor-debug-list">
+            <article
+              v-for="sensor in visibleCpuClockSensors"
+              :key="sensor.identifier || sensor.name"
+              :class="['sensor-debug-item', { 'sensor-debug-item--ignored': sensor.accepted === false }]"
+            >
+              <div class="sensor-debug-item__head">
+                <strong>{{ sensor.name || `Core ${typeof sensor.coreIndex === 'number' ? sensor.coreIndex : '--'}` }}</strong>
+                <span>{{ sensor.identifier || '--' }}</span>
+              </div>
+              <div class="sensor-debug-item__meta">
+                <span>原始频率：{{ formatFrequency(sensor.value) }}</span>
+                <span>判定结果：{{ sensor.accepted === false ? '已忽略' : '已采用' }}</span>
+              </div>
+              <div v-if="sensor.accepted === false" class="sensor-debug-item__meta">
+                <span>忽略原因：{{ formatCpuClockFilterReason(sensor.filterReason) }}</span>
+              </div>
+            </article>
+          </div>
+        </details>
 
         <div v-if="sensorEnhancementPlatform === 'macos' && showSensorEnhancementPanel" class="sensor-enhancement-panel">
           <div class="sensor-enhancement-panel__summary">
@@ -1712,6 +1939,112 @@ onUnmounted(() => {
   color: var(--accent-cyan);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.sensor-debug-panel {
+  margin-bottom: 14px;
+  border: 1px solid rgba(66, 128, 240, 0.18);
+  border-radius: 12px;
+  background: rgba(15, 24, 36, 0.72);
+  overflow: hidden;
+
+  summary {
+    cursor: pointer;
+    padding: 12px 14px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    list-style: none;
+    user-select: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  &[open] summary {
+    border-bottom: 1px solid rgba(84, 104, 132, 0.2);
+  }
+}
+
+.sensor-debug-panel__hint {
+  margin: 0;
+  padding: 12px 14px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.sensor-debug-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 14px 0;
+}
+
+.sensor-debug-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+}
+
+.sensor-debug-list--summary {
+  padding-bottom: 0;
+}
+
+.sensor-debug-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(84, 104, 132, 0.2);
+  border-radius: 10px;
+  background: rgba(20, 31, 45, 0.78);
+}
+
+.sensor-debug-item__head,
+.sensor-debug-item__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sensor-debug-item__head {
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  span {
+    color: var(--text-subtle);
+    font-size: 12px;
+  }
+}
+
+.sensor-debug-item__meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sensor-debug-reason-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sensor-debug-reason-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(66, 128, 240, 0.16);
+  color: var(--accent-blue);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .monitor-grid {

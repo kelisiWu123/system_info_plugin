@@ -7,7 +7,7 @@ import {
   refreshGraphicsHardwareData,
 } from '../../composables/useGraphicsHardwareData'
 import { clampPercent, formatDisplayResolution } from '../../utils'
-import { formatGpuTemperatureSensorLabel, getGraphicsPlatformPanelVisibility } from '../../utils/gpu'
+import { formatGpuTemperatureSensorLabel, getGpuIdlePercent, getGraphicsPlatformPanelVisibility } from '../../utils/gpu'
 import { normalizeOsPlatform } from '../../utils/platform'
 import StateBlock from '../common/StateBlock.vue'
 
@@ -364,7 +364,7 @@ const quickStats = computed(() => {
 const monitorCards = computed<MonitorCard[]>(() => {
   const gpu = primaryGpu.value
   const gpuLoad = safeNumber(gpu?.utilizationGpu)
-  const gpuIdle = safeNumber(gpu?.idleResidencyGpu)
+  const gpuIdle = getGpuIdlePercent(gpu)
   const gpuTemp = safeNumber(gpu?.temperatureGpu)
   const gpuClock = safeNumber(gpu?.clockCore)
   const memoryUsed = safeNumber(gpu?.memoryUsed)
@@ -447,6 +447,7 @@ const monitorCards = computed<MonitorCard[]>(() => {
 
 const telemetryRows = computed<StatRow[]>(() => {
   const gpu = primaryGpu.value
+  const gpuIdle = getGpuIdlePercent(gpu)
 
   const rows: StatRow[] = [
     {
@@ -457,19 +458,9 @@ const telemetryRows = computed<StatRow[]>(() => {
     },
     {
       label: 'GPU 空闲率',
-      value: formatPercent(safeNumber(gpu?.idleResidencyGpu)),
-      status:
-        typeof gpu?.idleResidencyGpu !== 'number'
-          ? '暂无'
-          : gpu.idleResidencyGpu >= 50
-            ? '空闲'
-            : '繁忙',
-      statusTone:
-        typeof gpu?.idleResidencyGpu !== 'number'
-          ? 'normal' as const
-          : gpu.idleResidencyGpu >= 50
-            ? 'good' as const
-            : 'warn' as const,
+      value: formatPercent(gpuIdle),
+      status: gpuIdle === null ? '暂无' : gpuIdle >= 50 ? '空闲' : '繁忙',
+      statusTone: gpuIdle === null ? 'normal' : gpuIdle >= 50 ? 'good' : 'warn',
     },
     {
       label: '显存频率',
@@ -609,6 +600,7 @@ const platformRows = computed(() => {
 
 const graphicsReportText = computed(() => {
   const gpu = primaryGpu.value
+  const gpuIdle = getGpuIdlePercent(gpu)
   const lines = [
     '显卡页面报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
@@ -619,7 +611,7 @@ const graphicsReportText = computed(() => {
     `遥测来源：${formatGpuTelemetrySource(gpu)}`,
     `温度来源：${formatGpuTemperatureSource(gpu)}`,
     `温度：${formatTemperature(safeNumber(gpu?.temperatureGpu))}`,
-    `空闲率：${formatPercent(safeNumber(gpu?.idleResidencyGpu))}`,
+    `空闲率：${formatPercent(gpuIdle)}`,
     `功耗：${formatPower(safeNumber(gpu?.powerDraw))}`,
     `使用率：${formatPercent(safeNumber(gpu?.utilizationGpu))}`,
     `当前频率：${formatClock(safeNumber(gpu?.clockCore))}`,

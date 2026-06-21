@@ -13,6 +13,7 @@ declare module 'vue' {
     CardHeader: typeof import('./src/components/CardHeader/index.vue')['default']
     Computer: typeof import('./src/components/Computer/index.vue')['default']
     CpuCard: typeof import('./src/components/CpuCard/index.vue')['default']
+    DeviceSpecsLite: typeof import('./src/components/DeviceSpecsLite/index.vue')['default']
     DiskCard: typeof import('./src/components/DiskCard/index.vue')['default']
     GpuCard: typeof import('./src/components/GpuCard/index.vue')['default']
     GraphicsPage: typeof import('./src/components/GraphicsPage/index.vue')['default']

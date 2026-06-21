@@ -10,14 +10,30 @@ import {
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { overviewHardwareStore, updateOverviewMonitoringRefreshSettings } from './composables/useOverviewHardwareData'
 import { resolveDevPageCopyTarget } from './utils/devPageCopy'
-import { resolveInitialFloatingEntry, resolveInitialFloatingMode, resolvePageName, type PageName } from './utils/hashRoute'
 import {
+  resolveInitialFloatingEntry,
+  resolveInitialFloatingMode,
+  resolvePageName,
+  type PageName,
+} from './utils/hashRoute'
+import {
+  getSensorEnhancementControlLabel,
+  getSensorEnhancementMenuAriaLabel,
   getSensorEnhancementPlatform,
+  getSensorEnhancementPrimaryActionLabel,
   shouldAutoPrepareSensorEnhancement,
 } from './utils/platform'
 
+type ComputerSection =
+  | 'overview'
+  | 'processor'
+  | 'graphics'
+  | 'board'
+  | 'memory'
+  | 'storage'
+
 interface SidebarItem {
-  id: string
+  id: ComputerSection
   label: string
   icon: unknown
   page?: PageName
@@ -36,7 +52,7 @@ interface CopyablePageHandle {
 }
 
 const currentHash = ref(window.location.hash)
-const selectedSection = ref('overview')
+const selectedSection = ref<ComputerSection>('overview')
 const copyPending = ref(false)
 const copyFeedback = ref<'idle' | 'success' | 'error'>('idle')
 const computerRef = ref<CopyablePageHandle | null>(null)
@@ -64,6 +80,7 @@ const currentPage = computed<PageName>(() => resolvePageName(currentHash.value))
 const initialFloatingMode = computed(() => resolveInitialFloatingMode(currentHash.value))
 const initialFloatingEntry = computed(() => resolveInitialFloatingEntry(currentHash.value))
 const isWatchPage = computed(() => currentPage.value === 'watch')
+const isDeviceSpecsPage = computed(() => currentPage.value === 'deviceSpecs')
 const currentDevCopyTarget = computed(() => resolveDevPageCopyTarget(selectedSection.value))
 const overviewRefreshSettings = overviewHardwareStore.monitoringRefreshSettings
 const overviewBackgroundThrottled = overviewHardwareStore.backgroundThrottled
@@ -92,15 +109,10 @@ function syncBodyMode() {
   document.body.classList.toggle('watch-window-body', isWatchPage.value)
 }
 
-function selectSection(id: string) {
+function selectSection(id: SidebarItem['id']) {
   selectedSection.value = id
 
-  if (id === 'watch') {
-    window.location.hash = 'watch'
-    return
-  }
-
-  if (currentPage.value !== 'computer') {
+  if (currentPage.value !== 'computer' || !window.location.hash) {
     window.location.hash = 'computer'
   }
 }
@@ -229,7 +241,13 @@ const sensorEnhancementReady = computed(() => {
 })
 const processorSensorControlActive = computed(() => sensorSettings.value.enhancedSensorEnabled && sensorEnhancementReady.value)
 const processorSensorControlDisabled = computed(() => sensorSettingsLoading.value || sensorActionLoading.value)
-const processorSensorControlLabel = computed(() => '传感器增强')
+const processorSensorControlLabel = computed(() => getSensorEnhancementControlLabel(sensorEnhancementPlatform.value))
+const processorSensorControlAriaLabel = computed(() => getSensorEnhancementMenuAriaLabel(sensorEnhancementPlatform.value))
+const processorSensorControlTitle = computed(() => `${processorSensorControlLabel.value}：${processorSensorControlStatus.value}`)
+const processorSensorPrimaryActionLabel = computed(() => getSensorEnhancementPrimaryActionLabel(
+  sensorEnhancementPlatform.value,
+  sensorSettings.value.enhancedSensorEnabled
+))
 const sensorEnhancementStatus = computed<'off' | 'running' | 'preparing' | 'needs-auth' | 'error' | 'pending'>(() => {
   if (!sensorSettings.value.enhancedSensorEnabled) return 'off'
   if (sensorActionLoading.value) return 'preparing'
@@ -264,6 +282,16 @@ const processorSensorControlStatus = computed(() => {
   }
 })
 const sensorEnhancementDescription = computed(() => {
+  if (sensorEnhancementPlatform.value === 'windows') {
+    if (!sensorSettings.value.enhancedSensorEnabled) {
+      return 'OHM 已关闭。需要时可启用 OpenHardwareMonitor 补齐温度、频率和功耗数据。'
+    }
+    if (sensorEnhancementStatus.value === 'running') return 'OpenHardwareMonitor 正在补齐温度、频率、功耗等传感器数据。'
+    if (sensorEnhancementStatus.value === 'preparing') return '正在准备 OpenHardwareMonitor 组件，请稍候。'
+    if (sensorEnhancementStatus.value === 'error') return 'OpenHardwareMonitor 未能就绪，可以重试或查看详情。'
+    return 'OpenHardwareMonitor 已启用，组件就绪后会自动补齐缺失数据。'
+  }
+
   if (!sensorSettings.value.enhancedSensorEnabled) return '已关闭'
   if (sensorEnhancementStatus.value === 'running') return '正在补齐温度、频率、功耗等传感器数据。'
   if (sensorEnhancementStatus.value === 'preparing') return '正在准备增强组件，请稍候。'
@@ -277,16 +305,23 @@ const showMainHeaderActions = computed(() =>
 
 const sensorDiagnosticsText = computed(() => {
   const lines = [
-    '传感器增强诊断',
+    sensorEnhancementPlatform.value === 'windows' ? 'OpenHardwareMonitor 诊断' : '传感器增强诊断',
     `生成时间：${new Date().toLocaleString('zh-CN')}`,
     `平台：${sensorEnhancementPlatform.value}`,
     `状态：${processorSensorControlStatus.value}`,
-    `增强开关：${sensorSettings.value.enhancedSensorEnabled ? '已开启' : '已关闭'}`,
-    `OHM 自启动：${sensorSettings.value.openHardwareMonitorAutoStart ? '已开启' : '已关闭'}`,
-    `OHM 端口：${sensorSettings.value.openHardwareMonitorPort}`,
+    `${
+      sensorEnhancementPlatform.value === 'windows' ? 'OHM 支持' : '增强开关'
+    }：${sensorSettings.value.enhancedSensorEnabled ? '已开启' : '已关闭'}`,
   ]
 
-  if (openHardwareMonitorStatus.value) {
+  if (sensorEnhancementPlatform.value === 'windows') {
+    lines.push(
+      `OHM 自启动：${sensorSettings.value.openHardwareMonitorAutoStart ? '已开启' : '已关闭'}`,
+      `OHM 端口：${sensorSettings.value.openHardwareMonitorPort}`
+    )
+  }
+
+  if (sensorEnhancementPlatform.value === 'windows' && openHardwareMonitorStatus.value) {
     lines.push(
       '',
       '[OpenHardwareMonitor]',
@@ -297,7 +332,7 @@ const sensorDiagnosticsText = computed(() => {
     )
   }
 
-  if (macHelperStatus.value) {
+  if (sensorEnhancementPlatform.value === 'macos' && macHelperStatus.value) {
     lines.push(
       '',
       '[macOS powermetrics helper]',
@@ -503,17 +538,14 @@ const headerMeta = computed(() => {
   }
 })
 
-watch(currentPage, (page) => {
-  if (page === 'computer' && selectedSection.value === 'watch') {
-    selectedSection.value = 'overview'
-  }
+watch(currentPage, () => {
   syncBodyMode()
 })
 
 watch(
-  sensorEnhancementPlatform,
-  async (platform) => {
-    if (platform === 'unsupported') return
+  [sensorEnhancementPlatform, currentPage],
+  async ([platform, page]) => {
+    if (page !== 'computer' || platform === 'unsupported') return
     await refreshGlobalSensorEnhancementState()
     await prepareGlobalSensorEnhancement(true)
   },
@@ -541,6 +573,25 @@ onUnmounted(() => {
 <template>
   <div v-if="isWatchPage" class="watch-stage">
     <Watch :active="true" :initial-floating-mode="initialFloatingMode" :initial-floating-entry="initialFloatingEntry" />
+  </div>
+
+  <div v-else-if="isDeviceSpecsPage" class="device-specs-stage">
+    <div class="window-titlebar device-specs-titlebar">
+      <div class="window-titlebar__brand device-specs-titlebar__brand">
+        <span class="window-titlebar__mark" aria-hidden="true">H</span>
+        <span class="device-specs-titlebar__text">设备规格</span>
+      </div>
+
+      <div class="window-titlebar__drag-spacer" aria-hidden="true" />
+
+      <div class="window-titlebar__actions">
+        <Bar />
+      </div>
+    </div>
+
+    <main class="device-specs-standalone-content">
+      <DeviceSpecsLite :active="true" />
+    </main>
   </div>
 
   <div v-else class="desktop-shell">
@@ -586,8 +637,8 @@ onUnmounted(() => {
             <button
               type="button"
               :disabled="processorSensorControlDisabled"
-              aria-label="打开传感器增强菜单"
-              :title="`传感器增强：${processorSensorControlStatus}`"
+              :aria-label="processorSensorControlAriaLabel"
+              :title="processorSensorControlTitle"
               :class="[
                 'header-sensor-trigger',
                 `header-sensor-trigger--${sensorEnhancementStatus}`,
@@ -602,7 +653,7 @@ onUnmounted(() => {
 
             <div v-if="sensorMenuOpen" class="sensor-menu-popover">
               <div class="sensor-menu-popover__head">
-                <span>传感器增强</span>
+                <span>{{ processorSensorControlLabel }}</span>
                 <strong>{{ processorSensorControlStatus }}</strong>
               </div>
               <p>{{ sensorEnhancementDescription }}</p>
@@ -616,7 +667,7 @@ onUnmounted(() => {
                   :disabled="sensorActionLoading"
                   @click="setProcessorSensorEnhancementEnabled(true)"
                 >
-                  启用增强模式
+                  {{ processorSensorPrimaryActionLabel }}
                 </button>
                 <button
                   v-else-if="sensorEnhancementStatus === 'needs-auth'"
@@ -643,7 +694,7 @@ onUnmounted(() => {
                   :disabled="sensorActionLoading"
                   @click="setProcessorSensorEnhancementEnabled(false)"
                 >
-                  关闭增强模式
+                  {{ processorSensorPrimaryActionLabel }}
                 </button>
 
                 <button
@@ -775,6 +826,48 @@ onUnmounted(() => {
 .watch-stage {
   height: 100%;
   width: 100%;
+}
+
+.device-specs-stage {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+  height: 100%;
+  width: 100%;
+  background: var(--app-background);
+}
+
+.device-specs-titlebar {
+  grid-row: 1;
+  grid-column: 1;
+  min-height: 44px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.window-titlebar__brand.device-specs-titlebar__brand {
+  flex: 0 0 auto;
+  min-width: 112px;
+  gap: 10px;
+}
+
+.device-specs-titlebar .window-titlebar__mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+}
+
+.device-specs-titlebar__text {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.device-specs-standalone-content {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px 16px;
+  overflow: hidden;
 }
 
 .desktop-shell {

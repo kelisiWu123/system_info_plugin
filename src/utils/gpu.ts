@@ -8,8 +8,18 @@ export interface GraphicsPlatformPanelVisibility {
   telemetryDetails: boolean
 }
 
+export interface GpuTelemetryLike {
+  utilizationGpu?: number | null
+  idleResidencyGpu?: number | null
+}
+
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizePercent(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.max(0, Math.min(100, value))
 }
 
 function isRawAppleSmcGpuLabel(name: string, identifier: string) {
@@ -51,6 +61,16 @@ export function getPrimaryGpuSelectionScore(gpu: GpuData) {
 export function selectPrimaryGpu(gpuData: GpuData[]) {
   if (!gpuData.length) return undefined
   return [...gpuData].sort((left, right) => getPrimaryGpuSelectionScore(right) - getPrimaryGpuSelectionScore(left))[0]
+}
+
+export function getGpuIdlePercent(gpu?: GpuTelemetryLike | null) {
+  const idle = normalizePercent(gpu?.idleResidencyGpu)
+  if (idle !== null) return idle
+
+  const utilization = normalizePercent(gpu?.utilizationGpu)
+  if (utilization === null) return null
+
+  return Math.max(0, Math.min(100, 100 - utilization))
 }
 
 export function formatGpuTemperatureSensorLabel(sensor: GpuTemperatureSensorDisplay | undefined, index: number) {

@@ -3,8 +3,31 @@ import type { Systeminformation } from 'systeminformation'
 declare global {
   type CpuData = Systeminformation.CpuData
   interface CpuCurrentSpeedData extends Systeminformation.CpuCurrentSpeedData {
-    source?: 'powermetrics' | 'systeminformation' | 'LibreHardwareMonitor' | 'OpenHardwareMonitor'
+    source?: 'powermetrics' | 'systeminformation' | 'OpenHardwareMonitor'
     sensorName?: string
+    allCpuClockSensors?: Array<{
+      name: string
+      identifier: string
+      value: number | null
+      hardwareName?: string
+      coreIndex?: number
+      accepted?: boolean
+      filterReason?: string
+    }>
+    frequencyDiagnostics?: {
+      displayValueGHz: number | null
+      displayChosenFrom: 'max_core' | 'avg_fallback' | 'unavailable'
+      telemetrySource: 'powermetrics' | 'systeminformation' | 'OpenHardwareMonitor' | 'unknown'
+      validCoreCount: number
+      avgGHz: number | null
+      cpuSpeedMaxGHz: number | null
+      maxAcceptedCoreGHz: number | null
+      maxIgnoredCoreGHz: number | null
+      rawSensorCount: number
+      ignoredSensorCount: number
+      anomalyDetected: boolean
+      anomalyReasons: string[]
+    }
     nativeSource?: 'powermetrics'
     nativeErrorCode?: string
     nativeReason?: string
@@ -76,6 +99,7 @@ declare global {
   }
   type MemoLayoutData = Systeminformation.MemLayoutData
   type BoardData = Systeminformation.BaseboardData
+  type SystemData = Systeminformation.SystemData
   type BiosInfoData = Systeminformation.BiosData
   interface NetworkStateData {
     rx_sec: number
@@ -88,7 +112,6 @@ declare global {
       | 'systeminformation'
       | 'apple-smc'
       | 'macos-temperature-sensor'
-      | 'LibreHardwareMonitor'
       | 'OpenHardwareMonitor'
       | 'unsupported'
     hardwareName?: string
@@ -173,7 +196,7 @@ declare global {
   }
   interface CpuPowerData {
     value: number | null
-    source: 'powermetrics' | 'LibreHardwareMonitor' | 'OpenHardwareMonitor' | 'unsupported'
+    source: 'powermetrics' | 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
     sensors?: Array<{
       name: string
@@ -188,14 +211,14 @@ declare global {
   }
   interface CpuVoltageData {
     value: number | null
-    source: 'LibreHardwareMonitor' | 'OpenHardwareMonitor' | 'unsupported'
+    source: 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
     unit: 'V'
     max?: number | null
   }
   interface CpuFanData {
     value: number | null
-    source: 'apple-smc' | 'LibreHardwareMonitor' | 'OpenHardwareMonitor' | 'unsupported'
+    source: 'apple-smc' | 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
     unit: 'RPM'
     max?: number | null
@@ -206,7 +229,7 @@ declare global {
   }
   interface BoardMetricData {
     value: number | null
-    source: 'LibreHardwareMonitor' | 'OpenHardwareMonitor' | 'unsupported'
+    source: 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
     unit: '°C' | 'V' | 'RPM'
     max?: number | null
@@ -273,8 +296,10 @@ declare global {
       getCpuFanSpeed: () => Promise<CpuFanData | undefined>
       getBoardTelemetry: () => Promise<BoardTelemetryData>
       getMemInfo: () => Promise<MemoData>
+      getStaticMemInfo: () => Promise<MemoData>
       getMemoryLayout: () => Promise<MemoLayoutData[]>
       getGpuInfo: () => Promise<GpuData[]>
+      getStaticGpuInfo: () => Promise<GpuData[]>
       getNetworkInfo: () => Promise<NetworkStateData>
       getNetworkInterfaces: () => Promise<NetworkInterfaceData[]>
       getWifiInterfaces: () => Promise<WifiInterfaceData[]>
@@ -282,6 +307,7 @@ declare global {
       getDiskData: () => Promise<DiskData[]>
       getDiskLayout: () => Promise<DiskLayoutData[]>
       getBiosData: () => Promise<BiosInfoData | undefined>
+      getSystemData: () => Promise<SystemData | undefined>
       getDisplaysData: () => Promise<DisplayData[]>
       getBoardData: () => Promise<BoardData | undefined>
       getBatteryInfo: () => Promise<BatteryInfoData | undefined>

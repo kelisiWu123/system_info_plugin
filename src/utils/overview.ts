@@ -112,7 +112,7 @@ function isMeaningfulOverviewNetwork(item: OverviewNetworkLike) {
   return !isNoisyNetworkInterfaceName(name)
 }
 
-export function getOverviewNetworkLines(networkInterfaces: OverviewNetworkLike[], limit = 3) {
+export function getOverviewNetworkCandidates<T extends OverviewNetworkLike>(networkInterfaces: T[], limit = 3): T[] {
   const candidates = networkInterfaces.filter(isMeaningfulOverviewNetwork)
   const defaultCandidates = candidates.filter((item) => item.default)
   const source = defaultCandidates.length
@@ -121,6 +121,11 @@ export function getOverviewNetworkLines(networkInterfaces: OverviewNetworkLike[]
       ? candidates.filter((item) => (item.speed || 0) > 0)
       : candidates
 
+  return source.slice(0, limit)
+}
+
+export function getOverviewNetworkLines(networkInterfaces: OverviewNetworkLike[], limit = 3) {
+  const source = getOverviewNetworkCandidates(networkInterfaces, limit)
   const lines = source.map(formatOverviewNetworkLine).filter(Boolean)
   return Array.from(new Set(lines)).slice(0, limit)
 }

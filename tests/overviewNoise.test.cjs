@@ -77,3 +77,36 @@ test('prefers the default network interface and includes its IPv4 address in ove
     ['192.168.1.23（千兆连接）']
   )
 })
+
+test('selects only the default or active user-facing network interfaces for detail pages', async () => {
+  const { getOverviewNetworkCandidates } = await loadOverviewUtils()
+
+  assert.deepEqual(
+    getOverviewNetworkCandidates([
+      { iface: 'utun2', ifaceName: 'utun2', internal: false, speed: null, ip4: '100.64.0.2', default: false },
+      { iface: 'en5', ifaceName: 'en5', internal: false, speed: 1000, ip4: '10.0.0.21', default: false },
+      { iface: 'en0', ifaceName: 'en0', internal: false, speed: 1000, ip4: '192.168.1.23', default: true },
+      { iface: 'en7', ifaceName: 'en7', internal: false, speed: 2500, ip4: '', default: false },
+      { iface: 'bridge0', ifaceName: 'bridge0', internal: false, speed: null, default: false },
+      { iface: 'lo0', ifaceName: 'lo0', internal: true, speed: null, default: false },
+    ]),
+    [
+      { iface: 'en0', ifaceName: 'en0', internal: false, speed: 1000, ip4: '192.168.1.23', default: true },
+    ]
+  )
+
+  assert.deepEqual(
+    getOverviewNetworkCandidates([
+      { iface: 'utun2', ifaceName: 'utun2', internal: false, speed: null, ip4: '100.64.0.2', default: false },
+      { iface: 'en5', ifaceName: 'en5', internal: false, speed: 1000, ip4: '10.0.0.21', default: false },
+      { iface: 'en7', ifaceName: 'en7', internal: false, speed: 2500, ip4: '', default: false },
+      { iface: 'eth0', ifaceName: 'eth0', internal: false, speed: 100, ip4: '', default: false },
+      { iface: 'bridge0', ifaceName: 'bridge0', internal: false, speed: null, default: false },
+    ]),
+    [
+      { iface: 'en5', ifaceName: 'en5', internal: false, speed: 1000, ip4: '10.0.0.21', default: false },
+      { iface: 'en7', ifaceName: 'en7', internal: false, speed: 2500, ip4: '', default: false },
+      { iface: 'eth0', ifaceName: 'eth0', internal: false, speed: 100, ip4: '', default: false },
+    ]
+  )
+})

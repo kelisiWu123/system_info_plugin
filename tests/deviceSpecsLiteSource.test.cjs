@@ -1,0 +1,112 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const test = require('node:test')
+
+function readSource(relativePath) {
+  return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8')
+}
+
+test('plugin exposes a lightweight device specs entry that opens the specs option page', () => {
+  const plugin = JSON.parse(readSource('plugin.json'))
+  const preload = readSource('utools/preload.js')
+  const windowService = readSource('utools/services/window.js')
+  const entryBuilder = readSource('scripts/generate-utools-entry-pages.mjs')
+
+  const feature = plugin.features.find((item) => item.code === 'hardwareSpecsLite')
+
+  assert.ok(feature)
+  assert.equal(feature.explain, '轻量设备规格')
+  assert.deepEqual(feature.cmds, ['设备规格', '电脑规格', '硬件规格'])
+  assert.match(preload, /a_specs_lite:\s*{[\s\S]*prod:\s*{\s*height:\s*640,\s*width:\s*960,\s*backgroundColor:\s*1\s*}/)
+  assert.match(preload, /hardwareSpecsLite:\s*{[\s\S]*openPresetWindow\('a_specs_lite'\)/)
+  assert.match(windowService, /getWindowHash\(fileName\)[\s\S]*if \(fileName === 'a_specs_lite'\) return 'deviceSpecs'/)
+  assert.match(entryBuilder, /\['a_specs_lite',\s*'deviceSpecs'\]/)
+  assert.doesNotMatch(entryBuilder, /function buildEntryHtml/)
+  assert.doesNotMatch(windowService, /initialSection/)
+  assert.doesNotMatch(entryBuilder, /__HWINFOX_INITIAL_SECTION__/)
+  assert.doesNotMatch(windowService, /section=deviceSpecs/)
+  assert.doesNotMatch(entryBuilder, /section=deviceSpecs/)
+})
+
+test('main shell exposes the lightweight device specs option page', () => {
+  const app = readSource('src/App.vue')
+
+  assert.match(app, /const isDeviceSpecsPage = computed\(\(\) => currentPage\.value === 'deviceSpecs'\)/)
+  assert.match(app, /v-else-if="isDeviceSpecsPage"[\s\S]*<DeviceSpecsLite :active="true"/)
+  assert.doesNotMatch(app, /id:\s*'deviceSpecs',\s*label:\s*'设备规格'/)
+  assert.doesNotMatch(app, /deviceSpecsRef/)
+  assert.doesNotMatch(app, /section=\$\{id\}/)
+  assert.doesNotMatch(app, /resolveInitialComputerSection/)
+})
+
+test('device specs page uses a dedicated static specs data source without overview monitoring coupling', () => {
+  const source = readSource('src/components/DeviceSpecsLite/index.vue')
+  const specsStore = readSource('src/composables/useDeviceSpecsHardwareData.ts')
+  const overviewUtils = readSource('src/utils/overview.ts')
+  const systemService = readSource('utools/services/system.js')
+  const types = readSource('src/type/interface.d.ts')
+
+  assert.match(source, /useDeviceSpecsHardwareData/)
+  assert.match(source, /getOverviewNetworkCandidates/)
+  assert.match(source, /型号信息/)
+  assert.match(source, /系统信息/)
+  assert.match(source, /运行时间/)
+  assert.match(source, /详细信息/)
+  assert.match(source, /动态共享/)
+  assert.doesNotMatch(source, /联想\/共享/)
+  assert.match(source, /copyDeviceSpecsInfo/)
+  assert.doesNotMatch(source, /overviewHardwareStore/)
+  assert.doesNotMatch(source, /activateOverviewHardwareStore/)
+  assert.doesNotMatch(source, /deactivateOverviewHardwareStore/)
+  assert.doesNotMatch(source, /refreshOverviewHardwareData/)
+
+  assert.match(specsStore, /window\.services\.getCpuInfo\(/)
+  assert.match(specsStore, /window\.services\.getStaticMemInfo\(/)
+  assert.match(specsStore, /window\.services\.getStaticGpuInfo\(/)
+  assert.match(specsStore, /window\.services\.getMemoryLayout\(/)
+  assert.match(specsStore, /window\.services\.getSystemData\(/)
+  assert.match(specsStore, /window\.services\.getTimeInfo\(/)
+  assert.doesNotMatch(specsStore, /getCpuTemperature\(/)
+  assert.doesNotMatch(specsStore, /getCpuFullLoad\(/)
+  assert.doesNotMatch(specsStore, /getCpuCurrentSpeed\(/)
+  assert.doesNotMatch(specsStore, /window\.services\.getGpuInfo\(/)
+
+  assert.match(overviewUtils, /export function getOverviewNetworkCandidates/)
+  assert.match(systemService, /getStaticMemInfo:/)
+  assert.match(systemService, /getStaticGpuInfo:/)
+  assert.match(systemService, /async function readStaticGpuInfo\(\)[\s\S]*?si\.graphics\(\)[\s\S]*?async function readGpuInfo/)
+  assert.doesNotMatch(systemService, /async function readStaticGpuInfo\(\)[\s\S]*?OpenHardwareMonitor[\s\S]*?async function readGpuInfo/)
+  assert.doesNotMatch(systemService, /async function readStaticGpuInfo\(\)[\s\S]*?powermetrics[\s\S]*?async function readGpuInfo/)
+  assert.match(systemService, /getStaticMemInfo:\s*\(\)\s*=>[\s\S]*normalizeMemoryInfo\(await si\.mem\(\)\)/)
+  assert.match(systemService, /getSystemData/)
+  assert.match(types, /type SystemData = Systeminformation\.SystemData/)
+  assert.match(types, /getStaticMemInfo: \(\) => Promise<MemoData>/)
+  assert.match(types, /getStaticGpuInfo: \(\) => Promise<GpuData\[]>/)
+})
+
+test('device specs option page keeps a compact lightweight layout', () => {
+  const app = readSource('src/App.vue')
+  const source = readSource('src/components/DeviceSpecsLite/index.vue')
+
+  assert.match(app, /\.device-specs-stage\s*{[\s\S]*grid-template-rows:\s*44px minmax\(0, 1fr\)/)
+  assert.match(app, /\.device-specs-stage\s*{[\s\S]*background:\s*var\(--app-background\)/)
+  assert.match(app, /\.window-titlebar__brand\.device-specs-titlebar__brand\s*{[\s\S]*min-width:\s*112px/)
+  assert.doesNotMatch(app, /\.device-specs-stage\s*{[\s\S]*linear-gradient\(135deg, #1479d2 0%, #16c4c3 100%\)/)
+  assert.doesNotMatch(app, /\.device-specs-titlebar\s*{[\s\S]*linear-gradient\(135deg, rgba\(16, 104, 180, 0\.9\), rgba\(16, 176, 190, 0\.82\)\)/)
+  assert.match(source, /\.spec-summary-grid\s*{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/)
+  assert.match(source, /\.spec-summary-card,\s*\.spec-detail-panel\s*{[\s\S]*border:\s*1px solid var\(--panel-border\)/)
+  assert.match(source, /\.spec-summary-card,\s*\.spec-detail-panel\s*{[\s\S]*background:\s*var\(--card-background\)/)
+  assert.doesNotMatch(source, /@media\s*\(max-width:\s*1100px\)[\s\S]*\.spec-summary-grid\s*{[\s\S]*grid-template-columns:\s*1fr/)
+  assert.doesNotMatch(source, /\.spec-summary-card,\s*\.spec-detail-panel\s*{[\s\S]*backdrop-filter\s*:/)
+  assert.doesNotMatch(source, /\.spec-summary-card\s*{[\s\S]*min-height:\s*1[23]\dpx/)
+  assert.doesNotMatch(source, /\.spec-detail-panel\s*{[\s\S]*min-height:\s*420px/)
+  assert.doesNotMatch(source, /font-size:\s*20px/)
+})
+
+test('device specs page limits network cards to the same prioritized subset as overview', () => {
+  const source = readSource('src/components/DeviceSpecsLite/index.vue')
+
+  assert.match(source, /getOverviewNetworkCandidates\(networkInterfaces\.value,\s*3\)\.map\(formatNetworkLine\)/)
+  assert.doesNotMatch(source, /networkInterfaces\.value\.filter\(\(item\) => !isNoisyNetwork\(item\)\)\.map\(formatNetworkLine\)\.slice\(0,\s*8\)/)
+})

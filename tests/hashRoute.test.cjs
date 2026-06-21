@@ -29,6 +29,7 @@ test('resolves watch hashes with query parameters as the watch page', async () =
 
   assert.equal(resolvePageName('#watch'), 'watch')
   assert.equal(resolvePageName('#watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'), 'watch')
+  assert.equal(resolvePageName('#deviceSpecs'), 'deviceSpecs')
   assert.equal(resolvePageName('#computer'), 'computer')
 })
 

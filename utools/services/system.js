@@ -43,9 +43,16 @@ const DEFAULT_FLOATING_MONITOR_SETTINGS = {
   superLiteSize: { width: 200, height: 200 },
 }
 const OPEN_HARDWARE_MONITOR_PROCESS_NAME = 'OpenHardwareMonitor.exe'
+const OPEN_HARDWARE_MONITOR_WMI_NAMESPACE = 'root\\OpenHardwareMonitor'
 const OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS = 1500
 const OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS = 15000
 const CPU_CLOCK_ANOMALY_MAX_GHZ = 7.5
+const CPU_CLOCK_SPEEDMAX_TOLERANCE_GHZ = 0.5
+const CPU_CLOCK_OUTLIER_DELTA_GHZ = 1.0
+const CPU_CLOCK_OUTLIER_MEDIAN_DELTA_GHZ = 1.2
+const CPU_CLOCK_DISPLAY_ACCEPTED_DELTA_GHZ = 0.35
+const CPU_CLOCK_VALUE_MATCH_TOLERANCE_GHZ = 0.05
+const CPU_CLOCK_SPEEDMAX_TRUST_DELTA_GHZ = 0.8
 const MAC_MEMORY_PRESSURE_FALLBACK = {
   level: 'unknown',
   rawLevel: null,
@@ -144,6 +151,12 @@ function toNumber(value) {
   return Number.isFinite(numericValue) ? numericValue : null
 }
 
+function toPositiveInteger(value) {
+  const numericValue = toNumber(value)
+  if (numericValue === null || numericValue <= 0) return 0
+  return Math.max(0, Math.round(numericValue))
+}
+
 function isWindows() {
   return typeof process !== 'undefined' && process.platform === 'win32'
 }
@@ -152,8 +165,144 @@ function isMacOS() {
   return typeof process !== 'undefined' && process.platform === 'darwin'
 }
 
+function hasValidCpuClockCoreValues(cores) {
+  return Array.isArray(cores)
+    && cores.some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+}
+
 function hasCpuSpeedValue(speed) {
-  return Boolean(speed?.cores?.length || speed?.avg)
+  return Boolean(
+    hasValidCpuClockCoreValues(speed?.cores)
+    || (typeof speed?.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0)
+  )
+}
+
+function getValidCpuClockGhzValues(cores) {
+  return Array.isArray(cores)
+    ? cores.filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    : []
+}
+
+function getCpuCurrentSpeedDisplayDecision(speed) {
+  const validCoreSpeeds = getValidCpuClockGhzValues(speed?.cores)
+  if (validCoreSpeeds.length) {
+    return {
+      displayValueGHz: Math.max(...validCoreSpeeds),
+      displayChosenFrom: 'max_core',
+      validCoreCount: validCoreSpeeds.length,
+    }
+  }
+
+  const avgValue = typeof speed?.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0
+    ? speed.avg
+    : null
+
+  return {
+    displayValueGHz: avgValue,
+    displayChosenFrom: avgValue === null ? 'unavailable' : 'avg_fallback',
+    validCoreCount: 0,
+  }
+}
+
+function isApproximatelyEqualCpuClockGhz(left, right, tolerance = CPU_CLOCK_VALUE_MATCH_TOLERANCE_GHZ) {
+  return typeof left === 'number'
+    && Number.isFinite(left)
+    && typeof right === 'number'
+    && Number.isFinite(right)
+    && Math.abs(left - right) <= tolerance
+}
+
+function buildCpuCurrentSpeedDiagnostics(speed, { cpuSpeedMaxGhz } = {}) {
+  const displayDecision = getCpuCurrentSpeedDisplayDecision(speed)
+  const rawSensors = Array.isArray(speed?.allCpuClockSensors)
+    ? speed.allCpuClockSensors.filter(Boolean)
+    : []
+  const acceptedSensors = rawSensors.filter((sensor) =>
+    sensor?.accepted !== false
+    && typeof sensor.value === 'number'
+    && Number.isFinite(sensor.value)
+    && sensor.value > 0
+  )
+  const ignoredSensors = rawSensors.filter((sensor) => sensor?.accepted === false)
+  const anomalyRelevantIgnoredSensors = ignoredSensors.filter((sensor) => sensor?.filterReason !== 'EFFECTIVE_CLOCK_IGNORED')
+  const ignoredSensorValues = ignoredSensors
+    .map((sensor) => sensor.value)
+    .filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+  const maxAcceptedCoreGHz = acceptedSensors.length
+    ? Math.max(...acceptedSensors.map((sensor) => sensor.value))
+    : null
+  const maxIgnoredCoreGHz = ignoredSensorValues.length
+    ? Math.max(...ignoredSensorValues)
+    : null
+  const referenceSpeedMaxGHz = typeof cpuSpeedMaxGhz === 'number' && Number.isFinite(cpuSpeedMaxGhz) && cpuSpeedMaxGhz > 0
+    ? cpuSpeedMaxGhz
+    : null
+  const trustedReferenceSpeedMaxGHz = referenceSpeedMaxGHz !== null && (
+    rawSensors.length === 0
+    || maxAcceptedCoreGHz === null
+    || maxAcceptedCoreGHz <= referenceSpeedMaxGHz + CPU_CLOCK_SPEEDMAX_TRUST_DELTA_GHZ
+  )
+    ? referenceSpeedMaxGHz
+    : null
+  const avgGHz = typeof speed?.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0
+    ? speed.avg
+    : null
+  const anomalyReasons = []
+
+  if (anomalyRelevantIgnoredSensors.length) {
+    anomalyReasons.push('IGNORED_OHM_SENSORS_PRESENT')
+  }
+
+  if (displayDecision.displayChosenFrom === 'avg_fallback' && anomalyRelevantIgnoredSensors.length) {
+    anomalyReasons.push('AVG_FALLBACK_WITH_IGNORED_OHM_SENSORS')
+  }
+
+  if (displayDecision.displayValueGHz !== null) {
+    if (trustedReferenceSpeedMaxGHz !== null && displayDecision.displayValueGHz > trustedReferenceSpeedMaxGHz + CPU_CLOCK_SPEEDMAX_TOLERANCE_GHZ) {
+      anomalyReasons.push('DISPLAY_EXCEEDS_CPU_SPEEDMAX')
+    }
+
+    if (typeof maxAcceptedCoreGHz === 'number' && displayDecision.displayValueGHz > maxAcceptedCoreGHz + CPU_CLOCK_DISPLAY_ACCEPTED_DELTA_GHZ) {
+      anomalyReasons.push('DISPLAY_EXCEEDS_ACCEPTED_CORE_MAX')
+    }
+
+    if (ignoredSensors.some((sensor) => isApproximatelyEqualCpuClockGhz(sensor?.value, displayDecision.displayValueGHz))) {
+      anomalyReasons.push('DISPLAY_MATCHES_IGNORED_OHM_SENSOR')
+    }
+  }
+
+  if (
+    displayDecision.displayValueGHz === null
+    && rawSensors.length === 0
+    && referenceSpeedMaxGHz === null
+    && avgGHz === null
+  ) {
+    return undefined
+  }
+
+  return {
+    displayValueGHz: displayDecision.displayValueGHz,
+    displayChosenFrom: displayDecision.displayChosenFrom,
+    telemetrySource: speed?.source || 'unknown',
+    validCoreCount: displayDecision.validCoreCount,
+    avgGHz,
+    cpuSpeedMaxGHz: referenceSpeedMaxGHz,
+    maxAcceptedCoreGHz,
+    maxIgnoredCoreGHz,
+    rawSensorCount: rawSensors.length,
+    ignoredSensorCount: ignoredSensors.length,
+    anomalyDetected: anomalyReasons.length > 0,
+    anomalyReasons: [...new Set(anomalyReasons)],
+  }
+}
+
+function attachCpuCurrentSpeedDiagnostics(speed, { cpuSpeedMaxGhz } = {}) {
+  if (!speed || typeof speed !== 'object') return speed
+
+  return {
+    ...speed,
+    frequencyDiagnostics: buildCpuCurrentSpeedDiagnostics(speed, { cpuSpeedMaxGhz }),
+  }
 }
 
 function invalidateRuntimeServiceCache(...cacheKeys) {
@@ -926,6 +1075,7 @@ function scoreCpuClockSensor(sensor) {
   const haystack = normalizeSensorText(sensor)
 
   if (haystack.includes('bus speed') || haystack.includes('bclk') || haystack.includes('base clock')) return 5
+  if (haystack.includes('effective')) return 20
   if (haystack.includes('core max')) return 130
   if (/core\s*#?\d+/.test(haystack)) return 125
   if (haystack.includes('average') || haystack.includes('avg')) return 120
@@ -934,6 +1084,143 @@ function scoreCpuClockSensor(sensor) {
   if (haystack.includes('core')) return 100
   if (haystack.includes('cpu') || haystack.includes('processor')) return 90
   return 40
+}
+
+function isNumberedCpuCoreClockSensor(sensor) {
+  return /core\s*#?\d+\b/i.test(normalizeSensorText(sensor))
+}
+
+function getCpuCoreClockSensorIndex(sensor) {
+  const match = normalizeSensorText(sensor).match(/core\s*#?(\d+)\b/i)
+  if (!match) return null
+
+  const coreIndex = Number.parseInt(match[1], 10)
+  return Number.isInteger(coreIndex) && coreIndex > 0 ? coreIndex : null
+}
+
+function isEffectiveCpuClockSensor(sensor) {
+  return normalizeSensorText(sensor).includes('effective')
+}
+
+function roundCpuClockGHz(value) {
+  return Math.round(value * 100) / 100
+}
+
+function normalizeCpuClockGHzValue(value) {
+  const numericValue = typeof value === 'number' && Number.isFinite(value) ? value : null
+  if (numericValue === null || numericValue <= 0) return null
+
+  const ghzValue = numericValue > 20 ? numericValue / 1000 : numericValue
+  if (!Number.isFinite(ghzValue) || ghzValue <= 0 || ghzValue > CPU_CLOCK_ANOMALY_MAX_GHZ) return null
+  return roundCpuClockGHz(ghzValue)
+}
+
+function getMedianValue(values) {
+  if (!values.length) return null
+
+  const sortedValues = [...values].sort((left, right) => left - right)
+  const middle = Math.floor(sortedValues.length / 2)
+
+  if (sortedValues.length % 2 === 0) {
+    return (sortedValues[middle - 1] + sortedValues[middle]) / 2
+  }
+
+  return sortedValues[middle]
+}
+
+function getExpectedCpuPhysicalCoreCount(cpuInfo) {
+  const physicalCores = toPositiveInteger(cpuInfo?.physicalCores)
+  if (physicalCores > 0) return physicalCores
+
+  const performanceCores = toPositiveInteger(cpuInfo?.performanceCores)
+  const efficiencyCores = toPositiveInteger(cpuInfo?.efficiencyCores)
+  const hybridTotal = performanceCores > 0 && efficiencyCores > 0 ? performanceCores + efficiencyCores : 0
+  if (hybridTotal > 0) return hybridTotal
+
+  return 0
+}
+
+function sanitizeNumberedCpuCoreClockSensors(sensors, cpuSpeedMaxGhz, expectedCoreCount) {
+  if (!sensors.length) {
+    return {
+      sensors: [],
+      displaySensors: [],
+      acceptedSensors: [],
+    }
+  }
+
+  const orderedSensors = [...sensors].sort((left, right) => {
+    const leftIndex = left.coreIndex ?? Number.MAX_SAFE_INTEGER
+    const rightIndex = right.coreIndex ?? Number.MAX_SAFE_INTEGER
+    return leftIndex - rightIndex
+  })
+  const candidateSensors = expectedCoreCount > 0
+    ? orderedSensors.filter((sensor) => (sensor.coreIndex || Number.MAX_SAFE_INTEGER) <= expectedCoreCount)
+    : orderedSensors
+  const ignoredSensors = expectedCoreCount > 0
+    ? orderedSensors.filter((sensor) => (sensor.coreIndex || Number.MAX_SAFE_INTEGER) > expectedCoreCount)
+    : []
+
+  if (!candidateSensors.length) {
+    return {
+      sensors: ignoredSensors.map((sensor) => ({
+        ...sensor,
+        accepted: false,
+        filterReason: 'BEYOND_EXPECTED_CORE_COUNT',
+        displayGhzValue: sensor.ghzValue,
+      })),
+      displaySensors: [],
+      acceptedSensors: [],
+    }
+  }
+
+  const ghzValues = candidateSensors.map((sensor) => sensor.ghzValue)
+  const medianValue = getMedianValue(ghzValues) || Math.max(...ghzValues)
+  const sortedValues = [...ghzValues].sort((left, right) => left - right)
+  const secondHighestValue = sortedValues.length > 1 ? sortedValues[sortedValues.length - 2] : sortedValues[0]
+  const trustedCpuSpeedMaxGhz = typeof cpuSpeedMaxGhz === 'number'
+    && Number.isFinite(cpuSpeedMaxGhz)
+    && cpuSpeedMaxGhz > 0
+    && cpuSpeedMaxGhz >= medianValue - 0.4
+    ? cpuSpeedMaxGhz
+    : null
+  const plausibleHighGhz = Math.max(
+    secondHighestValue + CPU_CLOCK_OUTLIER_DELTA_GHZ,
+    medianValue + CPU_CLOCK_OUTLIER_MEDIAN_DELTA_GHZ,
+    trustedCpuSpeedMaxGhz !== null ? trustedCpuSpeedMaxGhz + CPU_CLOCK_SPEEDMAX_TOLERANCE_GHZ : 0
+  )
+
+  const sanitizedSensors = candidateSensors.map((sensor) => {
+    if (sensor.ghzValue <= plausibleHighGhz) {
+      return {
+        ...sensor,
+        accepted: true,
+        filterReason: null,
+        displayGhzValue: sensor.ghzValue,
+      }
+    }
+
+    return {
+      ...sensor,
+      accepted: false,
+      filterReason: 'OUTLIER_HIGH',
+      displayGhzValue: null,
+    }
+  })
+  const sanitizedIgnoredSensors = ignoredSensors.map((sensor) => ({
+    ...sensor,
+    accepted: false,
+    filterReason: 'BEYOND_EXPECTED_CORE_COUNT',
+    displayGhzValue: sensor.ghzValue,
+  }))
+
+  const acceptedSensors = sanitizedSensors.filter((sensor) => sensor.accepted)
+
+  return {
+    sensors: [...sanitizedSensors, ...sanitizedIgnoredSensors],
+    displaySensors: sanitizedSensors,
+    acceptedSensors,
+  }
 }
 
 function scoreGpuTemperatureSensor(sensor) {
@@ -1038,10 +1325,7 @@ async function queryHardwareMonitorSensors(namespace, sensorType) {
 async function getHardwareMonitorSensors(sensorType) {
   if (typeof process === 'undefined' || process.platform !== 'win32') return []
 
-  return [
-    ...(await queryHardwareMonitorSensors('root\\LibreHardwareMonitor', sensorType)),
-    ...(await queryHardwareMonitorSensors('root\\OpenHardwareMonitor', sensorType)),
-  ]
+  return queryHardwareMonitorSensors(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE, sensorType)
 }
 
 function extractSystemInformationCpuTemperatureValue(temperature) {
@@ -1507,7 +1791,7 @@ async function ensureOpenHardwareMonitorRunning() {
         executableDirectory: resolved.runtimeDirectoryPath,
         executablePath: resolved.runtimeExecutablePath,
         reason: resolved.runtimeExists ? 'OHM_AUTOSTART_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
-        suggestion: '开启增强模式后，可再启用自动启动 OpenHardwareMonitor',
+        suggestion: '启用 OpenHardwareMonitor 支持后，可再开启自动启动',
       })
   }
 
@@ -1722,7 +2006,7 @@ async function startOpenHardwareMonitorManually() {
         executableDirectory: resolved.runtimeDirectoryPath,
         executablePath: resolved.runtimeExecutablePath,
         reason: resolved.runtimeExists ? 'ENHANCED_SENSOR_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
-        suggestion: '请先开启硬件传感器增强模式',
+        suggestion: '请先启用 OpenHardwareMonitor 支持',
       })
   }
 
@@ -1813,7 +2097,6 @@ async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
   const coreSensors = sensors.filter((sensor) => /core\s*#?\d+/.test(normalizeSensorText(sensor)))
   const coreValues = coreSensors.map((sensor) => toValidCpuTemperature(sensor.value)).filter((value) => value !== null)
   const allValues = sensors.map((sensor) => toValidCpuTemperature(sensor.value)).filter((value) => value !== null)
-  const source = namespace.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor'
 
   return buildCpuTemperatureResult(
     {
@@ -1831,20 +2114,14 @@ async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
         value: toValidCpuTemperature(sensor.value),
       })),
     },
-    source,
+    'OpenHardwareMonitor',
     mainSensor?.name || undefined,
     mainSensor ? toValidCpuTemperature(mainSensor.value) : null
   )
 }
 
 async function getHardwareMonitorCpuTemperature() {
-  const libreResult = await getHardwareMonitorCpuTemperatureFromNamespace('root\\LibreHardwareMonitor')
-  if (libreResult?.value !== null) return libreResult
-
-  const openResult = await getHardwareMonitorCpuTemperatureFromNamespace('root\\OpenHardwareMonitor')
-  if (openResult?.value !== null) return openResult
-
-  return libreResult || openResult
+  return getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
 }
 
 async function getHardwareMonitorCpuPower() {
@@ -1864,7 +2141,7 @@ async function getHardwareMonitorCpuPower() {
 
   return {
     value: Math.round(mainSensor.value * 10) / 10,
-    source: mainSensor.source.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor',
+    source: 'OpenHardwareMonitor',
     sensorName: mainSensor.name,
     sensors: sensors.map((sensor) => ({
       name: sensor.name,
@@ -1889,7 +2166,7 @@ async function getHardwareMonitorCpuVoltage() {
 
   return {
     value: mainSensor ? Math.round(mainSensor.value * 100) / 100 : null,
-    source: mainSensor.source.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor',
+    source: 'OpenHardwareMonitor',
     sensorName: mainSensor?.name,
     unit: 'V',
     max: Math.max(...sensors.map((sensor) => sensor.value)),
@@ -1923,15 +2200,90 @@ async function getHardwareMonitorCpuFanSpeed() {
 
   return {
     value: mainSensor ? Math.round(mainSensor.value) : null,
-    source: mainSensor.source.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor',
+    source: 'OpenHardwareMonitor',
     sensorName: mainSensor?.name,
     unit: 'RPM',
     max: Math.max(...sensors.map((sensor) => sensor.value)),
   }
 }
 
-async function getHardwareMonitorCpuCurrentSpeed() {
-  const sensors = (await getHardwareMonitorSensors('Clock'))
+function buildHardwareMonitorCpuCurrentSpeedResult(sensors, { cpuSpeedMaxGhz, expectedCoreCount } = {}) {
+  if (!sensors.length) return undefined
+
+  const normalized = sensors
+    .map((sensor) => {
+      const ghzValue = normalizeCpuClockGHzValue(sensor.value)
+      if (ghzValue === null) return null
+      return {
+        ...sensor,
+        ghzValue,
+        coreIndex: getCpuCoreClockSensorIndex(sensor),
+        effectiveClock: isEffectiveCpuClockSensor(sensor),
+      }
+    })
+    .filter(Boolean)
+
+  if (!normalized.length) return undefined
+
+  const numberedCoreSensors = normalized.filter((sensor) => sensor.coreIndex !== null && !sensor.effectiveClock)
+  const sanitizedNumberedCoreSensors = sanitizeNumberedCpuCoreClockSensors(
+    numberedCoreSensors,
+    cpuSpeedMaxGhz,
+    expectedCoreCount
+  )
+  const coreValues = sanitizedNumberedCoreSensors.displaySensors.map((sensor) => sensor.displayGhzValue ?? null)
+  const summaryCandidates = normalized.filter((sensor) => !sensor.effectiveClock)
+  const summarySensors = numberedCoreSensors.length
+    ? sanitizedNumberedCoreSensors.acceptedSensors
+    : summaryCandidates.filter((sensor) => scoreCpuClockSensor(sensor) >= 90)
+  const summarizedValues = summarySensors.length
+    ? summarySensors
+      .map((sensor) => sensor.displayGhzValue ?? sensor.ghzValue)
+      .filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    : numberedCoreSensors.length
+      ? []
+      : summaryCandidates.map((sensor) => sensor.ghzValue)
+  const avgFromAll = summarizedValues.length
+    ? summarizedValues.reduce((sum, value) => sum + value, 0) / summarizedValues.length
+    : null
+  const mainSensor = [...(summarySensors.length ? summarySensors : summaryCandidates)].sort((a, b) => scoreCpuClockSensor(b) - scoreCpuClockSensor(a))[0]
+  const speedResult = {
+    min: summarizedValues.length ? Math.min(...summarizedValues) : null,
+    max: summarizedValues.length ? Math.max(...summarizedValues) : null,
+    avg: typeof avgFromAll === 'number' ? Math.round(avgFromAll * 100) / 100 : null,
+    cores: coreValues,
+    source: 'OpenHardwareMonitor',
+    sensorName: mainSensor?.name,
+    allCpuClockSensors: normalized.map((sensor) => {
+      if (sensor.effectiveClock) {
+        return {
+          name: sensor.name,
+          identifier: sensor.identifier,
+          hardwareName: sensor.parent || undefined,
+          value: sensor.ghzValue,
+          coreIndex: sensor.coreIndex ?? undefined,
+          accepted: false,
+          filterReason: 'EFFECTIVE_CLOCK_IGNORED',
+        }
+      }
+      const matchedNumberedSensor = sanitizedNumberedCoreSensors.sensors.find((item) => item.identifier === sensor.identifier)
+      return {
+        name: sensor.name,
+        identifier: sensor.identifier,
+        hardwareName: sensor.parent || undefined,
+        value: sensor.ghzValue,
+        coreIndex: matchedNumberedSensor?.coreIndex ?? sensor.coreIndex ?? undefined,
+        accepted: matchedNumberedSensor ? matchedNumberedSensor.accepted : true,
+        filterReason: matchedNumberedSensor?.filterReason || undefined,
+      }
+    }),
+  }
+
+  return attachCpuCurrentSpeedDiagnostics(speedResult, { cpuSpeedMaxGhz })
+}
+
+async function getHardwareMonitorCpuCurrentSpeedFromNamespace(namespace, cpuInfo) {
+  const sensors = (await queryHardwareMonitorSensors(namespace, 'Clock'))
     .filter(isCpuSensor)
     .filter((sensor) => {
       const haystack = normalizeSensorText(sensor)
@@ -1945,39 +2297,14 @@ async function getHardwareMonitorCpuCurrentSpeed() {
       )
     })
 
-  if (!sensors.length) return undefined
+  return buildHardwareMonitorCpuCurrentSpeedResult(sensors, {
+    cpuSpeedMaxGhz: normalizeCpuClockGHzValue(cpuInfo?.speedMax),
+    expectedCoreCount: getExpectedCpuPhysicalCoreCount(cpuInfo),
+  })
+}
 
-  const normalized = sensors
-    .map((sensor) => {
-      const value = typeof sensor.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null
-      if (value === null || value <= 0) return null
-      const ghzValue = value > 20 ? value / 1000 : value
-      if (!Number.isFinite(ghzValue) || ghzValue <= 0 || ghzValue > CPU_CLOCK_ANOMALY_MAX_GHZ) return null
-      return {
-        ...sensor,
-        ghzValue: Math.round(ghzValue * 100) / 100,
-      }
-    })
-    .filter(Boolean)
-
-  if (!normalized.length) return undefined
-
-  const mainSensor = [...normalized].sort((a, b) => scoreCpuClockSensor(b) - scoreCpuClockSensor(a))[0]
-  const coreValues = normalized
-    .filter((sensor) => /core\s*#?\d+|core max/i.test(normalizeSensorText(sensor)))
-    .map((sensor) => sensor.ghzValue)
-
-  const allValues = normalized.map((sensor) => sensor.ghzValue)
-  const avgFromAll = allValues.reduce((sum, value) => sum + value, 0) / allValues.length
-
-  return {
-    min: Math.min(...allValues),
-    max: Math.max(...allValues),
-    avg: Math.round(avgFromAll * 100) / 100,
-    cores: coreValues,
-    source: mainSensor?.source?.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor',
-    sensorName: mainSensor?.name,
-  }
+async function getHardwareMonitorCpuCurrentSpeed(cpuInfo) {
+  return getHardwareMonitorCpuCurrentSpeedFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE, cpuInfo)
 }
 
 function pickBestBoardSensor(sensors, scorer, rounder, unit) {
@@ -1999,12 +2326,10 @@ function pickBestBoardSensor(sensors, scorer, rounder, unit) {
 
   const { sensor } = scored[0]
   const values = sensors.map((item) => item.value).filter((value) => typeof value === 'number')
-  const source = sensor.source.includes('LibreHardwareMonitor') ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor'
-
   return buildBoardMetric(
     unit,
     rounder(sensor.value),
-    source,
+    'OpenHardwareMonitor',
     sensor.name,
     values.length
       ? unit === 'RPM'
@@ -2070,15 +2395,8 @@ async function getCpuTemperature() {
       }
     }
 
-    const libreTemperature = isWindows()
-      ? await getHardwareMonitorCpuTemperatureFromNamespace('root\\LibreHardwareMonitor')
-      : undefined
-    if (libreTemperature && libreTemperature.value !== null) {
-      return libreTemperature
-    }
-
     const openTemperature = enhancedSensorEnabled
-      ? await getHardwareMonitorCpuTemperatureFromNamespace('root\\OpenHardwareMonitor')
+      ? await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
       : undefined
     if (openTemperature && openTemperature.value !== null) {
       return openTemperature
@@ -2087,7 +2405,6 @@ async function getCpuTemperature() {
     const baseDiagnostics = [
       'systeminformation 未提供有效 CPU 温度',
       macTemperature?.message ? `macOS 原生传感器: ${macTemperature.message}` : '',
-      libreTemperature?.value === null ? 'LibreHardwareMonitor WMI: 无可用温度' : 'LibreHardwareMonitor WMI: 未命中',
       openTemperature?.value === null ? 'OpenHardwareMonitor WMI: 无可用温度' : 'OpenHardwareMonitor WMI: 未命中',
     ].filter(Boolean)
 
@@ -2114,7 +2431,7 @@ async function getCpuTemperature() {
           errorCode: 'ENHANCED_SENSOR_DISABLED',
           reason: 'ENHANCED_SENSOR_DISABLED',
           message: baseDiagnostics.join(' | '),
-          suggestion: 'Windows 下可在处理器页开启硬件传感器增强模式',
+          suggestion: 'Windows 下可在处理器页启用 OpenHardwareMonitor 支持',
           confidence: 'unsupported',
         },
         'unsupported',
@@ -2164,11 +2481,6 @@ async function getCpuTemperature() {
       null
     )
   }
-}
-
-// Reserved integration point for future in-process native hosting, separate from the helper executable.
-async function getEmbeddedLibreHardwareMonitorCpuTemperature() {
-  return undefined
 }
 
 async function getHardwareMonitorGpuTelemetry() {
@@ -2306,6 +2618,99 @@ function normalizeMemoryInfo(memory, pressure = MAC_MEMORY_PRESSURE_FALLBACK) {
   }
 }
 
+function hasGpuIdentity(controller) {
+  return Boolean(
+    (typeof controller?.model === 'string' && controller.model.trim())
+    || (typeof controller?.name === 'string' && controller.name.trim())
+    || (typeof controller?.vendor === 'string' && controller.vendor.trim())
+  )
+}
+
+function isLikelyGpuController(controller, isMacOS = typeof process !== 'undefined' && process.platform === 'darwin') {
+  if (!hasGpuIdentity(controller)) return false
+
+  const haystack = `${controller.vendor || ''} ${controller.model || ''} ${controller.name || ''} ${controller.bus || ''}`.toLowerCase()
+
+  if (haystack.includes('displaylink') || haystack.includes('virtual display') || haystack.includes('vmware') || haystack.includes('parallels')) {
+    return false
+  }
+
+  if (isMacOS) {
+    return true
+  }
+
+  return (controller.vram || 0) >= 1 || Boolean(controller.bus) || Boolean(controller.driverVersion)
+}
+
+function normalizeGpuControllerIdentity(controller) {
+  return {
+    ...controller,
+    vram: controller.vram || 0,
+    bus: controller.bus || '',
+    vendor: controller.vendor || '',
+    subVendor: controller.subVendor || '',
+    vendorId: controller.vendorId || '',
+    deviceId: controller.deviceId || '',
+    cores: controller.cores ?? null,
+    memoryTotal: controller.memoryTotal ?? controller.vram ?? 0,
+    memoryUsed: controller.memoryUsed ?? null,
+    memoryFree: controller.memoryFree ?? null,
+    driverVersion: controller.driverVersion || '',
+    pciBus: controller.pciBus || '',
+  }
+}
+
+function deriveGpuIdleResidency(idleResidencyGpu, utilizationGpu) {
+  const normalizedIdle = typeof idleResidencyGpu === 'number' && Number.isFinite(idleResidencyGpu)
+    ? Math.max(0, Math.min(100, idleResidencyGpu))
+    : null
+
+  if (normalizedIdle !== null) {
+    return normalizedIdle
+  }
+
+  const normalizedUtilization = typeof utilizationGpu === 'number' && Number.isFinite(utilizationGpu)
+    ? Math.max(0, Math.min(100, utilizationGpu))
+    : null
+
+  if (normalizedUtilization === null) {
+    return null
+  }
+
+  return Math.round((100 - normalizedUtilization) * 10) / 10
+}
+
+async function readStaticGpuInfo() {
+  return readSystemInfo('graphicsStatic', [], async () => {
+    const graphics = await si.graphics()
+    const isMacOS = typeof process !== 'undefined' && process.platform === 'darwin'
+
+    return graphics.controllers
+      .filter((controller) => isLikelyGpuController(controller, isMacOS))
+      .map((controller) => ({
+        ...normalizeGpuControllerIdentity(controller),
+        utilizationGpu: null,
+        idleResidencyGpu: null,
+        utilizationMemory: null,
+        temperatureGpu: null,
+        gpuCoreTemperatures: [],
+        temperatureMemory: null,
+        powerDraw: null,
+        powerLimit: null,
+        clockCore: null,
+        clockMemory: null,
+        fanSpeed: null,
+        helper: false,
+        telemetrySource: undefined,
+        temperatureSource: undefined,
+        nativeTemperatureErrorCode: undefined,
+        nativeTemperatureReason: undefined,
+        nativeTemperatureMessage: undefined,
+        nativeTemperatureSuggestion: undefined,
+      }))
+  })
+}
+
 async function readGpuInfo() {
   return readSystemInfo('graphics', [], async () => {
     const graphics = await si.graphics()
@@ -2321,33 +2726,18 @@ async function readGpuInfo() {
       : undefined
     const fallbackTelemetry = isMacOS ? undefined : await getHardwareMonitorGpuTelemetry()
 
-    function hasGpuIdentity(controller) {
-      return Boolean(
-        (typeof controller.model === 'string' && controller.model.trim())
-        || (typeof controller.name === 'string' && controller.name.trim())
-        || (typeof controller.vendor === 'string' && controller.vendor.trim())
-      )
-    }
-
-    function isLikelyGpuController(controller) {
-      if (!hasGpuIdentity(controller)) return false
-
-      const haystack = `${controller.vendor || ''} ${controller.model || ''} ${controller.name || ''} ${controller.bus || ''}`.toLowerCase()
-
-      if (haystack.includes('displaylink') || haystack.includes('virtual display') || haystack.includes('vmware') || haystack.includes('parallels')) {
-        return false
-      }
-
-      if (isMacOS) {
-        return true
-      }
-
-      return (controller.vram || 0) >= 1 || Boolean(controller.bus) || Boolean(controller.driverVersion)
-    }
-
     return graphics.controllers
-      .filter(isLikelyGpuController)
+      .filter((controller) => isLikelyGpuController(controller, isMacOS))
       .map((controller) => {
+        const utilizationGpu = isMacOS
+          ? helperGpuTelemetry?.utilizationGpu ?? controller.utilizationGpu ?? null
+          : controller.utilizationGpu ?? fallbackTelemetry?.utilizationGpu ?? null
+        const idleResidencyGpu = deriveGpuIdleResidency(
+          isMacOS
+            ? helperGpuTelemetry?.idleResidencyGpu ?? controller.idleResidencyGpu ?? null
+            : controller.idleResidencyGpu ?? null,
+          utilizationGpu
+        )
         const helperHasTelemetry = Boolean(
           helperGpuTelemetry
           && (
@@ -2366,23 +2756,9 @@ async function readGpuInfo() {
         )
 
         return {
-          ...controller,
-          vram: controller.vram || 0,
-          bus: controller.bus || '',
-          vendor: controller.vendor || '',
-          subVendor: controller.subVendor || '',
-          vendorId: controller.vendorId || '',
-          deviceId: controller.deviceId || '',
-          cores: controller.cores ?? null,
-          memoryTotal: controller.memoryTotal ?? controller.vram ?? 0,
-          memoryUsed: controller.memoryUsed ?? null,
-          memoryFree: controller.memoryFree ?? null,
-          utilizationGpu: isMacOS
-            ? helperGpuTelemetry?.utilizationGpu ?? controller.utilizationGpu ?? null
-            : controller.utilizationGpu ?? fallbackTelemetry?.utilizationGpu ?? null,
-          idleResidencyGpu: isMacOS
-            ? helperGpuTelemetry?.idleResidencyGpu ?? null
-            : null,
+          ...normalizeGpuControllerIdentity(controller),
+          utilizationGpu,
+          idleResidencyGpu,
           utilizationMemory: controller.utilizationMemory ?? null,
           temperatureGpu: isMacOS
             ? macGpuTemperature?.temperatureGpu ?? controller.temperatureGpu ?? null
@@ -2400,8 +2776,6 @@ async function readGpuInfo() {
             : controller.clockCore ?? null,
           clockMemory: controller.clockMemory ?? null,
           fanSpeed: controller.fanSpeed ?? null,
-          driverVersion: controller.driverVersion || '',
-          pciBus: controller.pciBus || '',
           helper: isMacOS ? helperHasTelemetry : false,
           telemetrySource: isMacOS
             ? helperHasTelemetry
@@ -2566,23 +2940,41 @@ export const systemService = {
           }
         }
 
-        if (isWindows()) {
+        const sensorSettings = getHardwareSensorSettings()
+        const cpuInfo = isWindows()
+          ? await readCachedServiceValue(
+            'cpuInfo',
+            30000,
+            () => readSystemInfo('cpu', undefined, () => si.cpu())
+          )
+          : undefined
+
+        let cpuClockDiagnostics
+
+        if (isWindows() && sensorSettings.enhancedSensorEnabled) {
           const hardwareMonitorSpeed = await readSystemInfo(
             'cpuClockSensors',
             undefined,
-            getHardwareMonitorCpuCurrentSpeed
+            () => getHardwareMonitorCpuCurrentSpeed(cpuInfo)
           )
-          if (hardwareMonitorSpeed?.cores?.length || hardwareMonitorSpeed?.avg) {
+          cpuClockDiagnostics = Array.isArray(hardwareMonitorSpeed?.allCpuClockSensors)
+            && hardwareMonitorSpeed.allCpuClockSensors.length
+            ? hardwareMonitorSpeed.allCpuClockSensors
+            : undefined
+          if (hasValidCpuClockCoreValues(hardwareMonitorSpeed?.cores) || hardwareMonitorSpeed?.avg) {
             return hardwareMonitorSpeed
           }
         }
 
         const systemInfoSpeed = await readSystemInfo('cpuCurrentSpeed', fallback, () => si.cpuCurrentSpeed())
-        return {
+        return attachCpuCurrentSpeedDiagnostics({
           ...systemInfoSpeed,
           source: 'systeminformation',
           sensorName: 'systeminformation.cpuCurrentSpeed',
-        }
+          allCpuClockSensors: cpuClockDiagnostics,
+        }, {
+          cpuSpeedMaxGhz: typeof cpuInfo?.speedMax === 'number' && Number.isFinite(cpuInfo.speedMax) ? cpuInfo.speedMax : undefined,
+        })
       }
     ),
 
@@ -2639,6 +3031,13 @@ export const systemService = {
     )
   ),
 
+  getStaticMemInfo: () =>
+    readCachedServiceValue(
+      'staticMemInfo',
+      30000,
+      () => readSystemInfo('mem', normalizeMemoryInfo({}), async () => normalizeMemoryInfo(await si.mem()))
+    ),
+
   getMemoryLayout: () =>
     readCachedServiceValue(
       'memoryLayout',
@@ -2647,6 +3046,13 @@ export const systemService = {
     ),
 
   getGpuInfo,
+
+  getStaticGpuInfo: () =>
+    readCachedServiceValue(
+      'staticGpuInfo',
+      30000,
+      readStaticGpuInfo
+    ),
 
   getNetworkInfo: () =>
     readSystemInfo('networkStats', emptyNetworkStats, async () => {
@@ -2682,6 +3088,13 @@ export const systemService = {
       'biosData',
       30000,
       () => readSystemInfo('bios', undefined, () => si.bios())
+    ),
+
+  getSystemData: () =>
+    readCachedServiceValue(
+      'systemData',
+      30000,
+      () => readSystemInfo('system', undefined, () => si.system())
     ),
 
   getDisplaysData: () =>

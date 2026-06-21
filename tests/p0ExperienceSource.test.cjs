@@ -22,7 +22,8 @@ test('topbar controls include accessibility labels and sensor error diagnostics 
 
   assert.match(source, /:aria-label="`切换刷新档位为 \$\{profile\.label\}`"/)
   assert.match(source, /aria-label="切换后台降频"/)
-  assert.match(source, /aria-label="打开传感器增强菜单"/)
+  assert.match(source, /const processorSensorControlAriaLabel = computed\(\(\) => getSensorEnhancementMenuAriaLabel\(sensorEnhancementPlatform\.value\)\)/)
+  assert.match(source, /:aria-label="processorSensorControlAriaLabel"/)
   assert.match(source, /copySensorDiagnostics/)
   assert.match(source, /复制诊断/)
 })

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  getSensorEnhancementControlLabel,
+  getSensorEnhancementMenuAriaLabel,
   getSensorEnhancementPrimaryActionLabel,
   getSensorEnhancementActionLabel,
   getSensorEnhancementPlatform,
@@ -33,11 +35,18 @@ test('maps normalized platforms to the correct sensor enhancement variant', () =
   assert.equal(getSensorEnhancementPlatform({ platform: 'linux', distro: 'Ubuntu' }), 'unsupported')
 })
 
-test('uses unified sensor enhancement action labels', () => {
-  assert.equal(getSensorEnhancementActionLabel('windows', false), '传感器增强')
-  assert.equal(getSensorEnhancementActionLabel('windows', true), '收起增强模式')
+test('uses platform-specific sensor enhancement action labels', () => {
+  assert.equal(getSensorEnhancementActionLabel('windows', false), 'OpenHardwareMonitor')
+  assert.equal(getSensorEnhancementActionLabel('windows', true), '收起 OHM 菜单')
   assert.equal(getSensorEnhancementActionLabel('macos', false), '传感器增强')
   assert.equal(getSensorEnhancementActionLabel('macos', true), '收起增强模式')
+})
+
+test('uses platform-specific control labels for sensor enhancement entrypoints', () => {
+  assert.equal(getSensorEnhancementControlLabel('windows'), 'OpenHardwareMonitor')
+  assert.equal(getSensorEnhancementControlLabel('macos'), '传感器增强')
+  assert.equal(getSensorEnhancementMenuAriaLabel('windows'), '打开 OpenHardwareMonitor 菜单')
+  assert.equal(getSensorEnhancementMenuAriaLabel('macos'), '打开传感器增强菜单')
 })
 
 test('defaults sensor enhancement on for supported platforms', () => {
@@ -47,8 +56,8 @@ test('defaults sensor enhancement on for supported platforms', () => {
 })
 
 test('uses explicit primary labels for the visible enhancement control', () => {
-  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', true), '关闭增强模式')
-  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', false), '启用增强模式')
+  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', true), '关闭 OHM 支持')
+  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', false), '启用 OHM 支持')
   assert.equal(getSensorEnhancementPrimaryActionLabel('macos', true), '关闭增强模式')
   assert.equal(getSensorEnhancementPrimaryActionLabel('macos', false), '启用增强模式')
 })

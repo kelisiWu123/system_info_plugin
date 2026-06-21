@@ -25,6 +25,10 @@ const windowPresets = {
     prod: { height: 860, width: 1380, backgroundColor: 1 },
     dev: { height: 900, width: 1440, backgroundColor: 1 },
   },
+  a_specs_lite: {
+    prod: { height: 640, width: 960, backgroundColor: 1 },
+    dev: { height: 660, width: 1000, backgroundColor: 1 },
+  },
 }
 
 function openPresetWindow(name) {
@@ -68,6 +72,14 @@ window.exports = {
     args: {
       enter: () => {
         openPresetWindow('a_computer')
+      },
+    },
+  },
+  hardwareSpecsLite: {
+    mode: 'none',
+    args: {
+      enter: () => {
+        openPresetWindow('a_specs_lite')
       },
     },
   },

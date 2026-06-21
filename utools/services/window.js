@@ -14,11 +14,13 @@ function isWatchWindowName(fileName) {
 
 function getWindowHash(fileName) {
   if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
+  if (fileName === 'a_specs_lite') return 'deviceSpecs'
   return isWatchWindowName(fileName) ? 'watch?floatingMode=standard&entry=hardwareWatch' : 'computer'
 }
 
 function getProductionWindowUrl(fileName) {
   if (fileName === 'a_watch_super_lite') return 'a_watch_super_lite/index.html'
+  if (fileName === 'a_specs_lite') return 'a_specs_lite/index.html'
   if (isWatchWindowName(fileName)) return 'watch.html'
   return 'computer.html'
 }
