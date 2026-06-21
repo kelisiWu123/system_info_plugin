@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Pushpin } from '@icon-park/vue-next'
+import { CloseSmall, Pushpin } from '@icon-park/vue-next'
 import type { SuperLiteStatus } from '../../utils/superLiteMonitor'
 
 interface MetricRow {
@@ -25,6 +25,7 @@ defineProps<{
 const emit = defineEmits<{
   (event: 'toggle-pin'): void
   (event: 'switch-standard'): void
+  (event: 'close-window'): void
 }>()
 
 function barCount(values: number[]) {
@@ -44,15 +45,21 @@ function progressWidth(label: string) {
         <span>{{ status.label }}</span>
       </div>
 
-      <button
-        type="button"
-        class="super-lite-pin"
-        :aria-pressed="pinned"
-        title="固定窗口"
-        @click="emit('toggle-pin')"
-      >
-        <Pushpin theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-      </button>
+      <div class="super-lite-actions">
+        <button type="button" class="super-lite-mode-switch" title="切回标准模式" @click="emit('switch-standard')">标准</button>
+        <button
+          type="button"
+          class="super-lite-pin"
+          :aria-pressed="pinned"
+          title="固定窗口"
+          @click="emit('toggle-pin')"
+        >
+          <Pushpin theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
+        </button>
+        <button type="button" class="super-lite-close" title="关闭窗口" @click="emit('close-window')">
+          <CloseSmall theme="outline" size="14" fill="currentColor" :strokeWidth="3" />
+        </button>
+      </div>
     </header>
 
     <main class="super-lite-body">
@@ -84,7 +91,6 @@ function progressWidth(label: string) {
 
     <footer class="super-lite-footer">
       <span>{{ footerLeft }}</span>
-      <button type="button" title="切回标准模式" @click="emit('switch-standard')">标准</button>
       <span>{{ footerRight }}</span>
     </footer>
   </section>
@@ -119,20 +125,28 @@ function progressWidth(label: string) {
 .super-lite-header {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px;
+  grid-template-columns: minmax(0, 1fr) auto;
   height: 24px;
   gap: 6px;
   user-select: none;
   -webkit-app-region: drag;
 }
 
+.super-lite-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
 .super-lite-pin,
-.super-lite-footer button {
+.super-lite-mode-switch,
+.super-lite-close {
   border: 0;
   color: inherit;
   font: inherit;
   cursor: pointer;
-  -webkit-app-region: no-drag;
 }
 
 .super-lite-status {
@@ -164,7 +178,7 @@ function progressWidth(label: string) {
   box-shadow: 0 0 10px rgba(255, 111, 117, 0.72);
 }
 
-.super-lite-footer button {
+.super-lite-mode-switch {
   height: 18px;
   padding: 0 5px;
   border-radius: 5px;
@@ -178,13 +192,27 @@ function progressWidth(label: string) {
   justify-content: center;
   width: 24px;
   height: 20px;
-  justify-self: end;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.07);
 }
 
 .super-lite-pin[aria-pressed='true'] {
   color: #58c7ff;
+}
+
+.super-lite-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.super-lite-close:hover {
+  background: rgba(255, 111, 125, 0.18);
+  color: #ffd8dd;
 }
 
 .super-lite-body {
@@ -305,7 +333,7 @@ function progressWidth(label: string) {
 
 .super-lite-footer {
   display: grid;
-  grid-template-columns: 38px 36px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   height: 20px;
   gap: 5px;
   color: rgba(208, 219, 238, 0.78);

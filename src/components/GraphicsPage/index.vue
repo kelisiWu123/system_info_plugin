@@ -871,19 +871,6 @@ onUnmounted(() => {
         </article>
       </section>
 
-      <section class="platform-panel">
-        <div class="graphics-panel__title">
-          <h3>平台信息</h3>
-          <p>主板、BIOS、驱动与主显示器概览</p>
-        </div>
-
-        <div class="platform-grid">
-          <div v-for="item in platformRows" :key="item.label" class="platform-spec">
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-          </div>
-        </div>
-      </section>
     </template>
   </div>
 </template>
@@ -919,8 +906,7 @@ onUnmounted(() => {
 .hero-card,
 .health-card,
 .monitor-panel,
-.graphics-panel,
-.platform-panel {
+.graphics-panel {
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
   background:
@@ -1131,8 +1117,7 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-.monitor-panel,
-.platform-panel {
+.monitor-panel {
   padding: var(--surface-padding);
 }
 
@@ -1314,7 +1299,7 @@ onUnmounted(() => {
 
 .stat-table__row {
   display: grid;
-  grid-template-columns: 1.15fr 0.95fr 0.7fr;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr) auto;
   align-items: center;
   gap: 12px;
   padding: 8px 0;
@@ -1344,6 +1329,8 @@ onUnmounted(() => {
   font-weight: 700;
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .status-pill--good {
@@ -1363,7 +1350,7 @@ onUnmounted(() => {
 
 .port-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
   margin-bottom: 16px;
 }
@@ -1372,6 +1359,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
   padding: 10px 10px 8px;
   border: 1px solid rgba(84, 104, 132, 0.28);
   border-radius: 10px;
@@ -1381,6 +1369,10 @@ onUnmounted(() => {
     color: var(--text-primary);
     font-size: 13px;
     font-weight: 700;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   span {
@@ -1404,8 +1396,7 @@ onUnmounted(() => {
 }
 
 .output-row,
-.detail-spec,
-.platform-spec {
+.detail-spec {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
   gap: 12px;
@@ -1429,16 +1420,6 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.platform-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px 18px;
-}
-
-.platform-spec {
-  grid-template-columns: 92px minmax(0, 1fr);
-}
-
 @media (max-width: 1320px) {
   .graphics-hero,
   .graphics-grid {
@@ -1449,8 +1430,7 @@ onUnmounted(() => {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .gpu-core-grid,
-  .platform-grid {
+  .gpu-core-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1463,15 +1443,13 @@ onUnmounted(() => {
   .quick-stats,
   .monitor-grid,
   .gpu-core-grid,
-  .port-grid,
-  .platform-grid {
+  .port-grid {
     grid-template-columns: 1fr;
   }
 
   .stat-table__row,
   .output-row,
-  .detail-spec,
-  .platform-spec {
+  .detail-spec {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

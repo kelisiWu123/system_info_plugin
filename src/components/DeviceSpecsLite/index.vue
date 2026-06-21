@@ -9,6 +9,7 @@ import {
   formatBytes,
   formatDisplayResolution,
   formatUptime,
+  getDisplayMemoryCapacityBytes,
   getPhysicalDiskLayout,
 } from '../../utils'
 import {
@@ -106,8 +107,7 @@ function formatSystemInfo() {
 }
 
 function installedMemoryBytes() {
-  const layoutTotal = memoLayoutData.value.reduce((sum, item) => sum + (item.size || 0), 0)
-  return layoutTotal || memoData.value.total || 0
+  return getDisplayMemoryCapacityBytes(memoLayoutData.value, memoData.value)
 }
 
 function formatMemoryKit() {

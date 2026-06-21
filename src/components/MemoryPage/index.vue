@@ -6,10 +6,13 @@ import {
   bytesToGB,
   clampPercent,
   getDisplayMemoryAvailableBytes,
+  getDisplayMemoryCapacityBytes,
+  getDisplayMemoryCapacityLabel,
   getDisplayMemoryAvailableLabel,
   getDisplayMemoryUsagePercent,
   getDisplayMemoryUsedBytes,
   getDisplayMemoryUsedLabel,
+  getInstalledMemoryBytes,
   getMemoryPressureAccent,
   getMemoryPressureDescription,
   getMemoryPressureLabel,
@@ -41,7 +44,6 @@ const {
   memoData,
   memoLayoutData,
   boardData,
-  osInfo,
   metricHistory,
   fetchState,
 } = hardwareStore
@@ -160,8 +162,11 @@ function channelKey(bank: string, index: number) {
 }
 
 const memoryModules = computed(() => memoLayoutData.value.filter((item) => item.size > 0))
-const installedMemoryBytes = computed(() => memoryModules.value.reduce((sum, item) => sum + (item.size || 0), 0))
+const installedMemoryBytes = computed(() => getInstalledMemoryBytes(memoLayoutData.value))
 const installedMemoryGB = computed(() => bytesToGBNumber(installedMemoryBytes.value))
+const displayMemoryCapacityBytes = computed(() => getDisplayMemoryCapacityBytes(memoLayoutData.value, memoData.value))
+const displayMemoryCapacityGB = computed(() => bytesToGBNumber(displayMemoryCapacityBytes.value))
+const displayMemoryCapacityLabel = computed(() => getDisplayMemoryCapacityLabel(memoLayoutData.value))
 const systemMemoryGB = computed(() => bytesToGBNumber(memoData.value.total || 0))
 const usedMemoryGB = computed(() => bytesToGBNumber(getDisplayMemoryUsedBytes(memoData.value)))
 const freeMemoryGB = computed(() => bytesToGBNumber(getDisplayMemoryAvailableBytes(memoData.value)))
@@ -200,7 +205,7 @@ const kitSummary = computed(() => {
 const statusStats = computed<SummaryStat[]>(() => {
   if (memoData.value.normalizedPlatform === 'darwin') {
     return [
-      { label: '物理内存', value: `${systemMemoryGB.value} GB`, accent: 'var(--accent-purple)' },
+      { label: displayMemoryCapacityLabel.value, value: `${displayMemoryCapacityGB.value} GB`, accent: 'var(--accent-purple)' },
       { label: '内存压力', value: pressureLabel.value, accent: pressureAccent.value },
       { label: usedMemoryLabel.value, value: `${usedMemoryGB.value} GB`, accent: 'var(--accent-purple)', barPercent: usagePercent.value },
       { label: availableMemoryLabel.value, value: `${freeMemoryGB.value} GB`, accent: 'var(--accent-cyan)', barPercent: clampPercent((freeMemoryGB.value / Math.max(systemMemoryGB.value, 1)) * 100) },
@@ -214,7 +219,7 @@ const statusStats = computed<SummaryStat[]>(() => {
     { label: availableMemoryLabel.value, value: `${freeMemoryGB.value} GB`, accent: 'var(--accent-blue)', barPercent: clampPercent((freeMemoryGB.value / Math.max(systemMemoryGB.value, 1)) * 100) },
     { label: '当前频率', value: formatFrequency(memoryClock.value), accent: 'var(--accent-cyan)' },
     { label: '模组数量', value: `${moduleCount.value} / ${slotCount.value || moduleCount.value}`, accent: 'var(--accent-green)' },
-    { label: '系统总量', value: `${systemMemoryGB.value} GB`, accent: 'var(--accent-purple)' },
+    { label: displayMemoryCapacityLabel.value, value: `${displayMemoryCapacityGB.value} GB`, accent: 'var(--accent-purple)' },
   ]
 })
 
@@ -230,8 +235,7 @@ const timingRows = computed(() => [
   { label: '插槽数', value: `${slotCount.value || moduleCount.value}` },
   { label: '制造商', value: memoryManufacturer.value },
   { label: '型号', value: memorySeries.value },
-  { label: '系统总量', value: `${systemMemoryGB.value} GB` },
-  { label: '操作系统', value: joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release], ' / ') || '--' },
+  { label: displayMemoryCapacityLabel.value, value: `${displayMemoryCapacityGB.value} GB` },
 ])
 
 const slotRows = computed<SlotRow[]>(() => {
@@ -290,7 +294,7 @@ const detailRows = computed(() => [
   { label: '插槽占用', value: `${moduleCount.value} / ${slotCount.value || moduleCount.value}` },
   { label: '制造信息', value: cleanText(memoryModules.value[0]?.serialNum) || '--' },
   { label: '已安装容量', value: installedMemoryGB.value ? `${installedMemoryGB.value} GB` : '--' },
-  { label: '系统可用总量', value: systemMemoryGB.value ? `${systemMemoryGB.value} GB` : '--' },
+  { label: '系统可见总量', value: systemMemoryGB.value ? `${systemMemoryGB.value} GB` : '--' },
   ...(memoData.value.normalizedPlatform === 'darwin'
     ? [
         { label: '已占用内存', value: `${usedMemoryGB.value} GB` },
@@ -314,7 +318,7 @@ const memoryReportText = computed(() => {
     `频率：${formatFrequency(memoryClock.value)}`,
     `电压：${formatVoltage(memoryConfiguredVoltage.value)}`,
     `已安装容量：${installedMemoryGB.value} GB`,
-    `系统可用总量：${systemMemoryGB.value} GB`,
+    `系统可见总量：${systemMemoryGB.value} GB`,
     `${usedMemoryLabel.value}：${usedMemoryGB.value} GB / ${systemMemoryGB.value} GB (${formatUsage(usagePercent.value)})`,
     `${availableMemoryLabel.value}：${freeMemoryGB.value} GB`,
     ...(memoData.value.normalizedPlatform === 'darwin'
@@ -437,8 +441,8 @@ onUnmounted(() => {
               <strong>{{ memoryManufacturer }}</strong>
             </div>
             <div class="hero-spec">
-              <span>已安装容量</span>
-              <strong>{{ installedMemoryGB ? `${installedMemoryGB} GB` : '--' }}</strong>
+              <span>{{ displayMemoryCapacityLabel }}</span>
+              <strong>{{ displayMemoryCapacityGB ? `${displayMemoryCapacityGB} GB` : '--' }}</strong>
             </div>
             <div class="hero-spec">
               <span>当前频率</span>
@@ -555,7 +559,7 @@ onUnmounted(() => {
                 <strong>{{ freeMemoryGB }} GB</strong>
               </div>
               <div class="usage-summary__row">
-                <span>系统总量</span>
+                <span>系统可见总量</span>
                 <strong>{{ systemMemoryGB }} GB</strong>
               </div>
             </div>

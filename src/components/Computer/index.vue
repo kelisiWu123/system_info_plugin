@@ -20,10 +20,13 @@ import {
   formatDisplayResolution,
   formatUptime,
   getDisplayMemoryAvailableBytes,
+  getDisplayMemoryCapacityBytes,
+  getDisplayMemoryCapacityLabel,
   getDisplayMemoryAvailableLabel,
   getMemoryPressureLabel,
   getDisplayMemoryUsedBytes,
   getDisplayMemoryUsedLabel,
+  getInstalledMemoryBytes,
 } from '../../utils'
 import { splitItemsIntoColumns } from '../../utils/layout'
 import { buildMonitoringDiagnosticsCards } from '../../utils/monitoringDebug'
@@ -211,7 +214,15 @@ function memoryOverviewLines() {
 }
 
 function installedMemoryBytes() {
-  return memoLayoutData.value.reduce((sum, item) => sum + (item.size || 0), 0)
+  return getInstalledMemoryBytes(memoLayoutData.value)
+}
+
+function displayMemoryCapacityBytes() {
+  return getDisplayMemoryCapacityBytes(memoLayoutData.value, memoData.value)
+}
+
+function displayMemoryCapacityLabel() {
+  return getDisplayMemoryCapacityLabel(memoLayoutData.value)
 }
 
 function formatDisplayLine(item: DisplayData) {
@@ -376,7 +387,7 @@ const summaryCards = computed(() => [
     label: '内存',
     accent: 'var(--accent-purple)',
     icon: Memory,
-    title: installedMemoryBytes() > 0 ? `${bytesToGB(installedMemoryBytes())} GB` : memoData.value.total ? `${bytesToGB(memoData.value.total)} GB` : '读取中',
+    title: displayMemoryCapacityBytes() > 0 ? `${bytesToGB(displayMemoryCapacityBytes())} GB` : '读取中',
     lines: memoryOverviewLines(),
   },
   {
@@ -485,8 +496,8 @@ const detailRows = computed<DetailRow[]>(() => {
       id: 'memory',
       label: '内存',
       lines: [
-      installedMemoryBytes() > 0 ? `已安装 ${bytesToGB(installedMemoryBytes())} GB` : '',
-      memoData.value.total ? `系统总量 ${bytesToGB(memoData.value.total)} GB` : '',
+      displayMemoryCapacityBytes() > 0 ? `${displayMemoryCapacityLabel()} ${bytesToGB(displayMemoryCapacityBytes())} GB` : '',
+      installedMemoryBytes() > 0 && memoData.value.total ? `系统可见总量 ${bytesToGB(memoData.value.total)} GB` : '',
       memoData.value.total ? `${getDisplayMemoryUsedLabel(memoData.value)} ${bytesToGB(getDisplayMemoryUsedBytes(memoData.value))} GB` : '',
       memoData.value.total ? `${getDisplayMemoryAvailableLabel(memoData.value)} ${bytesToGB(getDisplayMemoryAvailableBytes(memoData.value))} GB` : '',
       memoData.value.normalizedPlatform === 'darwin' ? `内存压力 ${getMemoryPressureLabel(memoData.value.pressure?.level)}` : '',

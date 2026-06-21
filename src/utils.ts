@@ -83,6 +83,31 @@ function getDisplayCpuCurrentSpeedGHz(speed?: CpuCurrentSpeedData | null): numbe
   return typeof speed.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0 ? speed.avg : 0
 }
 
+function getInstalledMemoryBytes(layout?: Array<{ size?: number | null }> | null): number {
+  if (!Array.isArray(layout)) return 0
+
+  return layout.reduce((sum, item) => {
+    const size = typeof item?.size === 'number' && Number.isFinite(item.size) ? item.size : 0
+    return size > 0 ? sum + size : sum
+  }, 0)
+}
+
+function getDisplayMemoryCapacityBytes(
+  layout?: Array<{ size?: number | null }> | null,
+  memory?: Pick<MemoData, 'total'> | null
+): number {
+  const installed = getInstalledMemoryBytes(layout)
+  if (installed > 0) return installed
+
+  return typeof memory?.total === 'number' && Number.isFinite(memory.total) && memory.total > 0
+    ? memory.total
+    : 0
+}
+
+function getDisplayMemoryCapacityLabel(layout?: Array<{ size?: number | null }> | null): string {
+  return getInstalledMemoryBytes(layout) > 0 ? '已安装容量' : '系统可见总量'
+}
+
 function cleanStorageText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -340,6 +365,9 @@ export {
   clampPercent,
   formatDisplayResolution,
   getDisplayCpuCurrentSpeedGHz,
+  getInstalledMemoryBytes,
+  getDisplayMemoryCapacityBytes,
+  getDisplayMemoryCapacityLabel,
   getPhysicalDiskLayout,
   getPhysicalDiskTotalBytes,
   hasDiskHealthTelemetry,

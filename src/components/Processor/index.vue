@@ -1527,19 +1527,6 @@ onUnmounted(() => {
         </article>
       </section>
 
-      <section class="platform-panel">
-        <div class="processor-panel__title">
-          <h3>平台信息</h3>
-          <p>当前主板、BIOS、插槽与系统信息</p>
-        </div>
-
-        <div class="platform-grid">
-          <div v-for="item in platformSpecs" :key="item.label" class="platform-spec">
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-          </div>
-        </div>
-      </section>
     </template>
   </div>
 </template>
@@ -1575,8 +1562,7 @@ onUnmounted(() => {
 .hero-card,
 .health-card,
 .monitor-panel,
-.processor-panel,
-.platform-panel {
+.processor-panel {
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
   background:
@@ -1789,8 +1775,7 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-.monitor-panel,
-.platform-panel {
+.monitor-panel {
   padding: var(--surface-padding);
 }
 
@@ -2285,8 +2270,7 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-.detail-spec,
-.platform-spec {
+.detail-spec {
   display: grid;
   grid-template-columns: 122px minmax(0, 1fr);
   gap: 12px;
@@ -2303,16 +2287,6 @@ onUnmounted(() => {
     font-size: 13px;
     font-weight: 600;
   }
-}
-
-.platform-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px 22px;
-}
-
-.platform-spec {
-  grid-template-columns: 106px minmax(0, 1fr);
 }
 
 @media (max-width: 1320px) {
@@ -2335,37 +2309,31 @@ onUnmounted(() => {
     padding-right: 0;
   }
 
-  .monitor-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    .monitor-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
   }
-
-  .platform-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 
 @media (max-width: 980px) {
   .hero-specs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .sensor-enhancement-grid,
-  .quick-stats,
-  .monitor-grid,
-  .core-chip-grid,
-  .platform-grid {
-    grid-template-columns: 1fr;
-  }
+    .sensor-enhancement-grid,
+    .quick-stats,
+    .monitor-grid,
+    .core-chip-grid {
+      grid-template-columns: 1fr;
+    }
 
   .sensor-enhancement-panel__summary {
     flex-direction: column;
   }
 
-  .core-table__head,
-  .core-table__row,
-  .detail-spec,
-  .platform-spec {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    .core-table__head,
+    .core-table__row,
+    .detail-spec {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
-}
 </style>

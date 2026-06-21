@@ -283,7 +283,6 @@ const manufacturingRows = computed(() =>
     { label: '官方网站', value: inferVendorWebsite() },
     { label: '产品序列号', value: cleanText(boardData.value?.serial) || cleanText(biosData.value?.serial) || '--' },
     { label: '资产标签', value: cleanText(boardData.value?.assetTag) || '--' },
-    { label: '操作系统', value: joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release, osInfo.value?.arch]) || '--' },
   ])
 )
 

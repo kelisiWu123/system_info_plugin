@@ -11,7 +11,15 @@ import {
   Thermometer,
 } from '@icon-park/vue-next'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
-import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
+import {
+  clampPercent,
+  getDisplayCpuCurrentSpeedGHz,
+  getDisplayMemoryCapacityBytes,
+  getDisplayMemoryCapacityLabel,
+  getDisplayMemoryUsedBytes,
+  getDisplayMemoryUsagePercent,
+  getMemoryPressureLabel,
+} from '../../utils'
 import { withTimeout } from '../../utils/serviceReader'
 import {
   formatSuperLiteRefreshLabel,
@@ -258,13 +266,11 @@ const cpuOverviewSideItems = computed(() => buildWatchCpuOverviewSideItems({
 const cpuOverviewSideColumnCount = computed(() => getWatchOverviewSideColumnCount(cpuOverviewSideItems.value.length))
 
 const installedMemoryTotal = computed(() => {
-  const modules = memoryLayout.value
-    .map((item) => (typeof item?.size === 'number' && Number.isFinite(item.size) ? item.size : 0))
-    .filter((size) => size > 0)
-
-  if (!modules.length) return memoData.total || 0
-  return modules.reduce((sum, size) => sum + size, 0)
+  return getDisplayMemoryCapacityBytes(memoryLayout.value, memoData)
 })
+const memoryCapacityCompactLabel = computed(() => (
+  getDisplayMemoryCapacityLabel(memoryLayout.value) === '已安装容量' ? '已装' : '可见'
+))
 
 const gpuTempValue = computed(() => (
   typeof primaryGpu.value?.temperatureGpu === 'number' ? primaryGpu.value.temperatureGpu : null
@@ -735,6 +741,7 @@ onUnmounted(() => {
       :footer-left="superLiteFooterLeft"
       :footer-right="superLiteFooterRight"
       :pinned="pinned"
+      @close-window="closeWindow"
       @toggle-pin="togglePin"
       @switch-standard="switchFloatingMode('standard')"
     />
@@ -742,7 +749,6 @@ onUnmounted(() => {
       <header class="monitor-shell__header">
         <div class="monitor-shell__brand">
           <div class="monitor-shell__brand-mark">H</div>
-          <span>HWInfoX Monitor</span>
         </div>
 
         <div class="monitor-shell__modes">
@@ -917,7 +923,7 @@ onUnmounted(() => {
               <div class="metric-side-item">
                 <div class="metric-side-item__label">
                   <MemoryCardOne theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
-                  <span>{{ memoData.normalizedPlatform === 'darwin' ? '压力' : '总计' }}</span>
+                  <span>{{ memoData.normalizedPlatform === 'darwin' ? '压力' : memoryCapacityCompactLabel }}</span>
                 </div>
                 <strong>{{ memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel : formatGigabytesFromBytes(installedMemoryTotal, 0) }}</strong>
               </div>
@@ -1014,7 +1020,7 @@ onUnmounted(() => {
 
 .monitor-shell__header {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   padding: 1px 2px 8px;
   border-bottom: 1px solid rgba(129, 149, 183, 0.18);
@@ -1024,6 +1030,7 @@ onUnmounted(() => {
 .monitor-shell__brand {
   display: flex;
   align-items: center;
+  justify-self: start;
   gap: 8px;
   color: rgba(236, 242, 251, 0.96);
   font-size: 12px;
@@ -1077,6 +1084,7 @@ onUnmounted(() => {
 .monitor-shell__actions {
   display: flex;
   align-items: center;
+  justify-self: end;
   gap: 4px;
   -webkit-app-region: no-drag;
 }
@@ -1368,6 +1376,16 @@ onUnmounted(() => {
 
 .cpu-detail-sparkline--cpu polyline {
   stroke: #a775ff;
+}
+
+.cpu-detail-sparkline--gpu polygon {
+  fill: rgba(143, 244, 255, 0.42);
+  opacity: 0.34;
+}
+
+.cpu-detail-sparkline--gpu polyline {
+  stroke: #8ff4ff;
+  filter: drop-shadow(0 0 4px rgba(143, 244, 255, 0.42));
 }
 
 .cpu-detail-sparkline--temp polygon {
