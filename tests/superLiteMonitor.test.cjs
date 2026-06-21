@@ -41,6 +41,76 @@ test('resolveSuperLiteOverallStatus promotes warning and danger thresholds', asy
   })
 })
 
+test('resolveSuperLiteOverallStatus prioritizes known macOS memory pressure over memory usage', async () => {
+  const { resolveSuperLiteOverallStatus } = await loadSuperLiteMonitor()
+
+  assert.deepEqual(resolveSuperLiteOverallStatus({
+    cpuUsage: 10,
+    gpuUsage: 20,
+    memoryUsage: 99,
+    memoryPressure: 'normal',
+  }), {
+    level: 'normal',
+    label: '良好',
+  })
+  assert.deepEqual(resolveSuperLiteOverallStatus({
+    cpuUsage: 10,
+    gpuUsage: 20,
+    memoryUsage: 99,
+    memoryPressure: 'warning',
+  }), {
+    level: 'warning',
+    label: '注意',
+  })
+  assert.deepEqual(resolveSuperLiteOverallStatus({
+    cpuUsage: 10,
+    gpuUsage: 20,
+    memoryUsage: 20,
+    memoryPressure: 'critical',
+  }), {
+    level: 'danger',
+    label: '内存紧张',
+  })
+  assert.deepEqual(resolveSuperLiteOverallStatus({
+    cpuUsage: 10,
+    gpuUsage: 20,
+    memoryUsage: 99,
+    memoryPressure: 'unknown',
+  }), {
+    level: 'danger',
+    label: '内存紧张',
+  })
+})
+
+test('resolveSuperLiteMetricStatus colors only the metric that crosses its threshold', async () => {
+  const { resolveSuperLiteMetricStatus } = await loadSuperLiteMonitor()
+
+  assert.equal(resolveSuperLiteMetricStatus('cpu', {
+    usage: 17,
+    temperature: 50,
+  }), 'normal')
+  assert.equal(resolveSuperLiteMetricStatus('gpu', {
+    usage: 1,
+    temperature: 43,
+  }), 'normal')
+  assert.equal(resolveSuperLiteMetricStatus('memory', {
+    usage: 99,
+    pressure: 'warning',
+  }), 'warning')
+  assert.equal(resolveSuperLiteMetricStatus('memory', {
+    usage: 99,
+    pressure: 'normal',
+  }), 'normal')
+  assert.equal(resolveSuperLiteMetricStatus('memory', {
+    usage: 10,
+    pressure: 'critical',
+  }), 'danger')
+  assert.equal(resolveSuperLiteMetricStatus('memory', {
+    usage: 99,
+    pressure: 'unknown',
+  }), 'danger')
+})
+
 test('formatSuperLiteRefreshLabel uses the active poll interval', async () => {
   const { formatSuperLiteRefreshLabel } = await loadSuperLiteMonitor()
 

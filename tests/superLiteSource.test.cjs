@@ -66,3 +66,38 @@ test('standard watch mode keeps existing modes and actions', () => {
   assert.match(watch, /window\.services\.alwaysOnTop\(pinned\.value\)/)
   assert.match(watch, /window\.services\.closeWindow\(\)/)
 })
+
+test('super-lite layout keeps a draggable header and prevents compact values from wrapping', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+  const superLite = readSource('src/components/Watch/SuperLiteMonitorView.vue')
+
+  assert.match(watch, /resolveSuperLiteMetricStatus/)
+  assert.match(superLite, /<div class="super-lite-status"/)
+  assert.doesNotMatch(superLite, /<button[^>]*class="super-lite-status"/)
+  assert.match(superLite, /\.super-lite-header\s*{[\s\S]*-webkit-app-region:\s*drag/)
+  assert.match(superLite, /\.super-lite-status\s*{[\s\S]*white-space:\s*nowrap/)
+  assert.match(superLite, /\.super-lite-row__top\s*>\s*span:last-child\s*{[\s\S]*white-space:\s*nowrap/)
+  assert.match(superLite, /\.super-lite-footer\s*{[\s\S]*grid-template-columns:/)
+})
+
+test('super-lite mode stays as a single overview surface without tab detail pages', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+  const superLite = readSource('src/components/Watch/SuperLiteMonitorView.vue')
+
+  assert.doesNotMatch(watch, /superLitePage/)
+  assert.doesNotMatch(watch, /@set-page=/)
+  assert.doesNotMatch(superLite, /super-lite-switcher/)
+  assert.doesNotMatch(superLite, /super-lite-detail/)
+  assert.doesNotMatch(superLite, /emit\('set-page'/)
+  assert.doesNotMatch(superLite, /<button[\s\S]*v-for="metric"/)
+  assert.match(superLite, /<article[\s\S]*v-for="metric in metrics"/)
+})
+
+test('super-lite memory row emphasizes macOS memory pressure over used capacity', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /usageLabel:\s*memoData\.normalizedPlatform === 'darwin'\s*\?\s*memoryPressureLabel\.value\s*:\s*formatPercent\(memoryPercent\.value\)/)
+  assert.match(watch, /progressLabel:\s*formatPercent\(memoryPercent\.value\)/)
+  assert.match(watch, /primaryExtra:\s*memoData\.normalizedPlatform === 'darwin'\s*\?\s*formatPercent\(memoryPercent\.value\)\s*:\s*formatGigabytesFromBytes\(getDisplayMemoryUsedBytes\(memoData\)\)/)
+  assert.match(watch, /secondaryExtra:\s*memoData\.normalizedPlatform === 'darwin'\s*\?\s*`已用 \$\{formatGigabytesFromBytes\(getDisplayMemoryUsedBytes\(memoData\)\)\}`\s*:\s*'正常'/)
+})

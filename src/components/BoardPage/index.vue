@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { Chip, HardDisk, Memory, Signal } from '@icon-park/vue-next'
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
+import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
+import StateBlock from '../common/StateBlock.vue'
 import {
   filterBoardReportRows,
   getBoardDisplayName,
@@ -323,6 +324,11 @@ async function copyBoardInfo() {
   }
 }
 
+async function retryBoardPage() {
+  await refreshHardwareData('board')
+  await ensureBoardGpuSnapshot()
+}
+
 defineExpose({
   exportReport,
   copyBoardInfo,
@@ -377,7 +383,14 @@ onUnmounted(() => {
 
 <template>
   <div class="board-page">
-    <div v-if="loading" class="board-empty">正在同步主板数据...</div>
+    <StateBlock
+      v-if="loading"
+      variant="loading"
+      title="正在同步主板数据"
+      description="正在读取主板、BIOS、内存插槽和板载设备信息。"
+      action-label="重试该模块"
+      @retry="retryBoardPage"
+    />
 
     <template v-else>
       <section class="board-hero">
@@ -413,7 +426,14 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <div class="board-panel__body board-panel__body--split">
+          <StateBlock
+            v-if="activeTab === 'usb'"
+            variant="soon"
+            title="USB 端口级枚举即将支持"
+            description="当前系统数据链路尚未提供主板 USB 端口、控制器与连接设备的稳定枚举。"
+          />
+
+          <div v-else class="board-panel__body board-panel__body--split">
             <div class="board-list">
               <div v-for="row in tabRows[activeTab]" :key="`${activeTab}-${row.label}-${row.primary}`" class="board-list__row">
                 <span>{{ row.label }}</span>

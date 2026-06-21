@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
+import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
+import StateBlock from '../common/StateBlock.vue'
 import {
   bytesToGB,
   clampPercent,
@@ -42,9 +43,32 @@ const {
   boardData,
   osInfo,
   metricHistory,
+  fetchState,
 } = hardwareStore
 
 const subscribed = ref(false)
+
+const pageStateBlock = computed(() => {
+  if (fetchState.memInfo.status === 'error' || fetchState.memoryLayout.status === 'error') {
+    return {
+      variant: 'error' as const,
+      title: '内存数据读取失败',
+      description: fetchState.memInfo.note || fetchState.memoryLayout.note || '读取内存占用或模组布局时发生异常，可以重试该模块。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  if (fetchState.memInfo.status === 'missing' && fetchState.memoryLayout.status === 'missing' && !memoData.value.total && !memoLayoutData.value.length) {
+    return {
+      variant: 'empty' as const,
+      title: '未识别到内存信息',
+      description: '当前系统数据源没有返回内存容量或模组布局。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  return null
+})
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -328,6 +352,10 @@ async function copyMemoryInfo() {
   }
 }
 
+async function retryMemoryPage() {
+  await refreshHardwareData('memory')
+}
+
 defineExpose({
   exportReport,
   copyMemoryInfo,
@@ -365,7 +393,23 @@ onUnmounted(() => {
 
 <template>
   <div class="memory-page">
-    <div v-if="loading" class="memory-empty">正在同步内存数据...</div>
+    <StateBlock
+      v-if="loading"
+      variant="loading"
+      title="正在同步内存数据"
+      description="正在读取内存占用、模组布局、频率和插槽信息。"
+      action-label="重试该模块"
+      @retry="retryMemoryPage"
+    />
+
+    <StateBlock
+      v-else-if="pageStateBlock"
+      :variant="pageStateBlock.variant"
+      :title="pageStateBlock.title"
+      :description="pageStateBlock.description"
+      :action-label="pageStateBlock.actionLabel"
+      @retry="retryMemoryPage"
+    />
 
     <template v-else>
       <section class="memory-hero">

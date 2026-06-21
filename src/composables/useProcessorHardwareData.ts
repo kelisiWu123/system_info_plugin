@@ -6,8 +6,23 @@ import {
   getMonitoringRefreshIntervals,
 } from '../utils/monitoring'
 import { getDisplayCpuCurrentSpeedGHz } from '../utils'
+import { bindMonitoringVisibilityListeners, resolveMonitoringBackgroundThrottled } from '../utils/monitoringVisibility'
+import { normalizeErrorMessage, readService } from '../utils/serviceReader'
 
 type ProcessorMetricHistoryKey = 'cpuLoad' | 'cpuTemp' | 'cpuSpeed' | 'cpuVoltage' | 'cpuPower'
+type FetchStatus = 'pending' | 'ok' | 'missing' | 'error'
+type ProcessorServiceKey =
+  | 'cpuInfo'
+  | 'cpuTemperature'
+  | 'cpuLoadData'
+  | 'cpuCurrentSpeed'
+  | 'cpuPower'
+  | 'cpuVoltage'
+  | 'cpuFanSpeed'
+  | 'boardData'
+  | 'biosData'
+  | 'osInfo'
+  | 'timeInfo'
 
 const emptyCurrentLoadData: CurrentLoadData = {
   avgLoad: 0,
@@ -63,6 +78,20 @@ const metricHistory = reactive<Record<ProcessorMetricHistoryKey, number[]>>({
   cpuPower: [],
 })
 
+const fetchState = reactive<Record<ProcessorServiceKey, { status: FetchStatus; note: string }>>({
+  cpuInfo: { status: 'pending', note: '' },
+  cpuTemperature: { status: 'pending', note: '' },
+  cpuLoadData: { status: 'pending', note: '' },
+  cpuCurrentSpeed: { status: 'pending', note: '' },
+  cpuPower: { status: 'pending', note: '' },
+  cpuVoltage: { status: 'pending', note: '' },
+  cpuFanSpeed: { status: 'pending', note: '' },
+  boardData: { status: 'pending', note: '' },
+  biosData: { status: 'pending', note: '' },
+  osInfo: { status: 'pending', note: '' },
+  timeInfo: { status: 'pending', note: '' },
+})
+
 let initPromise: Promise<void> | undefined
 let refreshSettingsPromise: Promise<void> | undefined
 let refreshInFlight: Promise<void> | undefined
@@ -76,36 +105,9 @@ let lastTimeRefreshAt = 0
 let visibilityListenersBound = false
 const diagnostics = createMonitoringDiagnostics('processor')
 
-function withTimeout<T>(promise: Promise<T>, timeout = 8000): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error('读取超时')), timeout)
-    }),
-  ])
-}
-
-async function readService<T>(reader: () => Promise<T>, timeout = 8000, retries = 0): Promise<T> {
-  let lastError: unknown
-
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      return await withTimeout(reader(), timeout)
-    } catch (error) {
-      lastError = error
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('读取失败')
-}
-
-function resolveBackgroundThrottled() {
-  if (typeof document === 'undefined' || typeof window === 'undefined') return false
-  if (!monitoringRefreshSettings.value.backgroundThrottleEnabled) return false
-
-  const visible = !document.hidden && document.visibilityState !== 'hidden'
-  const focused = typeof document.hasFocus === 'function' ? document.hasFocus() : true
-  return !(visible && focused)
+function setFetchState(key: ProcessorServiceKey, status: FetchStatus, note = '') {
+  fetchState[key].status = status
+  fetchState[key].note = note
 }
 
 function getCurrentRefreshIntervals() {
@@ -152,21 +154,15 @@ function restartPolling() {
 }
 
 function updateBackgroundThrottled() {
-  const nextValue = resolveBackgroundThrottled()
+  const nextValue = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
   if (backgroundThrottled.value === nextValue) return
   backgroundThrottled.value = nextValue
   restartPolling()
 }
 
-function bindVisibilityListeners() {
-  if (visibilityListenersBound || typeof window === 'undefined' || typeof document === 'undefined') return
-
-  const handleVisibilityChange = () => updateBackgroundThrottled()
-  window.addEventListener('focus', handleVisibilityChange)
-  window.addEventListener('blur', handleVisibilityChange)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  visibilityListenersBound = true
-  backgroundThrottled.value = resolveBackgroundThrottled()
+function syncMonitoringVisibility() {
+  visibilityListenersBound = bindMonitoringVisibilityListeners(visibilityListenersBound, updateBackgroundThrottled)
+  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
 }
 
 async function ensureMonitoringRefreshSettingsLoaded() {
@@ -178,7 +174,7 @@ async function ensureMonitoringRefreshSettingsLoaded() {
     } catch {
       monitoringRefreshSettings.value = { ...DEFAULT_MONITORING_REFRESH_SETTINGS }
     }
-    backgroundThrottled.value = resolveBackgroundThrottled()
+    backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
   })().finally(() => {
     refreshSettingsPromise = undefined
   })
@@ -230,40 +226,62 @@ async function refreshProcessorDynamicMetrics(force = false) {
             : typeof temperatureRes.value?.main === 'number'
               ? temperatureRes.value.main
               : 0
+        setFetchState(
+          'cpuTemperature',
+          nextCpuTemperatureValue > 0 || temperatureRes.value?.source === 'unsupported' ? 'ok' : 'missing',
+          nextCpuTemperatureValue > 0 ? '' : temperatureRes.value?.message || temperatureRes.value?.errorCode || 'main 为空'
+        )
         appendMetricHistory(metricHistory.cpuTemp, nextCpuTemperatureValue)
         lastCpuTempRefreshAt = now
         hasUpdatedDynamicMetric = true
+      } else if (needsCpuTemp && temperatureRes.status === 'rejected') {
+        setFetchState('cpuTemperature', 'error', normalizeErrorMessage(temperatureRes.reason))
       }
 
       if (needsCpuLoad && cpuLoadRes.status === 'fulfilled') {
         cpuLoadData.value = cpuLoadRes.value || emptyCurrentLoadData
+        setFetchState('cpuLoadData', cpuLoadRes.value ? 'ok' : 'missing', cpuLoadRes.value ? '' : '返回为空')
         appendMetricHistory(metricHistory.cpuLoad, cpuLoadData.value.currentLoad || 0, true)
         lastCpuLoadRefreshAt = now
         hasUpdatedDynamicMetric = true
+      } else if (needsCpuLoad && cpuLoadRes.status === 'rejected') {
+        setFetchState('cpuLoadData', 'error', normalizeErrorMessage(cpuLoadRes.reason))
       }
 
       if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
         cpuCurrentSpeed.value = cpuSpeedRes.value || emptyCpuCurrentSpeedData
+        setFetchState('cpuCurrentSpeed', cpuSpeedRes.value ? 'ok' : 'missing', cpuSpeedRes.value ? '' : '返回为空')
         appendMetricHistory(metricHistory.cpuSpeed, getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value))
         lastCpuSpeedRefreshAt = now
         hasUpdatedDynamicMetric = true
+      } else if (needsCpuSpeed && cpuSpeedRes.status === 'rejected') {
+        setFetchState('cpuCurrentSpeed', 'error', normalizeErrorMessage(cpuSpeedRes.reason))
       }
 
       if (needsCpuAux && cpuPowerRes.status === 'fulfilled') {
         cpuPower.value = cpuPowerRes.value
+        setFetchState('cpuPower', cpuPowerRes.value ? 'ok' : 'missing', cpuPowerRes.value ? '' : '返回为空')
         appendMetricHistory(metricHistory.cpuPower, cpuPowerRes.value?.value || 0)
         hasUpdatedDynamicMetric = true
+      } else if (needsCpuAux && cpuPowerRes.status === 'rejected') {
+        setFetchState('cpuPower', 'error', normalizeErrorMessage(cpuPowerRes.reason))
       }
 
       if (needsCpuAux && cpuVoltageRes.status === 'fulfilled') {
         cpuVoltage.value = cpuVoltageRes.value
+        setFetchState('cpuVoltage', cpuVoltageRes.value ? 'ok' : 'missing', cpuVoltageRes.value ? '' : '返回为空')
         appendMetricHistory(metricHistory.cpuVoltage, cpuVoltageRes.value?.value || 0)
         hasUpdatedDynamicMetric = true
+      } else if (needsCpuAux && cpuVoltageRes.status === 'rejected') {
+        setFetchState('cpuVoltage', 'error', normalizeErrorMessage(cpuVoltageRes.reason))
       }
 
       if (needsCpuAux && cpuFanRes.status === 'fulfilled') {
         cpuFanSpeed.value = cpuFanRes.value
+        setFetchState('cpuFanSpeed', cpuFanRes.value ? 'ok' : 'missing', cpuFanRes.value ? '' : '返回为空')
         hasUpdatedDynamicMetric = true
+      } else if (needsCpuAux && cpuFanRes.status === 'rejected') {
+        setFetchState('cpuFanSpeed', 'error', normalizeErrorMessage(cpuFanRes.reason))
       }
 
       if (needsCpuAux) {
@@ -272,8 +290,11 @@ async function refreshProcessorDynamicMetrics(force = false) {
 
       if (needsTime && timeRes.status === 'fulfilled') {
         timeInfo.value = timeRes.value
+        setFetchState('timeInfo', timeRes.value ? 'ok' : 'missing', timeRes.value ? '' : '返回为空')
         lastTimeRefreshAt = now
         hasUpdatedDynamicMetric = true
+      } else if (needsTime && timeRes.status === 'rejected') {
+        setFetchState('timeInfo', 'error', normalizeErrorMessage(timeRes.reason))
       }
 
       if (hasUpdatedDynamicMetric) {
@@ -299,10 +320,33 @@ async function initProcessorHardwareData() {
       readService(() => window.services.getOsInfo(), 8000, 1),
     ])
 
-    if (cpuRes.status === 'fulfilled') cpuData.value = cpuRes.value
-    if (boardRes.status === 'fulfilled') boardData.value = boardRes.value
-    if (biosRes.status === 'fulfilled') biosData.value = biosRes.value
-    if (osRes.status === 'fulfilled') osInfo.value = osRes.value
+    if (cpuRes.status === 'fulfilled') {
+      cpuData.value = cpuRes.value
+      setFetchState('cpuInfo', cpuRes.value ? 'ok' : 'missing', cpuRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('cpuInfo', 'error', normalizeErrorMessage(cpuRes.reason))
+    }
+
+    if (boardRes.status === 'fulfilled') {
+      boardData.value = boardRes.value
+      setFetchState('boardData', boardRes.value ? 'ok' : 'missing', boardRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('boardData', 'error', normalizeErrorMessage(boardRes.reason))
+    }
+
+    if (biosRes.status === 'fulfilled') {
+      biosData.value = biosRes.value
+      setFetchState('biosData', biosRes.value ? 'ok' : 'missing', biosRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('biosData', 'error', normalizeErrorMessage(biosRes.reason))
+    }
+
+    if (osRes.status === 'fulfilled') {
+      osInfo.value = osRes.value
+      setFetchState('osInfo', osRes.value ? 'ok' : 'missing', osRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('osInfo', 'error', normalizeErrorMessage(osRes.reason))
+    }
 
     await refreshProcessorDynamicMetrics(true)
   } finally {
@@ -314,7 +358,7 @@ async function initProcessorHardwareData() {
 export async function activateProcessorHardwareStore() {
   subscriberCount += 1
   diagnostics.markActivated(subscriberCount)
-  bindVisibilityListeners()
+  syncMonitoringVisibility()
 
   if (!initialized.value) {
     if (!initPromise) {
@@ -331,6 +375,21 @@ export async function activateProcessorHardwareStore() {
 }
 
 export async function refreshProcessorHardwareDynamicMetrics() {
+  await refreshProcessorDynamicMetrics(true)
+}
+
+export async function refreshProcessorHardwareData() {
+  if (!initialized.value) {
+    if (!initPromise) {
+      initPromise = initProcessorHardwareData().finally(() => {
+        initPromise = undefined
+      })
+    }
+
+    await initPromise
+    return
+  }
+
   await refreshProcessorDynamicMetrics(true)
 }
 
@@ -362,6 +421,7 @@ export const processorHardwareStore = {
   osInfo,
   timeInfo,
   metricHistory,
+  fetchState,
   monitoringRefreshSettings,
   backgroundThrottled,
   diagnostics: diagnostics.state,

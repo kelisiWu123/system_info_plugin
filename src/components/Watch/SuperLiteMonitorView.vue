@@ -1,12 +1,12 @@
 <script setup lang="ts">
+import { Pushpin } from '@icon-park/vue-next'
 import type { SuperLiteStatus } from '../../utils/superLiteMonitor'
-
-type DetailPage = 'overview' | 'cpu' | 'gpu' | 'memory'
 
 interface MetricRow {
   key: 'cpu' | 'gpu' | 'memory'
   label: string
   usageLabel: string
+  progressLabel: string
   primaryExtra: string
   secondaryExtra: string
   trend: number[]
@@ -15,7 +15,6 @@ interface MetricRow {
 }
 
 defineProps<{
-  page: DetailPage
   status: SuperLiteStatus
   metrics: MetricRow[]
   footerLeft: string
@@ -24,7 +23,6 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'set-page', page: DetailPage): void
   (event: 'toggle-pin'): void
   (event: 'switch-standard'): void
 }>()
@@ -36,26 +34,15 @@ function barCount(values: number[]) {
 function progressWidth(label: string) {
   return /^\d+%$/.test(label) ? label : '0%'
 }
-
-function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
-  if (page === 'overview') return []
-  return metrics.filter((item) => item.key === page)
-}
 </script>
 
 <template>
-  <section class="super-lite-monitor" :data-super-lite-page="page">
+  <section class="super-lite-monitor" data-super-lite-page="overview">
     <header class="super-lite-header">
-      <button type="button" class="super-lite-status" @click="emit('set-page', 'overview')">
+      <div class="super-lite-status" aria-live="polite">
         <span :class="['super-lite-dot', `super-lite-dot--${status.level}`]" />
         <span>{{ status.label }}</span>
-      </button>
-
-      <nav class="super-lite-switcher" aria-label="超级轻量模式页面">
-        <button type="button" @click="emit('set-page', 'overview')">概览</button>
-        <button type="button" @click="emit('set-page', 'cpu')">CPU</button>
-        <button type="button" @click="emit('set-page', 'gpu')">GPU</button>
-      </nav>
+      </div>
 
       <button
         type="button"
@@ -64,17 +51,15 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
         title="固定窗口"
         @click="emit('toggle-pin')"
       >
-        钉
+        <Pushpin theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
       </button>
     </header>
 
-    <main v-if="page === 'overview'" class="super-lite-body">
-      <button
+    <main class="super-lite-body">
+      <article
         v-for="metric in metrics"
         :key="metric.key"
-        type="button"
         :class="['super-lite-row', `super-lite-row--${metric.tone}`, `super-lite-row--${metric.status}`]"
-        @click="emit('set-page', metric.key === 'memory' ? 'memory' : metric.key)"
       >
         <span class="super-lite-row__top">
           <strong>{{ metric.label }}</strong>
@@ -91,27 +76,10 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
         <span class="super-lite-row__bottom">
           <small>{{ metric.secondaryExtra }}</small>
           <span class="super-lite-progress">
-            <i :style="{ width: progressWidth(metric.usageLabel) }" />
+            <i :style="{ width: progressWidth(metric.progressLabel) }" />
           </span>
         </span>
-      </button>
-    </main>
-
-    <main v-else class="super-lite-detail">
-      <button type="button" class="super-lite-back" @click="emit('set-page', 'overview')">
-        <span>‹</span>
-        <strong>{{ page.toUpperCase() }}详情</strong>
-      </button>
-      <dl>
-        <template v-for="metric in getDetailMetrics(metrics, page)" :key="metric.key">
-          <dt>使用率</dt>
-          <dd>{{ metric.usageLabel }}</dd>
-          <dt>主要指标</dt>
-          <dd>{{ metric.primaryExtra }}</dd>
-          <dt>辅助指标</dt>
-          <dd>{{ metric.secondaryExtra }}</dd>
-        </template>
-      </dl>
+      </article>
     </main>
 
     <footer class="super-lite-footer">
@@ -149,17 +117,17 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
 }
 
 .super-lite-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
   height: 24px;
   gap: 6px;
+  user-select: none;
   -webkit-app-region: drag;
 }
 
-.super-lite-status,
 .super-lite-pin,
-.super-lite-switcher button,
-.super-lite-footer button,
-.super-lite-back,
-.super-lite-row {
+.super-lite-footer button {
   border: 0;
   color: inherit;
   font: inherit;
@@ -168,14 +136,14 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
 }
 
 .super-lite-status {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 5px;
-  min-width: 52px;
-  padding: 0;
-  background: transparent;
+  min-width: 0;
   font-size: 11px;
   font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .super-lite-dot {
@@ -196,21 +164,6 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
   box-shadow: 0 0 10px rgba(255, 111, 117, 0.72);
 }
 
-.super-lite-switcher {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.16s ease;
-}
-
-.super-lite-header:hover .super-lite-switcher {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.super-lite-switcher button,
 .super-lite-footer button {
   height: 18px;
   padding: 0 5px;
@@ -220,12 +173,14 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
 }
 
 .super-lite-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 20px;
+  justify-self: end;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.07);
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .super-lite-pin[aria-pressed='true'] {
@@ -244,9 +199,10 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  overflow: hidden;
   min-height: 0;
-  gap: 3px;
-  padding: 5px 6px;
+  gap: 2px;
+  padding: 4px 6px;
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.045);
   text-align: left;
@@ -268,8 +224,11 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
 }
 
 .super-lite-row__top {
-  grid-template-columns: 28px 32px 1fr 34px;
+  grid-template-columns: 30px 36px minmax(30px, 1fr) 46px;
+  gap: 4px;
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
 }
 
 .super-lite-row__top strong,
@@ -285,8 +244,17 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
   font-weight: 800;
 }
 
+.super-lite-row__top > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .super-lite-row__bottom {
-  grid-template-columns: 50px 1fr;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 4px;
 }
 
 .super-lite-row__bottom small {
@@ -335,52 +303,14 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
   background: rgba(133, 221, 118, 0.88);
 }
 
-.super-lite-detail {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 6px;
-}
-
-.super-lite-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0;
-  background: transparent;
-  font-size: 12px;
-}
-
-.super-lite-detail dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 7px 10px;
-  margin: 0;
-  padding: 8px;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.045);
-  font-size: 10px;
-}
-
-.super-lite-detail dt {
-  color: rgba(207, 220, 240, 0.68);
-}
-
-.super-lite-detail dd {
-  margin: 0;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .super-lite-footer {
+  display: grid;
+  grid-template-columns: 38px 36px minmax(0, 1fr);
   height: 20px;
   gap: 5px;
   color: rgba(208, 219, 238, 0.78);
   font-size: 9px;
+  font-variant-numeric: tabular-nums;
 }
 
 .super-lite-footer span {
@@ -388,5 +318,9 @@ function getDetailMetrics(metrics: MetricRow[], page: DetailPage) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.super-lite-footer > span:last-child {
+  text-align: right;
 }
 </style>

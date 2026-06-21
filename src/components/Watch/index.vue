@@ -12,8 +12,10 @@ import {
 } from '@icon-park/vue-next'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { clampPercent, getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsedBytes, getDisplayMemoryUsagePercent, getMemoryPressureLabel } from '../../utils'
+import { withTimeout } from '../../utils/serviceReader'
 import {
   formatSuperLiteRefreshLabel,
+  resolveSuperLiteMetricStatus,
   resolveSuperLiteOverallStatus,
 } from '../../utils/superLiteMonitor'
 import SuperLiteMonitorView from './SuperLiteMonitorView.vue'
@@ -29,8 +31,6 @@ import {
   WATCH_MODE_POLL_PROFILES,
 } from '../../utils/watch'
 import type { FloatingMonitorEntry, FloatingMonitorMode } from '../../utils/hashRoute'
-
-type SuperLitePage = 'overview' | 'cpu' | 'gpu' | 'memory'
 
 const props = defineProps<{
   active?: boolean
@@ -71,7 +71,6 @@ const memoryLayout = ref<MemoLayoutData[]>([])
 const pinned = ref(true)
 const monitorMode = ref<'overview' | 'cpu' | 'gpu'>('overview')
 const floatingMode = ref<FloatingMonitorMode>(props.initialFloatingMode || 'standard')
-const superLitePage = ref<SuperLitePage>('overview')
 
 const history = reactive({
   cpu: [] as number[],
@@ -105,15 +104,6 @@ const CPU_SPEED_INFO_INTERVAL_MS = 4500
 
 function getCurrentPollProfile() {
   return WATCH_MODE_POLL_PROFILES[monitorMode.value]
-}
-
-function withTimeout<T>(promise: Promise<T>, timeout = 2500): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error('读取超时')), timeout)
-    }),
-  ])
 }
 
 function clampHistory(list: number[], value: number) {
@@ -309,31 +299,43 @@ const superLiteMetrics = computed(() => [
     key: 'cpu' as const,
     label: 'CPU',
     usageLabel: formatPercent(cpuPercent.value),
+    progressLabel: formatPercent(cpuPercent.value),
     primaryExtra: cpuTemperatureDisplay.value,
     secondaryExtra: formatPower(cpuPowerValue.value),
     trend: history.cpu,
     tone: 'cpu' as const,
-    status: superLiteStatus.value.level,
+    status: resolveSuperLiteMetricStatus('cpu', {
+      usage: cpuPercent.value,
+      temperature: cpuTempValue.value,
+    }),
   },
   {
     key: 'gpu' as const,
     label: 'GPU',
     usageLabel: formatPercent(gpuPercent.value),
+    progressLabel: formatPercent(gpuPercent.value),
     primaryExtra: formatTemperature(gpuTempValue.value),
     secondaryExtra: formatPower(gpuPowerValue.value),
     trend: history.gpu,
     tone: 'gpu' as const,
-    status: superLiteStatus.value.level,
+    status: resolveSuperLiteMetricStatus('gpu', {
+      usage: gpuPercent.value,
+      temperature: gpuTempValue.value,
+    }),
   },
   {
     key: 'memory' as const,
     label: 'MEM',
-    usageLabel: formatPercent(memoryPercent.value),
-    primaryExtra: formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData)),
-    secondaryExtra: memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel.value : '正常',
+    usageLabel: memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel.value : formatPercent(memoryPercent.value),
+    progressLabel: formatPercent(memoryPercent.value),
+    primaryExtra: memoData.normalizedPlatform === 'darwin' ? formatPercent(memoryPercent.value) : formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData)),
+    secondaryExtra: memoData.normalizedPlatform === 'darwin' ? `已用 ${formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData))}` : '正常',
     trend: history.memory,
     tone: 'memory' as const,
-    status: superLiteStatus.value.level,
+    status: resolveSuperLiteMetricStatus('memory', {
+      usage: memoryPercent.value,
+      pressure: memoData.pressure?.level,
+    }),
   },
 ])
 
@@ -633,7 +635,6 @@ function applyFloatingMode(mode: FloatingMonitorMode, persist = true) {
   }
 
   floatingMode.value = mode
-  superLitePage.value = 'overview'
   resizeFloatingMode(mode)
 
   if (persist) {
@@ -729,13 +730,11 @@ onUnmounted(() => {
   <div class="watch-container" :data-floating-mode="floatingMode">
     <SuperLiteMonitorView
       v-if="floatingMode === 'super-lite'"
-      :page="superLitePage"
       :status="superLiteStatus"
       :metrics="superLiteMetrics"
       :footer-left="superLiteFooterLeft"
       :footer-right="superLiteFooterRight"
       :pinned="pinned"
-      @set-page="superLitePage = $event"
       @toggle-pin="togglePin"
       @switch-standard="switchFloatingMode('standard')"
     />

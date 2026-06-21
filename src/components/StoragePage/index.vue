@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { activateHardwareStore, deactivateHardwareStore, hardwareStore } from '../../composables/useHardwareData'
+import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import { clampPercent, formatBytes, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes, hasDiskHealthTelemetry } from '../../utils'
+import StateBlock from '../common/StateBlock.vue'
 
 const props = defineProps<{
   active?: boolean
@@ -59,11 +60,34 @@ const {
   diskData,
   storageUsage,
   osInfo,
+  fetchState,
 } = hardwareStore
 
 const subscribed = ref(false)
 const selectedDiskId = ref('')
 const isDarwin = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
+
+const pageStateBlock = computed(() => {
+  if (fetchState.diskData.status === 'error' || fetchState.diskLayout.status === 'error') {
+    return {
+      variant: 'error' as const,
+      title: '存储数据读取失败',
+      description: fetchState.diskLayout.note || fetchState.diskData.note || '读取物理磁盘或挂载卷信息时发生异常，可以重试该模块。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  if (fetchState.diskData.status === 'missing' && fetchState.diskLayout.status === 'missing' && !diskData.value.length && !diskLayoutData.value.length) {
+    return {
+      variant: 'empty' as const,
+      title: '未识别到存储设备',
+      description: '当前系统数据源没有返回物理磁盘或挂载卷信息。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  return null
+})
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -377,6 +401,10 @@ async function copyStorageInfo() {
   }
 }
 
+async function retryStoragePage() {
+  await refreshHardwareData('storage')
+}
+
 defineExpose({
   exportReport,
   copyStorageInfo,
@@ -429,7 +457,23 @@ onUnmounted(() => {
 
 <template>
   <div class="storage-page">
-    <div v-if="loading" class="storage-empty">正在同步存储数据...</div>
+    <StateBlock
+      v-if="loading"
+      variant="loading"
+      title="正在同步存储数据"
+      description="正在读取物理磁盘、挂载卷、容量和健康状态信息。"
+      action-label="重试该模块"
+      @retry="retryStoragePage"
+    />
+
+    <StateBlock
+      v-else-if="pageStateBlock"
+      :variant="pageStateBlock.variant"
+      :title="pageStateBlock.title"
+      :description="pageStateBlock.description"
+      :action-label="pageStateBlock.actionLabel"
+      @retry="retryStoragePage"
+    />
 
     <template v-else>
       <section class="storage-section">

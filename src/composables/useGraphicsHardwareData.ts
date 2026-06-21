@@ -6,8 +6,12 @@ import {
   getMonitoringRefreshIntervals,
 } from '../utils/monitoring'
 import { selectPrimaryGpu } from '../utils/gpu'
+import { bindMonitoringVisibilityListeners, resolveMonitoringBackgroundThrottled } from '../utils/monitoringVisibility'
+import { normalizeErrorMessage, readService } from '../utils/serviceReader'
 
 type GraphicsMetricHistoryKey = 'gpuLoad' | 'gpuTemp' | 'gpuClock' | 'gpuMemory' | 'gpuPower'
+type FetchStatus = 'pending' | 'ok' | 'missing' | 'error'
+type GraphicsServiceKey = 'gpuInfo' | 'displaysData' | 'boardData' | 'biosData' | 'osInfo'
 
 const loading = ref(true)
 const initialized = ref(false)
@@ -29,6 +33,14 @@ const metricHistory = reactive<Record<GraphicsMetricHistoryKey, number[]>>({
   gpuPower: [],
 })
 
+const fetchState = reactive<Record<GraphicsServiceKey, { status: FetchStatus; note: string }>>({
+  gpuInfo: { status: 'pending', note: '' },
+  displaysData: { status: 'pending', note: '' },
+  boardData: { status: 'pending', note: '' },
+  biosData: { status: 'pending', note: '' },
+  osInfo: { status: 'pending', note: '' },
+})
+
 const primaryGpu = computed(() => selectPrimaryGpu(gpuData.value))
 
 let initPromise: Promise<void> | undefined
@@ -40,36 +52,9 @@ let lastGpuRefreshAt = 0
 let visibilityListenersBound = false
 const diagnostics = createMonitoringDiagnostics('graphics')
 
-function withTimeout<T>(promise: Promise<T>, timeout = 8000): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error('读取超时')), timeout)
-    }),
-  ])
-}
-
-async function readService<T>(reader: () => Promise<T>, timeout = 8000, retries = 0): Promise<T> {
-  let lastError: unknown
-
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      return await withTimeout(reader(), timeout)
-    } catch (error) {
-      lastError = error
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('读取失败')
-}
-
-function resolveBackgroundThrottled() {
-  if (typeof document === 'undefined' || typeof window === 'undefined') return false
-  if (!monitoringRefreshSettings.value.backgroundThrottleEnabled) return false
-
-  const visible = !document.hidden && document.visibilityState !== 'hidden'
-  const focused = typeof document.hasFocus === 'function' ? document.hasFocus() : true
-  return !(visible && focused)
+function setFetchState(key: GraphicsServiceKey, status: FetchStatus, note = '') {
+  fetchState[key].status = status
+  fetchState[key].note = note
 }
 
 function getCurrentRefreshIntervals() {
@@ -115,21 +100,15 @@ function restartPolling() {
 }
 
 function updateBackgroundThrottled() {
-  const nextValue = resolveBackgroundThrottled()
+  const nextValue = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
   if (backgroundThrottled.value === nextValue) return
   backgroundThrottled.value = nextValue
   restartPolling()
 }
 
-function bindVisibilityListeners() {
-  if (visibilityListenersBound || typeof window === 'undefined' || typeof document === 'undefined') return
-
-  const handleVisibilityChange = () => updateBackgroundThrottled()
-  window.addEventListener('focus', handleVisibilityChange)
-  window.addEventListener('blur', handleVisibilityChange)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  visibilityListenersBound = true
-  backgroundThrottled.value = resolveBackgroundThrottled()
+function syncMonitoringVisibility() {
+  visibilityListenersBound = bindMonitoringVisibilityListeners(visibilityListenersBound, updateBackgroundThrottled)
+  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
 }
 
 async function ensureMonitoringRefreshSettingsLoaded() {
@@ -141,7 +120,7 @@ async function ensureMonitoringRefreshSettingsLoaded() {
     } catch {
       monitoringRefreshSettings.value = { ...DEFAULT_MONITORING_REFRESH_SETTINGS }
     }
-    backgroundThrottled.value = resolveBackgroundThrottled()
+    backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
   })().finally(() => {
     refreshSettingsPromise = undefined
   })
@@ -168,8 +147,14 @@ async function refreshGraphicsDynamicMetrics(force = false) {
         return
       }
 
-      const gpuRes = await readService(() => window.services.getGpuInfo(), 15000)
-      gpuData.value = gpuRes || []
+      try {
+        const gpuRes = await readService(() => window.services.getGpuInfo(), 15000)
+        gpuData.value = gpuRes || []
+        setFetchState('gpuInfo', gpuData.value.length ? 'ok' : 'missing', gpuData.value.length ? '' : '返回空数组')
+      } catch (error) {
+        setFetchState('gpuInfo', 'error', normalizeErrorMessage(error))
+        throw error
+      }
 
       const nextPrimaryGpu = selectPrimaryGpu(gpuData.value)
       appendMetricHistory(metricHistory.gpuTemp, nextPrimaryGpu?.temperatureGpu || 0)
@@ -198,10 +183,33 @@ async function initGraphicsHardwareData() {
       readService(() => window.services.getDisplaysData(), 12000, 1),
     ])
 
-    if (boardRes.status === 'fulfilled') boardData.value = boardRes.value
-    if (biosRes.status === 'fulfilled') biosData.value = biosRes.value
-    if (osRes.status === 'fulfilled') osInfo.value = osRes.value
-    if (displaysRes.status === 'fulfilled') displaysData.value = displaysRes.value || []
+    if (boardRes.status === 'fulfilled') {
+      boardData.value = boardRes.value
+      setFetchState('boardData', boardRes.value ? 'ok' : 'missing', boardRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('boardData', 'error', normalizeErrorMessage(boardRes.reason))
+    }
+
+    if (biosRes.status === 'fulfilled') {
+      biosData.value = biosRes.value
+      setFetchState('biosData', biosRes.value ? 'ok' : 'missing', biosRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('biosData', 'error', normalizeErrorMessage(biosRes.reason))
+    }
+
+    if (osRes.status === 'fulfilled') {
+      osInfo.value = osRes.value
+      setFetchState('osInfo', osRes.value ? 'ok' : 'missing', osRes.value ? '' : '返回为空')
+    } else {
+      setFetchState('osInfo', 'error', normalizeErrorMessage(osRes.reason))
+    }
+
+    if (displaysRes.status === 'fulfilled') {
+      displaysData.value = displaysRes.value || []
+      setFetchState('displaysData', displaysData.value.length ? 'ok' : 'missing', displaysData.value.length ? '' : '返回空数组')
+    } else {
+      setFetchState('displaysData', 'error', normalizeErrorMessage(displaysRes.reason))
+    }
 
     await refreshGraphicsDynamicMetrics(true)
   } finally {
@@ -213,7 +221,7 @@ async function initGraphicsHardwareData() {
 export async function activateGraphicsHardwareStore() {
   subscriberCount += 1
   diagnostics.markActivated(subscriberCount)
-  bindVisibilityListeners()
+  syncMonitoringVisibility()
 
   if (!initialized.value) {
     if (!initPromise) {
@@ -227,6 +235,21 @@ export async function activateGraphicsHardwareStore() {
 
   await ensureMonitoringRefreshSettingsLoaded()
   startPolling()
+}
+
+export async function refreshGraphicsHardwareData() {
+  if (!initialized.value) {
+    if (!initPromise) {
+      initPromise = initGraphicsHardwareData().finally(() => {
+        initPromise = undefined
+      })
+    }
+
+    await initPromise
+    return
+  }
+
+  await refreshGraphicsDynamicMetrics(true)
 }
 
 export function deactivateGraphicsHardwareStore() {
@@ -251,6 +274,7 @@ export const graphicsHardwareStore = {
   biosData,
   osInfo,
   metricHistory,
+  fetchState,
   monitoringRefreshSettings,
   backgroundThrottled,
   diagnostics: diagnostics.state,

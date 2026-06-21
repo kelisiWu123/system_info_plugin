@@ -8,6 +8,8 @@ import {
 } from '../utils/monitoring'
 import { getDisplayCpuCurrentSpeedGHz, getDisplayMemoryUsagePercent, getStorageUsageSummary } from '../utils'
 import { selectPrimaryGpu } from '../utils/gpu'
+import { bindMonitoringVisibilityListeners, resolveMonitoringBackgroundThrottled } from '../utils/monitoringVisibility'
+import { normalizeErrorMessage, readService } from '../utils/serviceReader'
 
 type SharedHardwareMonitorScope = 'overview' | 'board' | 'memory' | 'storage'
 
@@ -210,34 +212,6 @@ const activeScopeCounts = reactive<Record<SharedHardwareMonitorScope, number>>({
 const monitoringRefreshSettings = ref<MonitoringRefreshSettingsData>({ ...DEFAULT_MONITORING_REFRESH_SETTINGS })
 const backgroundThrottled = ref(false)
 
-function withTimeout<T>(promise: Promise<T>, timeout = 8000): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error('读取超时')), timeout)
-    }),
-  ])
-}
-
-async function readService<T>(reader: () => Promise<T>, timeout = 8000, retries = 0): Promise<T> {
-  let lastError: unknown
-
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      return await withTimeout(reader(), timeout)
-    } catch (error) {
-      lastError = error
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('读取失败')
-}
-
-function normalizeErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  return typeof error === 'string' ? error : '未知错误'
-}
-
 function setFetchState(key: OverviewServiceKey, status: FetchStatus, note = '') {
   fetchState[key].status = status
   fetchState[key].note = note
@@ -280,31 +254,16 @@ function getCurrentRefreshIntervals() {
   return getMonitoringRefreshIntervals(monitoringRefreshSettings.value.profile, backgroundThrottled.value)
 }
 
-function resolveBackgroundThrottled() {
-  if (typeof document === 'undefined' || typeof window === 'undefined') return false
-  if (!monitoringRefreshSettings.value.backgroundThrottleEnabled) return false
-
-  const visible = !document.hidden && document.visibilityState !== 'hidden'
-  const focused = typeof document.hasFocus === 'function' ? document.hasFocus() : true
-  return !(visible && focused)
-}
-
 function updateBackgroundThrottled() {
-  const nextValue = resolveBackgroundThrottled()
+  const nextValue = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
   if (backgroundThrottled.value === nextValue) return
   backgroundThrottled.value = nextValue
   restartPolling()
 }
 
-function bindVisibilityListeners() {
-  if (visibilityListenersBound || typeof window === 'undefined' || typeof document === 'undefined') return
-
-  const handleVisibilityChange = () => updateBackgroundThrottled()
-  window.addEventListener('focus', handleVisibilityChange)
-  window.addEventListener('blur', handleVisibilityChange)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  visibilityListenersBound = true
-  backgroundThrottled.value = resolveBackgroundThrottled()
+function syncMonitoringVisibility() {
+  visibilityListenersBound = bindMonitoringVisibilityListeners(visibilityListenersBound, updateBackgroundThrottled)
+  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
 }
 
 async function ensureMonitoringRefreshSettingsLoaded() {
@@ -316,7 +275,7 @@ async function ensureMonitoringRefreshSettingsLoaded() {
     } catch {
       monitoringRefreshSettings.value = { ...DEFAULT_MONITORING_REFRESH_SETTINGS }
     }
-    backgroundThrottled.value = resolveBackgroundThrottled()
+    backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
   })().finally(() => {
     refreshSettingsPromise = undefined
   })
@@ -632,7 +591,7 @@ function restartPolling() {
 export async function activateHardwareStore(scope: SharedHardwareMonitorScope = 'overview') {
   activeScopeCounts[scope] += 1
   diagnostics.markActivated(getActiveSubscriberCount())
-  bindVisibilityListeners()
+  syncMonitoringVisibility()
 
   if (!initialized.value) {
     if (!initPromise) {
@@ -655,9 +614,24 @@ export async function refreshHardwareStoreDynamicMetrics() {
   await refreshDynamicMetrics(true)
 }
 
+export async function refreshHardwareData(_scope: SharedHardwareMonitorScope = 'overview') {
+  if (!initialized.value) {
+    if (!initPromise) {
+      initPromise = initHardwareData().finally(() => {
+        initPromise = undefined
+      })
+    }
+
+    await initPromise
+    return
+  }
+
+  await refreshDynamicMetrics(true)
+}
+
 export async function updateHardwareMonitorRefreshSettings(patch: Partial<MonitoringRefreshSettingsData>) {
   monitoringRefreshSettings.value = await window.services.updateMonitoringRefreshSettings(patch)
-  backgroundThrottled.value = resolveBackgroundThrottled()
+  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
   restartPolling()
   return monitoringRefreshSettings.value
 }

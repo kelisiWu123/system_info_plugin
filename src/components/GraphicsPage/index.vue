@@ -4,10 +4,12 @@ import {
   activateGraphicsHardwareStore,
   deactivateGraphicsHardwareStore,
   graphicsHardwareStore,
+  refreshGraphicsHardwareData,
 } from '../../composables/useGraphicsHardwareData'
 import { clampPercent, formatDisplayResolution } from '../../utils'
 import { formatGpuTemperatureSensorLabel, getGraphicsPlatformPanelVisibility } from '../../utils/gpu'
 import { normalizeOsPlatform } from '../../utils/platform'
+import StateBlock from '../common/StateBlock.vue'
 
 const props = defineProps<{
   active?: boolean
@@ -50,6 +52,7 @@ const {
   biosData,
   osInfo,
   primaryGpu,
+  fetchState,
 } = graphicsHardwareStore
 
 const metricHistory: Record<MetricHistoryKey, number[]> = {
@@ -61,6 +64,28 @@ const metricHistory: Record<MetricHistoryKey, number[]> = {
 }
 
 const subscribed = ref(false)
+
+const pageStateBlock = computed(() => {
+  if (fetchState.gpuInfo.status === 'error') {
+    return {
+      variant: 'error' as const,
+      title: '显卡数据读取失败',
+      description: fetchState.gpuInfo.note || '读取显卡信息时发生异常，可以重试该模块。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  if (fetchState.gpuInfo.status === 'missing' && !primaryGpu.value) {
+    return {
+      variant: 'empty' as const,
+      title: '未识别到显卡信息',
+      description: fetchState.gpuInfo.note || '当前系统数据源没有返回可展示的 GPU 设备。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  return null
+})
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -643,6 +668,10 @@ function startStressTest() {
   return false
 }
 
+async function retryGraphicsPage() {
+  await refreshGraphicsHardwareData()
+}
+
 defineExpose({
   exportReport,
   copyGraphicsInfo,
@@ -683,7 +712,23 @@ onUnmounted(() => {
 
 <template>
   <div class="graphics-page">
-    <div v-if="loading" class="graphics-empty">正在同步显卡数据...</div>
+    <StateBlock
+      v-if="loading"
+      variant="loading"
+      title="正在同步显卡数据"
+      description="正在读取 GPU、显示器、驱动与实时遥测信息。"
+      action-label="重试该模块"
+      @retry="retryGraphicsPage"
+    />
+
+    <StateBlock
+      v-else-if="pageStateBlock"
+      :variant="pageStateBlock.variant"
+      :title="pageStateBlock.title"
+      :description="pageStateBlock.description"
+      :action-label="pageStateBlock.actionLabel"
+      @retry="retryGraphicsPage"
+    />
 
     <template v-else>
       <section class="graphics-hero">

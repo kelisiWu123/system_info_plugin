@@ -24,6 +24,7 @@ interface SidebarItem {
 }
 
 interface CopyablePageHandle {
+  exportReport?: () => void
   copyOverviewInfo?: () => Promise<boolean>
   copyProcessorInfo?: () => Promise<boolean>
   copyGraphicsInfo?: () => Promise<boolean>
@@ -36,7 +37,6 @@ interface CopyablePageHandle {
 
 const currentHash = ref(window.location.hash)
 const selectedSection = ref('overview')
-const isDev = import.meta.env.DEV
 const copyPending = ref(false)
 const copyFeedback = ref<'idle' | 'success' | 'error'>('idle')
 const computerRef = ref<CopyablePageHandle | null>(null)
@@ -55,8 +55,6 @@ const primaryNavItems: SidebarItem[] = [
   { id: 'memory', label: '内存', icon: Memory, page: 'computer' },
   { id: 'storage', label: '存储', icon: HardDisk, page: 'computer' },
 ]
-
-const secondaryNavItems: SidebarItem[] = []
 
 function syncHash() {
   currentHash.value = window.location.hash
@@ -158,6 +156,31 @@ async function copyCurrentSectionInfo() {
   }
 }
 
+function exportCurrentSectionReport() {
+  getCurrentCopyHandle()?.exportReport?.()
+}
+
+async function writeClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textarea)
+
+  if (!copied) {
+    throw new Error('execCommand copy failed')
+  }
+}
+
 async function applyOverviewRefreshProfile(profile: MonitoringRefreshSettingsData['profile']) {
   if (refreshSettingsPending.value || overviewRefreshSettings.value.profile === profile) return
 
@@ -249,8 +272,55 @@ const sensorEnhancementDescription = computed(() => {
   return '增强模式默认开启，组件就绪后会自动补齐缺失数据。'
 })
 const showMainHeaderActions = computed(() =>
-  isDev && currentPage.value === 'computer' && Boolean(currentDevCopyTarget.value)
+  currentPage.value === 'computer' && Boolean(currentDevCopyTarget.value)
 )
+
+const sensorDiagnosticsText = computed(() => {
+  const lines = [
+    '传感器增强诊断',
+    `生成时间：${new Date().toLocaleString('zh-CN')}`,
+    `平台：${sensorEnhancementPlatform.value}`,
+    `状态：${processorSensorControlStatus.value}`,
+    `增强开关：${sensorSettings.value.enhancedSensorEnabled ? '已开启' : '已关闭'}`,
+    `OHM 自启动：${sensorSettings.value.openHardwareMonitorAutoStart ? '已开启' : '已关闭'}`,
+    `OHM 端口：${sensorSettings.value.openHardwareMonitorPort}`,
+  ]
+
+  if (openHardwareMonitorStatus.value) {
+    lines.push(
+      '',
+      '[OpenHardwareMonitor]',
+      `running：${Boolean(openHardwareMonitorStatus.value.running)}`,
+      `reason：${openHardwareMonitorStatus.value.reason || ''}`,
+      `suggestion：${openHardwareMonitorStatus.value.suggestion || ''}`,
+      `executableExists：${Boolean(openHardwareMonitorStatus.value.executableExists)}`
+    )
+  }
+
+  if (macHelperStatus.value) {
+    lines.push(
+      '',
+      '[macOS powermetrics helper]',
+      `installed：${Boolean(macHelperStatus.value.installed)}`,
+      `loaded：${Boolean(macHelperStatus.value.loaded)}`,
+      `socketExists：${Boolean(macHelperStatus.value.socketExists)}`,
+      `reason：${macHelperStatus.value.reason || ''}`,
+      `suggestion：${macHelperStatus.value.suggestion || ''}`
+    )
+  }
+
+  return lines.join('\n')
+})
+
+async function copySensorDiagnostics() {
+  try {
+    await writeClipboard(sensorDiagnosticsText.value)
+    sensorActionMessage.value = '诊断信息已复制'
+  } catch (error) {
+    console.error('复制传感器诊断失败:', error)
+    sensorActionMessage.value = '诊断信息复制失败'
+  }
+}
 
 function toggleSensorMenu() {
   sensorMenuOpen.value = !sensorMenuOpen.value
@@ -418,12 +488,12 @@ const headerMeta = computed(() => {
     }
   }
 
-  const navLabel = primaryNavItems.find((item) => item.id === selectedSection.value)?.label || secondaryNavItems.find((item) => item.id === selectedSection.value)?.label
+  const navLabel = primaryNavItems.find((item) => item.id === selectedSection.value)?.label
 
   if (selectedSection.value !== 'overview') {
     return {
-      title: navLabel || '模块开发中',
-      description: '该页面正在开发中，后续会按相同设计语言继续补齐。',
+      title: navLabel || '系统概览',
+      description: '快速了解你的电脑硬件配置',
     }
   }
 
@@ -490,6 +560,8 @@ onUnmounted(() => {
                 :key="profile.id"
                 type="button"
                 :disabled="refreshSettingsPending"
+                :aria-label="`切换刷新档位为 ${profile.label}`"
+                :title="`切换刷新档位为 ${profile.label}`"
                 :class="['header-chip', { 'header-chip--active': overviewRefreshSettings.profile === profile.id }]"
                 @click="applyOverviewRefreshProfile(profile.id)"
               >
@@ -500,6 +572,8 @@ onUnmounted(() => {
             <button
               type="button"
               :disabled="refreshSettingsPending"
+              aria-label="切换后台降频"
+              :title="overviewRefreshSettings.backgroundThrottleEnabled ? '关闭窗口后台时自动降频' : '开启窗口后台时自动降频'"
               :class="['header-toggle', { 'header-toggle--active': overviewRefreshSettings.backgroundThrottleEnabled }]"
               @click="toggleOverviewBackgroundThrottle()"
             >
@@ -512,6 +586,8 @@ onUnmounted(() => {
             <button
               type="button"
               :disabled="processorSensorControlDisabled"
+              aria-label="打开传感器增强菜单"
+              :title="`传感器增强：${processorSensorControlStatus}`"
               :class="[
                 'header-sensor-trigger',
                 `header-sensor-trigger--${sensorEnhancementStatus}`,
@@ -585,6 +661,14 @@ onUnmounted(() => {
                 >
                   查看详情
                 </button>
+                <button
+                  v-if="sensorEnhancementStatus === 'error'"
+                  type="button"
+                  class="sensor-menu-action"
+                  @click="copySensorDiagnostics()"
+                >
+                  复制诊断
+                </button>
               </div>
 
               <div v-if="sensorSettings.enhancedSensorEnabled" class="sensor-menu-popover__note">
@@ -645,16 +729,6 @@ onUnmounted(() => {
       </nav>
 
       <div class="sidebar-footer">
-        <button
-          v-for="item in secondaryNavItems"
-          :key="item.id"
-          type="button"
-          :class="['nav-item', 'nav-item--secondary', { 'nav-item--active': selectedSection === item.id || (item.id === 'watch' && currentPage === 'watch') }]"
-          @click="selectSection(item.id)"
-        >
-          <component :is="item.icon" theme="outline" size="18" fill="currentColor" :strokeWidth="3" />
-          <span>{{ item.label }}</span>
-        </button>
         <div class="sidebar-version">v1.0.0</div>
       </div>
     </aside>
@@ -668,13 +742,19 @@ onUnmounted(() => {
 
         <div v-if="showMainHeaderActions" class="main-header__actions">
           <button
-            v-if="isDev && currentPage === 'computer' && currentDevCopyTarget"
             type="button"
             :disabled="copyPending"
             :class="devCopyButtonClass"
             @click="copyCurrentSectionInfo()"
           >
             {{ devCopyButtonText }}
+          </button>
+          <button
+            type="button"
+            class="export-button"
+            @click="exportCurrentSectionReport()"
+          >
+            导出报告
           </button>
         </div>
       </header>
@@ -686,12 +766,6 @@ onUnmounted(() => {
         <BoardPage ref="boardRef" v-show="selectedSection === 'board'" :active="selectedSection === 'board'" />
         <MemoryPage ref="memoryRef" v-show="selectedSection === 'memory'" :active="selectedSection === 'memory'" />
         <StoragePage ref="storageRef" v-show="selectedSection === 'storage'" :active="selectedSection === 'storage'" />
-        <section v-if="selectedSection !== 'overview' && selectedSection !== 'processor' && selectedSection !== 'graphics' && selectedSection !== 'board' && selectedSection !== 'memory' && selectedSection !== 'storage'" class="placeholder-panel">
-          <div class="placeholder-panel__body">
-            <h2>{{ headerMeta.title }}</h2>
-            <p>{{ headerMeta.description }}</p>
-          </div>
-        </section>
       </main>
     </section>
   </div>
@@ -1248,35 +1322,6 @@ onUnmounted(() => {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-}
-
-.placeholder-panel {
-  display: grid;
-  place-items: center;
-  height: 100%;
-  min-height: 0;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--surface-radius);
-  background: linear-gradient(180deg, rgba(19, 28, 40, 0.94), rgba(16, 24, 35, 0.96));
-  box-shadow: var(--panel-shadow);
-}
-
-.placeholder-panel__body {
-  max-width: 420px;
-  text-align: center;
-
-  h2 {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: 22px;
-  }
-
-  p {
-    margin: 10px 0 0;
-    color: var(--text-muted);
-    font-size: 14px;
-    line-height: 1.6;
-  }
 }
 
 @media (max-width: 1120px) {

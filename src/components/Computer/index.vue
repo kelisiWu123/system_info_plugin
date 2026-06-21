@@ -8,9 +8,11 @@ import {
   deactivateOverviewHardwareStore,
   overviewHardwareStore,
   overviewLiteServiceLabels,
+  refreshOverviewHardwareData,
   type OverviewLiteServiceKey,
 } from '../../composables/useOverviewHardwareData'
 import { hardwareStore } from '../../composables/useHardwareData'
+import StateBlock from '../common/StateBlock.vue'
 import {
   bytesToGB,
   clampPercent,
@@ -126,6 +128,28 @@ const diagnosticsExpanded = ref(false)
 const isDev = import.meta.env.DEV
 
 let uptimeTimerId: number | undefined
+
+const pageStateBlock = computed(() => {
+  if (fetchState.cpuInfo.status === 'error' || fetchState.memInfo.status === 'error') {
+    return {
+      variant: 'error' as const,
+      title: '系统概览读取失败',
+      description: fetchState.cpuInfo.note || fetchState.memInfo.note || '读取处理器或内存摘要时发生异常，可以重试该模块。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  if (fetchState.cpuInfo.status === 'missing' && fetchState.memInfo.status === 'missing' && !cpuData.value && !memoData.value.total) {
+    return {
+      variant: 'empty' as const,
+      title: '未识别到系统概览信息',
+      description: '当前系统数据源没有返回处理器或内存摘要信息。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  return null
+})
 
 function cleanText(value: unknown) {
   if (typeof value !== 'string') return ''
@@ -656,6 +680,10 @@ async function copyOverviewInfo() {
   }
 }
 
+async function retryOverviewPage() {
+  await refreshOverviewHardwareData()
+}
+
 defineExpose({
   exportReport,
   copyOverviewInfo,
@@ -719,7 +747,25 @@ onUnmounted(() => {
 
 <template>
   <div class="dashboard-page">
-    <div class="dashboard-scroll">
+    <StateBlock
+      v-if="loading"
+      variant="loading"
+      title="正在同步系统概览"
+      description="正在优先读取处理器、内存、主板和系统摘要。"
+      action-label="重新同步"
+      @retry="retryOverviewPage"
+    />
+
+    <StateBlock
+      v-else-if="pageStateBlock"
+      :variant="pageStateBlock.variant"
+      :title="pageStateBlock.title"
+      :description="pageStateBlock.description"
+      :action-label="pageStateBlock.actionLabel"
+      @retry="retryOverviewPage"
+    />
+
+    <div v-else class="dashboard-scroll">
       <div class="dashboard-shell">
         <section id="section-overview" class="summary-grid">
           <article v-for="card in summaryCards" :id="`section-${card.id}`" :key="card.id" class="summary-card">

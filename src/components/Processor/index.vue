@@ -7,6 +7,7 @@ import {
   refreshProcessorHardwareDynamicMetrics,
 } from '../../composables/useProcessorHardwareData'
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
+import StateBlock from '../common/StateBlock.vue'
 import {
   getSensorEnhancementPlatform,
   shouldAutoPrepareSensorEnhancement,
@@ -56,6 +57,7 @@ const {
   biosData,
   osInfo,
   timeInfo,
+  fetchState,
 } = processorHardwareStore
 
 const metricHistory: Record<MetricHistoryKey, number[]> = {
@@ -79,6 +81,28 @@ const sensorSettings = ref<HardwareSensorSettingsData>({
 })
 const openHardwareMonitorStatus = ref<OpenHardwareMonitorStatusData | null>(null)
 const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
+
+const pageStateBlock = computed(() => {
+  if (fetchState.cpuInfo.status === 'error' || fetchState.cpuTemperature.status === 'error') {
+    return {
+      variant: 'error' as const,
+      title: '处理器数据读取失败',
+      description: fetchState.cpuInfo.note || fetchState.cpuTemperature.note || '读取处理器规格或温度信息时发生异常，可以重试该模块。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  if (fetchState.cpuInfo.status === 'missing' && !cpuData.value) {
+    return {
+      variant: 'empty' as const,
+      title: '未识别到处理器信息',
+      description: fetchState.cpuInfo.note || '当前系统数据源没有返回可展示的 CPU 信息。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  return null
+})
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -928,6 +952,14 @@ function startStressTest() {
   return false
 }
 
+async function retryProcessorPage() {
+  await refreshProcessorHardwareDynamicMetrics()
+  await Promise.all([
+    refreshHardwareSensorState(),
+    refreshMacPowermetricsHelperState(),
+  ])
+}
+
 defineExpose({
   exportReport,
   copyProcessorInfo,
@@ -981,7 +1013,23 @@ onUnmounted(() => {
 
 <template>
   <div class="processor-page">
-    <div v-if="loading" class="processor-empty">正在同步处理器数据...</div>
+    <StateBlock
+      v-if="loading"
+      variant="loading"
+      title="正在同步处理器数据"
+      description="正在读取 CPU 规格、实时负载、频率和传感器状态。"
+      action-label="重试该模块"
+      @retry="retryProcessorPage"
+    />
+
+    <StateBlock
+      v-else-if="pageStateBlock"
+      :variant="pageStateBlock.variant"
+      :title="pageStateBlock.title"
+      :description="pageStateBlock.description"
+      :action-label="pageStateBlock.actionLabel"
+      @retry="retryProcessorPage"
+    />
 
     <template v-else>
       <section class="processor-hero">
