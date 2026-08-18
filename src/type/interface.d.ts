@@ -196,10 +196,14 @@ declare global {
     }
     opacity?: number
   }
-  interface OpenHardwareMonitorStatusData {
+  interface WindowsSensorEnhancementStatusData {
     platform: 'win32' | 'other'
     settings: HardwareSensorSettingsData
     running: boolean
+    backend: 'helper' | 'legacy-ohm' | 'none'
+    helperAvailable: boolean
+    helperRunning: boolean
+    legacyFallback: boolean
     executableExists: boolean
     executablePath?: string
     executableDirectory?: string
@@ -208,6 +212,7 @@ declare global {
     reason?: string
     suggestion?: string
   }
+  type OpenHardwareMonitorStatusData = WindowsSensorEnhancementStatusData
   interface OpenHardwareMonitorDirectoryResultData {
     ok: boolean
     directoryPath?: string
@@ -295,6 +300,9 @@ declare global {
       updateFloatingMonitorSettings: (patch: Partial<FloatingMonitorSettingsData>) => Promise<FloatingMonitorSettingsData>
       getAppThemeSettings: () => Promise<AppThemeSettingsData>
       updateAppThemeSettings: (patch: Partial<AppThemeSettingsData>) => Promise<AppThemeSettingsData>
+      getWindowsSensorEnhancementStatus: () => Promise<WindowsSensorEnhancementStatusData>
+      startWindowsSensorEnhancement: () => Promise<WindowsSensorEnhancementStatusData>
+      openWindowsSensorComponentDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>
       getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>
       startOpenHardwareMonitor: () => Promise<OpenHardwareMonitorStatusData>
       openOpenHardwareMonitorDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>

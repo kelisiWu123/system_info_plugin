@@ -491,7 +491,7 @@ async function refreshOpenHardwareMonitorReadiness(force = false) {
   lastOpenHardwareMonitorStatusAt = now
 
   try {
-    const status = await withTimeout(window.services.getOpenHardwareMonitorStatus(), 3000)
+    const status = await withTimeout(window.services.getWindowsSensorEnhancementStatus(), 3000)
     if (status.platform !== 'win32') {
       openHardwareMonitorPlatform = 'other'
       lastOpenHardwareMonitorRunning = false

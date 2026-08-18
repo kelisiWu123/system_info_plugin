@@ -27,7 +27,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
   const sensorMenuOpen = ref(false)
   const sensorAuthorizationPromptVisible = ref(false)
   const sensorActionMessage = ref('')
-  const openHardwareMonitorStatus = ref<OpenHardwareMonitorStatusData | null>(null)
+  const openHardwareMonitorStatus = ref<WindowsSensorEnhancementStatusData | null>(null)
   const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
 
   const platform = computed(() => getSensorEnhancementPlatform(options.osInfo.value || resolvedOsInfo.value))
@@ -56,7 +56,13 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
 
     if (platform.value === 'windows') {
       const reason = openHardwareMonitorStatus.value?.reason || ''
-      if (reason === 'OHM_START_FAILED' || reason === 'OHM_EXE_NOT_FOUND' || reason === 'OHM_RUNTIME_COPY_FAILED') return 'error'
+      if (
+        reason === 'WINDOWS_SENSOR_HELPER_START_FAILED'
+        || reason === 'WINDOWS_SENSOR_BACKEND_START_FAILED'
+        || reason === 'OHM_START_FAILED'
+        || reason === 'OHM_EXE_NOT_FOUND'
+        || reason === 'OHM_RUNTIME_COPY_FAILED'
+      ) return 'error'
     }
 
     return 'pending'
@@ -75,12 +81,16 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
   const description = computed(() => {
     if (platform.value === 'windows') {
       if (!sensorSettings.value.enhancedSensorEnabled) {
-        return 'OHM 已关闭。需要时可启用 OpenHardwareMonitor 补齐温度、频率和功耗数据。'
+        return '已关闭。需要时可启用传感器增强补齐温度、频率、功耗等数据。'
       }
-      if (status.value === 'running') return 'OpenHardwareMonitor 正在补齐温度、频率、功耗等传感器数据。'
-      if (status.value === 'preparing') return '正在准备 OpenHardwareMonitor 组件，请稍候。'
-      if (status.value === 'error') return 'OpenHardwareMonitor 未能就绪，可以重试或查看详情。'
-      return 'OpenHardwareMonitor 已启用，组件就绪后会自动补齐缺失数据。'
+      if (status.value === 'running') {
+        return openHardwareMonitorStatus.value?.backend === 'legacy-ohm'
+          ? '传感器增强正在运行，当前使用后台兼容模式。'
+          : '传感器增强正在通过内置后台组件补齐温度、频率、功耗等数据。'
+      }
+      if (status.value === 'preparing') return '正在准备 Windows 传感器增强组件，请稍候。'
+      if (status.value === 'error') return 'Windows 传感器增强组件未能就绪，可以重试或查看详情。'
+      return '传感器增强已启用，组件就绪后会自动补齐缺失数据。'
     }
 
     if (!sensorSettings.value.enhancedSensorEnabled) return '已关闭'
@@ -93,29 +103,29 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
 
   const diagnosticsText = computed(() => {
     const lines = [
-      platform.value === 'windows' ? 'OpenHardwareMonitor 诊断' : '传感器增强诊断',
+      platform.value === 'windows' ? 'Windows 传感器增强诊断' : '传感器增强诊断',
       `生成时间：${new Date().toLocaleString('zh-CN')}`,
       `平台：${platform.value}`,
       `状态：${statusLabel.value}`,
-      `${platform.value === 'windows' ? 'OHM 支持' : '增强开关'}：${sensorSettings.value.enhancedSensorEnabled ? '已开启' : '已关闭'}`,
+      `增强开关：${sensorSettings.value.enhancedSensorEnabled ? '已开启' : '已关闭'}`,
     ]
-
-    if (platform.value === 'windows') {
-      lines.push(
-        `OHM 自启动：${sensorSettings.value.openHardwareMonitorAutoStart ? '已开启' : '已关闭'}`,
-        `OHM 端口：${sensorSettings.value.openHardwareMonitorPort}`
-      )
-    }
 
     if (platform.value === 'windows' && openHardwareMonitorStatus.value) {
       lines.push(
         '',
-        '[OpenHardwareMonitor]',
+        '[Windows sensor backend]',
         `running：${Boolean(openHardwareMonitorStatus.value.running)}`,
+        `backend：${openHardwareMonitorStatus.value.backend}`,
+        `helperAvailable：${Boolean(openHardwareMonitorStatus.value.helperAvailable)}`,
+        `helperRunning：${Boolean(openHardwareMonitorStatus.value.helperRunning)}`,
+        `legacyFallback：${Boolean(openHardwareMonitorStatus.value.legacyFallback)}`,
         `reason：${openHardwareMonitorStatus.value.reason || ''}`,
         `suggestion：${openHardwareMonitorStatus.value.suggestion || ''}`,
         `executableExists：${Boolean(openHardwareMonitorStatus.value.executableExists)}`
       )
+      if (openHardwareMonitorStatus.value.backend === 'legacy-ohm') {
+        lines.push(`legacyPort：${sensorSettings.value.openHardwareMonitorPort}`)
+      }
     }
 
     if (platform.value === 'macos' && macHelperStatus.value) {
@@ -152,7 +162,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
     try {
       sensorSettings.value = await window.services.getHardwareSensorSettings()
       if (platform.value === 'windows') {
-        openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+        openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
       } else if (platform.value === 'macos') {
         macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
       }
@@ -180,8 +190,8 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
     sensorActionLoading.value = true
     try {
       if (platform.value === 'windows') {
-        openHardwareMonitorStatus.value = await window.services.startOpenHardwareMonitor()
-        openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+        openHardwareMonitorStatus.value = await window.services.startWindowsSensorEnhancement()
+        openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
       } else if (platform.value === 'macos') {
         if (!macHelperStatus.value?.installed) {
           sensorAuthorizationPromptVisible.value = true
@@ -213,7 +223,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
       } else if (platform.value === 'macos' && macHelperStatus.value?.installed) {
         macHelperStatus.value = await window.services.uninstallMacPowermetricsHelper()
       } else if (platform.value === 'windows') {
-        openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+        openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
       }
 
       await refreshProcessorState()

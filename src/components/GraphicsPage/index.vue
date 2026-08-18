@@ -210,7 +210,7 @@ function formatMemoryBandwidth(gpu: GpuData | undefined) {
 function formatGpuTelemetrySource(gpu: GpuData | undefined) {
   if (!gpu?.telemetrySource) return '--'
   if (gpu.telemetrySource === 'powermetrics' && gpu.helper) return 'powermetrics helper'
-  if (gpu.telemetrySource === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  if (gpu.telemetrySource === 'OpenHardwareMonitor') return '传感器增强'
   return 'systeminformation'
 }
 
@@ -218,7 +218,7 @@ function formatGpuTemperatureSource(gpu: GpuData | undefined) {
   if (!gpu?.temperatureSource) return '--'
   if (gpu.temperatureSource === 'macos-temperature-sensor') return 'macOS 原生传感器'
   if (gpu.temperatureSource === 'apple-smc') return 'AppleSMC'
-  if (gpu.temperatureSource === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  if (gpu.temperatureSource === 'OpenHardwareMonitor') return '传感器增强'
   return 'systeminformation'
 }
 

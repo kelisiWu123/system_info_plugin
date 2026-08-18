@@ -72,6 +72,16 @@ function loadWindowsSystemServiceWithClockSensors(
       }
     }
 
+    if (id === './windowsSensorHelper') {
+      return {
+        WINDOWS_SENSOR_HELPER_PROCESS_NAME: 'HWInfoXSensorHelper.exe',
+        getWindowsSensorHelperSensors: async () => [],
+        getWindowsSensorHelperStatus: async () => null,
+        startWindowsSensorHelper: async () => ({ started: false, running: false }),
+        stopWindowsSensorHelper: async () => false,
+      }
+    }
+
     return require(id)
   }
 

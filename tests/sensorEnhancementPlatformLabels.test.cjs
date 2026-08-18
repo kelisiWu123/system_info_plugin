@@ -21,7 +21,7 @@ function loadTsModule(relativePath) {
   return module.exports
 }
 
-test('uses OHM-specific Windows labels while keeping macOS enhancement wording', () => {
+test('uses one user-facing sensor enhancement vocabulary on Windows and macOS', () => {
   const {
     getSensorEnhancementActionLabel,
     getSensorEnhancementControlLabel,
@@ -29,17 +29,12 @@ test('uses OHM-specific Windows labels while keeping macOS enhancement wording',
     getSensorEnhancementPrimaryActionLabel,
   } = loadTsModule('src/utils/platform.ts')
 
-  assert.equal(getSensorEnhancementActionLabel('windows', false), 'OpenHardwareMonitor')
-  assert.equal(getSensorEnhancementActionLabel('windows', true), '收起 OHM 菜单')
-  assert.equal(getSensorEnhancementControlLabel('windows'), 'OpenHardwareMonitor')
-  assert.equal(getSensorEnhancementMenuAriaLabel('windows'), '打开 OpenHardwareMonitor 菜单')
-  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', false), '启用 OHM 支持')
-  assert.equal(getSensorEnhancementPrimaryActionLabel('windows', true), '关闭 OHM 支持')
-
-  assert.equal(getSensorEnhancementActionLabel('macos', false), '传感器增强')
-  assert.equal(getSensorEnhancementActionLabel('macos', true), '收起增强模式')
-  assert.equal(getSensorEnhancementControlLabel('macos'), '传感器增强')
-  assert.equal(getSensorEnhancementMenuAriaLabel('macos'), '打开传感器增强菜单')
-  assert.equal(getSensorEnhancementPrimaryActionLabel('macos', false), '启用增强模式')
-  assert.equal(getSensorEnhancementPrimaryActionLabel('macos', true), '关闭增强模式')
+  for (const platform of ['windows', 'macos']) {
+    assert.equal(getSensorEnhancementActionLabel(platform, false), '传感器增强')
+    assert.equal(getSensorEnhancementActionLabel(platform, true), '收起增强模式')
+    assert.equal(getSensorEnhancementControlLabel(platform), '传感器增强')
+    assert.equal(getSensorEnhancementMenuAriaLabel(platform), '打开传感器增强菜单')
+    assert.equal(getSensorEnhancementPrimaryActionLabel(platform, false), '启用增强模式')
+    assert.equal(getSensorEnhancementPrimaryActionLabel(platform, true), '关闭增强模式')
+  }
 })

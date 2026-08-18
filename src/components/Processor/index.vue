@@ -89,7 +89,7 @@ const sensorSettings = ref<HardwareSensorSettingsData>({
   openHardwareMonitorAutoStart: false,
   openHardwareMonitorPort: 18085,
 })
-const openHardwareMonitorStatus = ref<OpenHardwareMonitorStatusData | null>(null)
+const openHardwareMonitorStatus = ref<WindowsSensorEnhancementStatusData | null>(null)
 const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
 let cpuSpeedDiagnosticCopyFeedbackTimerId: number | undefined
 
@@ -226,9 +226,19 @@ function formatFanSpeed(value: number | null) {
 function formatSensorReason(reason?: string) {
   switch (reason) {
     case 'ENHANCED_SENSOR_DISABLED':
-      return 'OHM 未启用'
+      return '增强模式未启用'
+    case 'WINDOWS_SENSOR_HELPER_NOT_FOUND':
     case 'OHM_EXE_NOT_FOUND':
       return '组件不存在'
+    case 'WINDOWS_SENSOR_HELPER_NOT_BUILT':
+      return '兼容模式待启动'
+    case 'WINDOWS_SENSOR_HELPER_NOT_RUNNING':
+      return '增强组件未运行'
+    case 'WINDOWS_SENSOR_HELPER_AUTH_CANCELLED':
+      return '已取消管理员授权'
+    case 'WINDOWS_SENSOR_HELPER_START_FAILED':
+    case 'WINDOWS_SENSOR_BACKEND_START_FAILED':
+      return '增强组件启动失败'
     case 'OHM_NOT_RUNNING':
       return '未运行'
     case 'OHM_AUTOSTART_DISABLED':
@@ -300,15 +310,15 @@ function formatCpuFrequencyDisplayDecision(choice?: 'max_core' | 'avg_fallback' 
 function formatCpuFrequencyAnomalyReason(reason?: string) {
   switch (reason) {
     case 'IGNORED_OHM_SENSORS_PRESENT':
-      return '存在被忽略的 OHM 原始时钟传感器'
+      return '存在被忽略的增强后端原始时钟传感器'
     case 'AVG_FALLBACK_WITH_IGNORED_OHM_SENSORS':
-      return '当前展示值来自 avg fallback，同时存在被忽略的 OHM 读数'
+      return '当前展示值来自 avg fallback，同时存在被忽略的增强后端读数'
     case 'DISPLAY_EXCEEDS_CPU_SPEEDMAX':
       return '当前展示频率明显高于 CPU 标称最大频率'
     case 'DISPLAY_EXCEEDS_ACCEPTED_CORE_MAX':
       return '当前展示频率明显高于已采纳核心中的最大频率'
     case 'DISPLAY_MATCHES_IGNORED_OHM_SENSOR':
-      return '当前展示频率与被忽略的 OHM 原始读数接近'
+      return '当前展示频率与被忽略的增强后端原始读数接近'
     default:
       return reason || '检测到异常'
   }
@@ -323,7 +333,7 @@ function formatTemperatureSource(source?: CpuTemperatureData['source']) {
     case 'macos-temperature-sensor':
       return 'macOS 原生传感器'
     case 'OpenHardwareMonitor':
-      return 'OpenHardwareMonitor'
+      return '传感器增强'
     case 'unsupported':
       return '不可用'
     default:
@@ -339,14 +349,14 @@ function formatCpuSpeedSource(speed: CpuCurrentSpeedData) {
     return 'systeminformation fallback / 需安装 helper'
   }
   if (speed.source === 'systeminformation') return 'systeminformation'
-  if (speed.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  if (speed.source === 'OpenHardwareMonitor') return '传感器增强'
   return '未知来源'
 }
 
 function formatCpuPowerSource(power?: CpuPowerData) {
   if (power?.source === 'powermetrics' && power.helper) return 'powermetrics helper'
   if (power?.source === 'powermetrics') return 'powermetrics'
-  if (power?.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  if (power?.source === 'OpenHardwareMonitor') return '传感器增强'
   return '功耗来源未知'
 }
 
@@ -479,9 +489,20 @@ const windowsSensorPrimaryActionLabel = computed(() => getSensorEnhancementPrima
   sensorSettings.value.enhancedSensorEnabled
 ))
 const sensorEnhancementSummary = computed(() => {
-  if (!sensorSettings.value.enhancedSensorEnabled) return 'OHM 已关闭'
-  if (openHardwareMonitorStatus.value?.running) return 'OHM 已启用，正在运行'
-  return 'OHM 已启用，温度缺失时会自动尝试启动'
+  if (!sensorSettings.value.enhancedSensorEnabled) return '增强模式已关闭'
+  if (openHardwareMonitorStatus.value?.running) {
+    return openHardwareMonitorStatus.value.backend === 'legacy-ohm'
+      ? '增强模式运行中 · 兼容后端'
+      : '增强模式运行中'
+  }
+  return '增强模式已启用，组件会按需自动启动'
+})
+const windowsSensorBackendLabel = computed(() => {
+  if (!openHardwareMonitorStatus.value) return '未检测'
+  if (openHardwareMonitorStatus.value.backend === 'helper') return '内置后台组件'
+  if (openHardwareMonitorStatus.value.backend === 'legacy-ohm') return '后台兼容模式'
+  if (openHardwareMonitorStatus.value.helperAvailable) return '内置后台组件'
+  return '兼容后端'
 })
 const sensorEnhancementSuggestion = computed(() => {
   if (cpuTemperature.value?.suggestion) return cpuTemperature.value.suggestion
@@ -792,8 +813,8 @@ const cpuSpeedDiagnosticDetailLines = computed(() => {
       `当前 avg：${formatFrequency(safeNumber(diagnostics.avgGHz))}`,
       `已采纳核心最大值：${formatFrequency(safeNumber(diagnostics.maxAcceptedCoreGHz))}`,
       `已忽略核心最大值：${formatFrequency(safeNumber(diagnostics.maxIgnoredCoreGHz))}`,
-      `OHM 原始传感器数：${diagnostics.rawSensorCount}`,
-      `OHM 忽略传感器数：${diagnostics.ignoredSensorCount}`
+      `增强后端原始传感器数：${diagnostics.rawSensorCount}`,
+      `增强后端忽略传感器数：${diagnostics.ignoredSensorCount}`
     )
   }
 
@@ -808,7 +829,7 @@ const cpuSpeedDiagnosticDetailLines = computed(() => {
   if (visibleCpuClockSensors.value.length) {
     lines.push(
       '',
-      'OHM 原始 CPU 时钟传感器：',
+      '增强后端原始 CPU 时钟传感器：',
       ...visibleCpuClockSensors.value.map((sensor) =>
         [
           `- ${sensor.name || sensor.identifier || '未知传感器'}`,
@@ -821,7 +842,7 @@ const cpuSpeedDiagnosticDetailLines = computed(() => {
       )
     )
   } else {
-    lines.push('', 'OHM 原始 CPU 时钟传感器：未采集到')
+    lines.push('', '增强后端原始 CPU 时钟传感器：未采集到')
   }
 
   return lines
@@ -920,9 +941,9 @@ async function refreshHardwareSensorState() {
       openHardwareMonitorStatus.value = {
         ...openHardwareMonitorStatus.value,
         reason: '检测中...',
-        suggestion: '正在读取 OpenHardwareMonitor 当前状态',
-      } as OpenHardwareMonitorStatusData
-      openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+        suggestion: '正在读取 Windows 传感器增强状态',
+      } as WindowsSensorEnhancementStatusData
+      openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
     }
   } catch (error) {
     console.error('读取硬件传感器增强状态失败:', error)
@@ -999,7 +1020,7 @@ async function updateHardwareSensorSetting(patch: Partial<HardwareSensorSettings
   try {
     sensorSettings.value = await window.services.updateHardwareSensorSettings(patch)
     if (isWindowsPlatform.value) {
-      openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
+      openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
     } else if (isMacPlatform.value) {
       macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
     }
@@ -1043,13 +1064,13 @@ async function prepareSensorEnhancement(auto: boolean) {
   showSensorEnhancementPanel.value = true
 
   if (isWindowsPlatform.value) {
-    await startOpenHardwareMonitor()
+    await startWindowsSensorEnhancement()
   } else if (isMacPlatform.value) {
     await installMacPowermetricsHelper()
   }
 }
 
-async function startOpenHardwareMonitor() {
+async function startWindowsSensorEnhancement() {
   if (!isWindowsPlatform.value) return
 
   sensorActionLoading.value = true
@@ -1057,11 +1078,11 @@ async function startOpenHardwareMonitor() {
   try {
     openHardwareMonitorStatus.value = {
       ...openHardwareMonitorStatus.value,
-      reason: 'OHM_START_PENDING',
-      suggestion: '正在尝试启动 OpenHardwareMonitor',
-    } as OpenHardwareMonitorStatusData
-    openHardwareMonitorStatus.value = await window.services.startOpenHardwareMonitor()
-    const latestStatus = await window.services.getOpenHardwareMonitorStatus()
+      reason: 'WINDOWS_SENSOR_START_PENDING',
+      suggestion: '正在准备 Windows 传感器增强组件',
+    } as WindowsSensorEnhancementStatusData
+    openHardwareMonitorStatus.value = await window.services.startWindowsSensorEnhancement()
+    const latestStatus = await window.services.getWindowsSensorEnhancementStatus()
     openHardwareMonitorStatus.value = {
       ...latestStatus,
       started: openHardwareMonitorStatus.value?.started || latestStatus.started,
@@ -1070,7 +1091,7 @@ async function startOpenHardwareMonitor() {
       await refreshProcessorHardwareDynamicMetrics()
     }
   } catch (error) {
-    console.error('启动 OpenHardwareMonitor 失败:', error)
+    console.error('启动 Windows 传感器增强失败:', error)
   } finally {
     sensorActionLoading.value = false
   }
@@ -1080,13 +1101,13 @@ async function openHardwareSensorComponentDirectory() {
   if (!isWindowsPlatform.value) return
 
   try {
-    const result = await window.services.openOpenHardwareMonitorDirectory()
+    const result = await window.services.openWindowsSensorComponentDirectory()
     if (result?.ok) {
       openHardwareMonitorStatus.value = {
         ...(openHardwareMonitorStatus.value || {}),
         executableDirectory: result.directoryPath || openHardwareMonitorStatus.value?.executableDirectory,
         reason: 'OHM_DIRECTORY_OPENED',
-        suggestion: result.directoryPath ? `已打开目录：${result.directoryPath}` : '已打开 OpenHardwareMonitor 目录',
+        suggestion: result.directoryPath ? `已打开目录：${result.directoryPath}` : '已打开传感器组件目录',
       } as OpenHardwareMonitorStatusData
       return
     }
@@ -1095,10 +1116,10 @@ async function openHardwareSensorComponentDirectory() {
       ...(openHardwareMonitorStatus.value || {}),
       executableDirectory: result?.directoryPath || openHardwareMonitorStatus.value?.executableDirectory,
       reason: result?.reason || 'OHM_OPEN_DIRECTORY_FAILED',
-      suggestion: result?.suggestion || '打开 OpenHardwareMonitor 目录失败',
+      suggestion: result?.suggestion || '打开传感器组件目录失败',
     } as OpenHardwareMonitorStatusData
   } catch (error) {
-    console.error('打开 OpenHardwareMonitor 目录失败:', error)
+    console.error('打开 Windows 传感器组件目录失败:', error)
     openHardwareMonitorStatus.value = {
       ...(openHardwareMonitorStatus.value || {}),
       reason: 'OHM_OPEN_DIRECTORY_FAILED',
@@ -1250,7 +1271,7 @@ onUnmounted(() => {
           <div class="sensor-enhancement-panel__summary">
             <div>
               <h4>{{ windowsSensorControlLabel }}</h4>
-              <p>Windows 下 CPU 温度没有统一可靠接口。启用 OHM 支持后，仅在当前链路拿不到可信温度时，才会尝试使用 OpenHardwareMonitor 本地服务。</p>
+              <p>Windows 下部分温度、功耗、风扇等传感器需要提升权限。启用后插件会按需启动内置后台组件，不需要手动打开其他监控软件。</p>
             </div>
             <span :class="['sensor-enhancement-panel__status', { 'sensor-enhancement-panel__status--active': sensorSettings.enhancedSensorEnabled }]">
               {{ sensorEnhancementSummary }}
@@ -1259,11 +1280,11 @@ onUnmounted(() => {
 
           <div class="sensor-enhancement-grid">
             <div class="sensor-enhancement-item">
-              <span>OHM 支持</span>
+              <span>增强模式</span>
               <strong>{{ sensorSettings.enhancedSensorEnabled ? '已开启' : '未开启' }}</strong>
             </div>
             <div class="sensor-enhancement-item">
-              <span>OHM 状态</span>
+              <span>增强状态</span>
               <strong>{{ sensorSettingsLoading ? '检测中...' : openHardwareMonitorStatusLabel }}</strong>
             </div>
             <div class="sensor-enhancement-item">
@@ -1272,7 +1293,7 @@ onUnmounted(() => {
             </div>
             <div class="sensor-enhancement-item">
               <span>工作方式</span>
-              <strong>{{ sensorSettings.enhancedSensorEnabled ? '温度缺失时自动尝试启动 OHM' : '仅使用当前内置链路' }}</strong>
+              <strong>{{ sensorSettings.enhancedSensorEnabled ? '内置后台组件按需启动' : '仅使用系统基础数据源' }}</strong>
             </div>
           </div>
 
@@ -1287,9 +1308,9 @@ onUnmounted(() => {
               type="button"
               class="sensor-button"
               :disabled="sensorActionLoading || !sensorSettings.enhancedSensorEnabled"
-              @click="startOpenHardwareMonitor"
+              @click="startWindowsSensorEnhancement"
             >
-              尝试启动 OHM
+              重试增强组件
             </button>
             <button type="button" class="sensor-button" @click="openHardwareSensorComponentDirectory">
               打开组件目录
@@ -1297,7 +1318,7 @@ onUnmounted(() => {
           </div>
 
           <div class="sensor-enhancement-meta">
-            <span>端口：{{ sensorSettings.openHardwareMonitorPort }}</span>
+            <span>后端：{{ windowsSensorBackendLabel }}</span>
             <span>原因：{{ cpuTemperatureReasonLabel }}</span>
           </div>
           <p v-if="sensorEnhancementSuggestion" class="sensor-enhancement-hint">建议：{{ sensorEnhancementSuggestion }}</p>
@@ -1306,7 +1327,7 @@ onUnmounted(() => {
 
         <details v-if="hasCpuSpeedDiagnosticsPanel" class="sensor-debug-panel">
           <summary>CPU 频率诊断信息</summary>
-          <p class="sensor-debug-panel__hint">以下记录当前频率卡片的展示决策、异常判定，以及 OHM 返回的原始 CPU 时钟传感器，便于直接复制给我继续排查。</p>
+          <p class="sensor-debug-panel__hint">以下记录当前频率卡片的展示决策、异常判定，以及增强后端返回的原始 CPU 时钟传感器，便于继续排查。</p>
           <div class="sensor-debug-panel__actions">
             <button type="button" class="sensor-button" @click="copyCpuSpeedDiagnosticReport">
               {{ cpuSpeedDiagnosticCopyLabel }}
@@ -1332,7 +1353,7 @@ onUnmounted(() => {
               </div>
               <div class="sensor-debug-item__meta">
                 <span>已忽略核心最大值：{{ formatFrequency(currentSpeedDiagnostics.maxIgnoredCoreGHz) }}</span>
-                <span>OHM 忽略传感器：{{ currentSpeedDiagnostics.ignoredSensorCount }}/{{ currentSpeedDiagnostics.rawSensorCount }}</span>
+                <span>后端忽略传感器：{{ currentSpeedDiagnostics.ignoredSensorCount }}/{{ currentSpeedDiagnostics.rawSensorCount }}</span>
               </div>
               <div v-if="currentSpeedDiagnostics.anomalyReasons.length" class="sensor-debug-reason-list">
                 <span
@@ -1345,7 +1366,7 @@ onUnmounted(() => {
               </div>
             </article>
           </div>
-          <p v-if="!visibleCpuClockSensors.length" class="sensor-debug-panel__hint">本次采样没有拿到 OHM 原始 CPU 时钟传感器，当前诊断仅基于最终展示值与 speedMax 参考值。</p>
+          <p v-if="!visibleCpuClockSensors.length" class="sensor-debug-panel__hint">本次采样没有拿到增强后端原始 CPU 时钟传感器，当前诊断仅基于最终展示值与 speedMax 参考值。</p>
           <div v-if="visibleCpuClockSensors.length" class="sensor-debug-list">
             <article
               v-for="sensor in visibleCpuClockSensors"

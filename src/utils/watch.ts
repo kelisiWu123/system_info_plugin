@@ -140,7 +140,7 @@ export function formatWatchCpuSpeedSourceLabel(speed: WatchCpuSpeedSourceLike | 
     return '可启用传感器增强'
   }
   if (speed?.source === 'systeminformation') return '内置采集'
-  if (speed?.source === 'OpenHardwareMonitor') return 'OpenHardwareMonitor'
+  if (speed?.source === 'OpenHardwareMonitor') return '传感器增强'
   return '未知来源'
 }
 

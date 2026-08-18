@@ -9,8 +9,10 @@
   "scripts": {
     "dev": "vite",
     "dev:electron": "vite --mode=electron",
-    "build": "node scripts/build-mac-smc-sensors.mjs && vue-tsc && vite build && node scripts/generate-utools-entry-pages.mjs",
-    "build:electron": "vue-tsc && vite build --mode=electron && electron-builder",
+    "build": "node scripts/verify-windows-sensor-helper.mjs && node scripts/build-mac-smc-sensors.mjs && vue-tsc && vite build && node scripts/generate-utools-entry-pages.mjs",
+    "build:windows-helper": "node scripts/build-windows-sensor-helper.mjs",
+    "verify:windows-helper": "node scripts/verify-windows-sensor-helper.mjs",
+    "build:electron": "node scripts/verify-windows-sensor-helper.mjs && vue-tsc && vite build --mode=electron && electron-builder",
     "preview": "vite preview"
   },
   "dependencies": {

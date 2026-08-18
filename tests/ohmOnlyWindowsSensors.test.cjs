@@ -15,12 +15,20 @@ test('windows hardware monitor service uses only the OpenHardwareMonitor namespa
   assert.doesNotMatch(source, /getEmbeddedLibreHardwareMonitorCpuTemperature/)
 })
 
-test('processor and watch UI no longer mention LibreHardwareMonitor as a sensor source', () => {
+test('Windows sensor internals stay on the existing OHM engine while user-facing labels say sensor enhancement', () => {
   const processorPage = readProjectFile('src/components/Processor/index.vue')
   const watchUtils = readProjectFile('src/utils/watch.ts')
+  const platform = readProjectFile('src/utils/platform.ts')
+  const helper = readProjectFile('native/windows-sensor-helper/Program.cs')
 
   assert.doesNotMatch(processorPage, /LibreHardwareMonitor/)
   assert.doesNotMatch(watchUtils, /LibreHardwareMonitor/)
+  assert.doesNotMatch(helper, /LibreHardwareMonitor/)
+  assert.match(helper, /using OpenHardwareMonitor\.Hardware;/)
+  assert.match(processorPage, /if \(speed\.source === 'OpenHardwareMonitor'\) return '传感器增强'/)
+  assert.match(watchUtils, /if \(speed\?\.source === 'OpenHardwareMonitor'\) return '传感器增强'/)
+  assert.match(platform, /return '传感器增强'/)
+  assert.doesNotMatch(platform, /return 'OpenHardwareMonitor'/)
 })
 
 test('public sensor source types no longer expose LibreHardwareMonitor', () => {
