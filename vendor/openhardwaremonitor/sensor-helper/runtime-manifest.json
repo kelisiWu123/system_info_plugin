@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "targetFramework": "net472",
+  "library": {
+    "id": "OpenHardwareMonitorLib",
+    "version": "1.0.9513"
+  },
+  "helper": {
+    "file": "HWInfoXSensorHelper.exe",
+    "sha256": "00d7fc041e287bb0d0b469c0b98c811acb351874c3d5b5b714ab09c2d547cc92"
+  },
+  "packages": [
+    {
+      "id": "BlackSharp.Core.1.0.4",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "HidSharp.2.6.4",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "Microsoft.Win32.Registry.5.0.0",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "OpenHardwareMonitorLib.1.0.9513",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "RAMSPDToolkit-NDD.1.4.2",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "System.CodeDom.10.0.2",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "System.IO.FileSystem.AccessControl.5.0.0",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "System.IO.Ports.10.0.2",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "System.Security.AccessControl.6.0.0",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "System.Security.Principal.Windows.5.0.0",
+      "version": "",
+      "license": ""
+    },
+    {
+      "id": "System.Threading.AccessControl.10.0.2",
+      "version": "",
+      "license": ""
+    }
+  ],
+  "files": [
+    {
+      "name": "BlackSharp.Core.dll",
+      "sha256": "9a1a8409bf94104eabb3e0f1ba684a79bc5ca4e5ba9b0449dc53e4faec9f2a78",
+      "packageId": "BlackSharp.Core.1.0.4",
+      "packageVersion": "",
+      "kind": "lib"
+    },
+    {
+      "name": "HidSharp.dll",
+      "sha256": "79f2bc8ddff102e6dbede84b2c211a3aea2ed675bf762fa0f02ecb65f61ee812",
+      "packageId": "HidSharp.2.6.4",
+      "packageVersion": "",
+      "kind": "lib"
+    },
+    {
+      "name": "Microsoft.Win32.Registry.dll",
+      "sha256": "e9a9d281c1a708aaae366f82fd6a1742f65da2918cc4fa5eaaaada0be24277d9",
+      "packageId": "Microsoft.Win32.Registry.5.0.0",
+      "packageVersion": "",
+      "kind": "runtime-win"
+    },
+    {
+      "name": "OpenHardwareMonitorLib.dll",
+      "sha256": "87d8ac2cfd7b32409b1e2ca499482a6e77cd44e36fe6dcb87069af2e35cb50ba",
+      "packageId": "OpenHardwareMonitorLib.1.0.9513",
+      "packageVersion": "",
+      "kind": "lib"
+    },
+    {
+      "name": "RAMSPDToolkit-NDD.dll",
+      "sha256": "b6882354c7c8ec186617e421507743dbfae09c5c1fc24cef76a1d0c0c26651de",
+      "packageId": "RAMSPDToolkit-NDD.1.4.2",
+      "packageVersion": "",
+      "kind": "lib"
+    },
+    {
+      "name": "System.CodeDom.dll",
+      "sha256": "adab61ffc51ef97ad6f3da0af3aa6fa4324db70f817e6d31fc765f53dc3d2881",
+      "packageId": "System.CodeDom.10.0.2",
+      "packageVersion": "",
+      "kind": "lib"
+    },
+    {
+      "name": "System.IO.FileSystem.AccessControl.dll",
+      "sha256": "e6026501ad4056ff2f1655b0afdfe8923bc6e8fbad67e1e9ef56e3002f49fbb9",
+      "packageId": "System.IO.FileSystem.AccessControl.5.0.0",
+      "packageVersion": "",
+      "kind": "runtime-win"
+    },
+    {
+      "name": "System.IO.Ports.dll",
+      "sha256": "9bc2a752ce6b449bffa4d91e0d09bbcda77bfd420c98626c14c92b24332569f9",
+      "packageId": "System.IO.Ports.10.0.2",
+      "packageVersion": "",
+      "kind": "lib"
+    },
+    {
+      "name": "System.Security.AccessControl.dll",
+      "sha256": "ff14c5f628b9a6798d173aefbba0a43d61e66f715108e2576ac0d3dfab9071d0",
+      "packageId": "System.Security.AccessControl.6.0.0",
+      "packageVersion": "",
+      "kind": "runtime-win"
+    },
+    {
+      "name": "System.Security.Principal.Windows.dll",
+      "sha256": "b4d8e15adc235d0e858e39b5133e5d00a4baa8c94f4f39e3b5e791b0f9c0c806",
+      "packageId": "System.Security.Principal.Windows.5.0.0",
+      "packageVersion": "",
+      "kind": "runtime-win"
+    },
+    {
+      "name": "System.Threading.AccessControl.dll",
+      "sha256": "3e94bc7a7bd67f1bf5915c2380be586668a369b705c8bfca64ea79b36ed36603",
+      "packageId": "System.Threading.AccessControl.10.0.2",
+      "packageVersion": "",
+      "kind": "lib"
+    }
+  ]
+}
