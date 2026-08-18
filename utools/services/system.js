@@ -4,6 +4,13 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import macSensors from './macSensors.cjs'
+import {
+  WINDOWS_SENSOR_HELPER_PROCESS_NAME,
+  getWindowsSensorHelperSensors,
+  getWindowsSensorHelperStatus,
+  startWindowsSensorHelper,
+  stopWindowsSensorHelper,
+} from './windowsSensorHelper'
 
 const execFileAsync = promisify(execFile)
 const {
@@ -958,6 +965,7 @@ async function updateHardwareSensorSettings(patch = {}) {
   }
 
   if (isWindows() && previous.enhancedSensorEnabled && !next.enhancedSensorEnabled) {
+    await stopWindowsSensorHelper()
     await stopPluginManagedOpenHardwareMonitor()
     recordOpenHardwareMonitorRunningState(false)
   }
@@ -1293,6 +1301,12 @@ async function queryHardwareMonitorSensors(namespace, sensorType) {
   if (typeof process === 'undefined' || process.platform !== 'win32') return []
   if (!['Temperature', 'Load', 'Power', 'Voltage', 'Fan', 'Clock'].includes(sensorType)) return []
 
+  const sensorSettings = getHardwareSensorSettings()
+  if (namespace === OPEN_HARDWARE_MONITOR_WMI_NAMESPACE && sensorSettings.enhancedSensorEnabled) {
+    const helperSensors = await getWindowsSensorHelperSensors(sensorType)
+    if (helperSensors.length) return helperSensors
+  }
+
   return queryWmiSensors(namespace, sensorType)
 }
 
@@ -1490,6 +1504,17 @@ function getBundledOpenHardwareMonitorPath() {
   return resolveOpenHardwareMonitorExecutable().executablePath
 }
 
+function resolveWindowsSensorHelperExecutable(resolvedOpenHardwareMonitor) {
+  const resolved = resolvedOpenHardwareMonitor || ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
+  const directoryPath = resolved.runtimeDirectoryPath || resolved.directoryPath || ''
+  const executablePath = directoryPath ? path.join(directoryPath, WINDOWS_SENSOR_HELPER_PROCESS_NAME) : ''
+  return {
+    directoryPath,
+    executablePath,
+    exists: Boolean(executablePath && fs.existsSync(executablePath)),
+  }
+}
+
 function getUtoolsRuntime() {
   return configuredUtoolsRuntime || globalThis?.utools || (typeof utools !== 'undefined' ? utools : undefined)
 }
@@ -1643,14 +1668,21 @@ async function isOpenHardwareMonitorHttpReachable(port) {
   }
 }
 
+async function isLegacyOpenHardwareMonitorRunning(settings = getHardwareSensorSettings()) {
+  if (!isWindows()) return false
+  if (await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)) return true
+  return isOpenHardwareMonitorHttpReachable(settings.openHardwareMonitorPort)
+}
+
 async function isOpenHardwareMonitorRunning(settings = getHardwareSensorSettings()) {
   if (!isWindows()) return false
-  if (await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)) {
+
+  const helperStatus = await getWindowsSensorHelperStatus()
+  if (helperStatus?.running) {
     return recordOpenHardwareMonitorRunningState(true)
   }
-  return recordOpenHardwareMonitorRunningState(
-    await isOpenHardwareMonitorHttpReachable(settings.openHardwareMonitorPort)
-  )
+
+  return recordOpenHardwareMonitorRunningState(await isLegacyOpenHardwareMonitorRunning(settings))
 }
 
 function getOpenHardwareMonitorStateDirectory() {
@@ -1767,15 +1799,29 @@ async function waitForOpenHardwareMonitorRunning(settings, timeoutMs = OPEN_HARD
 function buildOpenHardwareMonitorStatusResult(overrides = {}) {
   const settings = overrides.settings || getHardwareSensorSettings()
   const resolved = overrides.resolved || resolveOpenHardwareMonitorExecutable()
-  const executablePath = overrides.executablePath || resolved.runtimeExecutablePath || resolved.executablePath
+  const helperResolved = overrides.helperResolved || resolveWindowsSensorHelperExecutable(resolved)
+  const helperRunning = Boolean(overrides.helperRunning)
+  const legacyRunning = Boolean(overrides.legacyRunning)
+  const running = typeof overrides.running === 'boolean' ? overrides.running : helperRunning || legacyRunning
+  const backend = overrides.backend || (helperRunning ? 'helper' : legacyRunning ? 'legacy-ohm' : 'none')
+  const executablePath = overrides.executablePath
+    || (backend === 'helper' ? helperResolved.executablePath : resolved.runtimeExecutablePath || resolved.executablePath)
 
   return {
     platform: isWindows() ? 'win32' : 'other',
     settings,
-    running: Boolean(overrides.running),
-    executableExists: typeof overrides.executableExists === 'boolean' ? overrides.executableExists : Boolean(resolved.runtimeExists ?? resolved.exists),
+    running,
+    backend,
+    helperAvailable: Boolean(helperResolved.exists),
+    helperRunning,
+    legacyFallback: backend === 'legacy-ohm',
+    executableExists: typeof overrides.executableExists === 'boolean'
+      ? overrides.executableExists
+      : backend === 'helper'
+        ? Boolean(helperResolved.exists)
+        : Boolean(resolved.runtimeExists ?? resolved.exists),
     executablePath,
-    executableDirectory: overrides.executableDirectory || resolved.runtimeDirectoryPath || resolved.directoryPath,
+    executableDirectory: overrides.executableDirectory || helperResolved.directoryPath || resolved.runtimeDirectoryPath || resolved.directoryPath,
     port: settings.openHardwareMonitorPort,
     started: Boolean(overrides.started),
     reason: overrides.reason,
@@ -1786,30 +1832,50 @@ function buildOpenHardwareMonitorStatusResult(overrides = {}) {
 async function getOpenHardwareMonitorStatus() {
   const settings = getHardwareSensorSettings()
   const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
+  const helperResolved = resolveWindowsSensorHelperExecutable(resolved)
 
   if (!isWindows()) {
     return buildOpenHardwareMonitorStatusResult({
       settings,
       resolved,
+      helperResolved,
       running: false,
       executableExists: false,
       reason: 'NOT_WINDOWS',
     })
   }
 
-  const executablePath = resolved.runtimeExecutablePath
-  const executableExists = resolved.runtimeExists
-  const running = recordOpenHardwareMonitorRunningState(await isOpenHardwareMonitorRunning(settings))
+  const helperStatus = await getWindowsSensorHelperStatus()
+  const helperRunning = Boolean(helperStatus?.running)
+  const legacyRunning = helperRunning ? false : await isLegacyOpenHardwareMonitorRunning(settings)
+  const running = recordOpenHardwareMonitorRunningState(helperRunning || legacyRunning)
+  const backend = helperRunning ? 'helper' : legacyRunning ? 'legacy-ohm' : 'none'
 
   return buildOpenHardwareMonitorStatusResult({
     settings,
     resolved,
+    helperResolved,
+    helperRunning,
+    legacyRunning,
     running,
-    executableExists,
-    executablePath,
+    backend,
+    executableExists: helperResolved.exists || resolved.runtimeExists,
+    executablePath: helperRunning ? helperResolved.executablePath : resolved.runtimeExecutablePath,
     executableDirectory: resolved.runtimeDirectoryPath,
-    reason: running ? undefined : executableExists ? 'OHM_NOT_RUNNING' : resolved.reason || 'OHM_EXE_NOT_FOUND',
-    suggestion: executableExists ? undefined : resolved.suggestion || 'OpenHardwareMonitor 组件不存在，请检查 vendor/openhardwaremonitor 打包产物',
+    reason: running
+      ? undefined
+      : helperResolved.exists
+        ? 'WINDOWS_SENSOR_HELPER_NOT_RUNNING'
+        : resolved.runtimeExists
+          ? 'WINDOWS_SENSOR_HELPER_NOT_BUILT'
+          : resolved.reason || 'OHM_EXE_NOT_FOUND',
+    suggestion: running
+      ? undefined
+      : helperResolved.exists
+        ? '传感器增强组件尚未运行'
+        : resolved.runtimeExists
+          ? '当前包未包含 Windows 无界面 helper，将使用兼容模式'
+          : resolved.suggestion || 'Windows 传感器后端组件不存在',
   })
 }
 
@@ -1840,7 +1906,7 @@ async function startBundledOpenHardwareMonitor() {
     const startScript = [
       `$p = Start-Process -FilePath '${executablePath.replace(/'/g, "''")}'`,
       `-WorkingDirectory '${path.dirname(executablePath).replace(/'/g, "''")}'`,
-      '-WindowStyle Normal -PassThru',
+      '-WindowStyle Hidden -PassThru',
       '; $p.Id',
     ].join(' ')
 
@@ -1874,6 +1940,43 @@ async function startBundledOpenHardwareMonitor() {
   }
 }
 
+async function startPreferredWindowsSensorBackend() {
+  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
+  const helperResolved = resolveWindowsSensorHelperExecutable(resolved)
+
+  if (helperResolved.exists) {
+    const helperResult = await startWindowsSensorHelper({
+      executablePath: helperResolved.executablePath,
+      workingDirectory: helperResolved.directoryPath,
+    })
+
+    return buildOpenHardwareMonitorStatusResult({
+      resolved,
+      helperResolved,
+      helperRunning: Boolean(helperResult.running),
+      running: Boolean(helperResult.running),
+      backend: helperResult.running ? 'helper' : 'none',
+      executableExists: true,
+      executablePath: helperResolved.executablePath,
+      executableDirectory: helperResolved.directoryPath,
+      started: Boolean(helperResult.started && helperResult.running),
+      reason: helperResult.running ? undefined : helperResult.reason || 'WINDOWS_SENSOR_HELPER_START_FAILED',
+      suggestion: helperResult.running ? undefined : helperResult.suggestion || 'Windows 传感器增强组件启动失败',
+    })
+  }
+
+  const legacyResult = await startBundledOpenHardwareMonitor()
+  return {
+    ...legacyResult,
+    backend: legacyResult.started ? 'legacy-ohm' : 'none',
+    legacyFallback: true,
+    helperAvailable: false,
+    suggestion: legacyResult.started
+      ? '当前包未包含无界面 helper，已使用后台兼容模式'
+      : legacyResult.suggestion,
+  }
+}
+
 async function ensureOpenHardwareMonitorRunning(options = {}) {
   const settings = getHardwareSensorSettings()
   const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
@@ -1889,14 +1992,7 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
 
   const running = await isOpenHardwareMonitorRunning(settings)
   if (running) {
-    return buildOpenHardwareMonitorStatusResult({
-      settings,
-      resolved,
-      running: true,
-      executableExists: resolved.runtimeExists,
-      executableDirectory: resolved.runtimeDirectoryPath,
-      executablePath: resolved.runtimeExecutablePath,
-    })
+    return getOpenHardwareMonitorStatus()
   }
 
   if (!settings.enhancedSensorEnabled) {
@@ -1908,7 +2004,7 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
       executableDirectory: resolved.runtimeDirectoryPath,
       executablePath: resolved.runtimeExecutablePath,
       reason: resolved.runtimeExists ? 'ENHANCED_SENSOR_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
-      suggestion: '请先启用 OpenHardwareMonitor 支持',
+      suggestion: '请先启用 Windows 传感器增强',
     })
   }
 
@@ -1921,7 +2017,7 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
       executableDirectory: resolved.runtimeDirectoryPath,
       executablePath: resolved.runtimeExecutablePath,
       reason: resolved.runtimeExists ? 'OHM_AUTOSTART_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
-      suggestion: 'OpenHardwareMonitor 自动启动已关闭',
+      suggestion: '传感器增强自动准备已关闭',
     })
   }
 
@@ -1933,64 +2029,56 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
   const lastStartAt = Math.max(openHardwareMonitorLastStartAt, readOpenHardwareMonitorSharedLastStartAt())
   if (now - lastStartAt < OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS) {
     const runningAfterCooldownCheck = await isOpenHardwareMonitorRunning(settings)
+    if (runningAfterCooldownCheck) return getOpenHardwareMonitorStatus()
     return buildOpenHardwareMonitorStatusResult({
       settings,
       resolved,
-      running: runningAfterCooldownCheck,
+      running: false,
       executableExists: resolved.runtimeExists,
       executableDirectory: resolved.runtimeDirectoryPath,
       executablePath: resolved.runtimeExecutablePath,
-      reason: runningAfterCooldownCheck ? undefined : 'OHM_START_COOLDOWN',
-      suggestion: runningAfterCooldownCheck ? undefined : '刚刚尝试过启动 OpenHardwareMonitor，请稍后再试',
+      reason: 'WINDOWS_SENSOR_START_COOLDOWN',
+      suggestion: '刚刚尝试过准备传感器增强组件，请稍后再试',
     })
   }
 
   const startLock = acquireOpenHardwareMonitorStartLock()
   if (!startLock.acquired) {
     const runningAfterWait = await waitForOpenHardwareMonitorRunning(settings)
+    if (runningAfterWait) return getOpenHardwareMonitorStatus()
     return buildOpenHardwareMonitorStatusResult({
       settings,
       resolved,
-      running: runningAfterWait,
+      running: false,
       executableExists: resolved.runtimeExists,
       executableDirectory: resolved.runtimeDirectoryPath,
       executablePath: resolved.runtimeExecutablePath,
-      reason: runningAfterWait ? undefined : 'OHM_START_IN_PROGRESS',
-      suggestion: runningAfterWait ? undefined : '另一个窗口正在启动 OpenHardwareMonitor，请稍后再试',
+      reason: 'WINDOWS_SENSOR_START_IN_PROGRESS',
+      suggestion: '另一个窗口正在准备传感器增强组件，请稍后再试',
     })
   }
 
   openHardwareMonitorStartPromise = (async () => {
     try {
       if (await isOpenHardwareMonitorRunning(settings)) {
-        return buildOpenHardwareMonitorStatusResult({
-          settings,
-          resolved,
-          running: true,
-          executableExists: resolved.runtimeExists,
-          executableDirectory: resolved.runtimeDirectoryPath,
-          executablePath: resolved.runtimeExecutablePath,
-        })
+        return getOpenHardwareMonitorStatus()
       }
 
       markOpenHardwareMonitorStartAttempt()
-      const startResult = await startBundledOpenHardwareMonitor()
-      if (!startResult.started) {
+      const startResult = await startPreferredWindowsSensorBackend()
+      if (!startResult.started && !startResult.running) {
         return startResult
       }
 
       const startedRunning = await waitForOpenHardwareMonitorRunning(settings)
-      return buildOpenHardwareMonitorStatusResult({
-        settings,
-        resolved,
+      const latestStatus = await getOpenHardwareMonitorStatus()
+      return {
+        ...latestStatus,
         running: startedRunning,
-        executableExists: resolved.runtimeExists,
-        executableDirectory: resolved.runtimeDirectoryPath,
-        executablePath: resolved.runtimeExecutablePath,
-        started: startedRunning,
-        reason: startedRunning ? undefined : 'OHM_START_FAILED',
-        suggestion: startedRunning ? undefined : '插件尝试启动失败。请手动打开一次 OpenHardwareMonitor，确认没有被权限或安全软件拦截。',
-      })
+        started: Boolean(startResult.started && startedRunning),
+        reason: startedRunning ? undefined : startResult.reason || 'WINDOWS_SENSOR_BACKEND_START_FAILED',
+        suggestion: startedRunning ? undefined : startResult.suggestion || 'Windows 传感器增强组件未能就绪，请重试或检查安全软件拦截',
+      }
     } finally {
       releaseOpenHardwareMonitorStartLock(startLock)
     }
@@ -2468,7 +2556,11 @@ async function getCpuTemperature() {
     const baseDiagnostics = [
       'systeminformation 未提供有效 CPU 温度',
       macTemperature?.message ? `macOS 原生传感器: ${macTemperature.message}` : '',
-      openTemperature?.value === null ? 'OpenHardwareMonitor WMI: 无可用温度' : 'OpenHardwareMonitor WMI: 未命中',
+      isWindows()
+        ? openTemperature?.value === null
+          ? 'Windows 增强后端: 无可用温度'
+          : 'Windows 增强后端: 未命中'
+        : '',
     ].filter(Boolean)
 
     if (!isWindows()) {
@@ -2494,7 +2586,7 @@ async function getCpuTemperature() {
           errorCode: 'ENHANCED_SENSOR_DISABLED',
           reason: 'ENHANCED_SENSOR_DISABLED',
           message: baseDiagnostics.join(' | '),
-          suggestion: 'Windows 下可在处理器页启用 OpenHardwareMonitor 支持',
+          suggestion: 'Windows 下可在处理器页启用传感器增强',
           confidence: 'unsupported',
         },
         'unsupported',
@@ -2508,24 +2600,36 @@ async function getCpuTemperature() {
       openHardwareMonitorStatus = await ensureOpenHardwareMonitorRunning()
     }
 
-    const ohmResult = await readOpenHardwareMonitorHttp(sensorSettings.openHardwareMonitorPort)
-    if (ohmResult?.value !== null) {
-      return ohmResult
+    const enhancedTemperature = await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
+    if (enhancedTemperature?.value !== null && enhancedTemperature?.value !== undefined) {
+      return enhancedTemperature
+    }
+
+    const legacyHttpResult = openHardwareMonitorStatus?.backend === 'legacy-ohm'
+      ? await readOpenHardwareMonitorHttp(sensorSettings.openHardwareMonitorPort)
+      : undefined
+    if (legacyHttpResult?.value !== null && legacyHttpResult?.value !== undefined) {
+      return legacyHttpResult
     }
 
     const diagnostics = [
       ...baseDiagnostics,
-      openHardwareMonitorStatus?.reason ? `OHM 启动状态: ${openHardwareMonitorStatus.reason}` : 'OHM 启动状态: 未尝试自动启动',
-      ohmResult?.reason ? `OHM 读取结果: ${ohmResult.reason}` : 'OHM 读取结果: 无结果',
-    ]
+      openHardwareMonitorStatus?.reason
+        ? `Windows 增强启动状态: ${openHardwareMonitorStatus.reason}`
+        : 'Windows 增强启动状态: 未尝试自动启动',
+      openHardwareMonitorStatus?.backend ? `Windows 增强后端: ${openHardwareMonitorStatus.backend}` : '',
+      legacyHttpResult?.reason ? `兼容后端读取结果: ${legacyHttpResult.reason}` : '',
+    ].filter(Boolean)
 
     return buildCpuTemperatureResult(
       {
         ...temperature,
-        errorCode: ohmResult?.errorCode || 'CPU_TEMPERATURE_UNAVAILABLE',
-        reason: ohmResult?.reason || 'TEMPERATURE_UNAVAILABLE',
+        errorCode: legacyHttpResult?.errorCode || 'CPU_TEMPERATURE_UNAVAILABLE',
+        reason: legacyHttpResult?.reason || openHardwareMonitorStatus?.reason || 'TEMPERATURE_UNAVAILABLE',
         message: diagnostics.join(' | '),
-        suggestion: ohmResult?.suggestion || openHardwareMonitorStatus?.suggestion || '请确认 OpenHardwareMonitor 已运行，并启用本地 Remote Web Server，必要时以管理员权限运行',
+        suggestion: legacyHttpResult?.suggestion
+          || openHardwareMonitorStatus?.suggestion
+          || 'Windows 传感器增强未返回可信 CPU 温度，请重试增强组件或检查管理员授权/安全软件拦截',
         confidence: 'unsupported',
       },
       'unsupported',
@@ -3128,6 +3232,13 @@ export const systemService = {
 
   updateAppThemeSettings: async (patch) => updateAppThemeSettings(patch),
 
+  getWindowsSensorEnhancementStatus: getOpenHardwareMonitorStatus,
+
+  startWindowsSensorEnhancement: startOpenHardwareMonitorManually,
+
+  openWindowsSensorComponentDirectory: openOpenHardwareMonitorDirectory,
+
+  // Backward-compatible aliases for existing windows/preload consumers.
   getOpenHardwareMonitorStatus,
 
   startOpenHardwareMonitor: startOpenHardwareMonitorManually,
