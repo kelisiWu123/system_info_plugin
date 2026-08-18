@@ -31,3 +31,17 @@ test('release verification validates the helper runtime directory instead of tre
   assert.match(systemService, /path\.join\(rootDirectoryPath, 'sensor-helper'\)/)
   assert.match(systemService, /path\.join\(directoryPath, WINDOWS_SENSOR_HELPER_PROCESS_NAME\)/)
 })
+
+test('source fingerprints normalize CRLF and LF so Windows prebuilds verify on macOS', () => {
+  const buildScript = readProjectFile('scripts/build-windows-sensor-helper.mjs')
+  const verifyScript = readProjectFile('scripts/verify-windows-sensor-helper.mjs')
+
+  assert.match(buildScript, /function canonicalizeFingerprintText\(value\)/)
+  assert.match(buildScript, /replace\(\/\\r\\n\|\\r\/g, '\\n'\)/)
+  assert.match(buildScript, /hash\.update\(canonicalizeFingerprintText\(readFileSync\(filePath, 'utf8'\)\)\)/)
+  assert.match(verifyScript, /function canonicalizeFingerprintText\(value\)/)
+  assert.match(verifyScript, /replace\(\/\\r\\n\|\\r\/g, '\\n'\)/)
+  assert.match(verifyScript, /hash\.update\(canonicalizeFingerprintText\(readFileSync\(filePath, 'utf8'\)\)\)/)
+  assert.match(verifyScript, /function computeLegacyWindowsFingerprint\(runtimeManifestContent\)/)
+  assert.match(verifyScript, /actualFingerprint !== expectedFingerprint && actualFingerprint !== legacyWindowsFingerprint/)
+})

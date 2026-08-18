@@ -1516,6 +1516,15 @@ function resolveWindowsSensorHelperExecutable(resolvedOpenHardwareMonitor) {
   }
 }
 
+function hasBundledWindowsSensorHelper(resolvedOpenHardwareMonitor) {
+  const resolved = resolvedOpenHardwareMonitor || resolveOpenHardwareMonitorExecutable()
+  const directoryPath = resolved.directoryPath || ''
+  const executablePath = directoryPath
+    ? path.join(directoryPath, 'sensor-helper', WINDOWS_SENSOR_HELPER_PROCESS_NAME)
+    : ''
+  return Boolean(executablePath && fs.existsSync(executablePath))
+}
+
 function getUtoolsRuntime() {
   return configuredUtoolsRuntime || globalThis?.utools || (typeof utools !== 'undefined' ? utools : undefined)
 }
@@ -1561,6 +1570,17 @@ function getOpenHardwareMonitorBundleVersion(sourceDirectoryPath) {
   }
 
   return 'default'
+}
+
+function getOpenHardwareMonitorRuntimeBundleKey(sourceDirectoryPath) {
+  const version = getOpenHardwareMonitorBundleVersion(sourceDirectoryPath)
+  const helperFingerprint = readFirstLineIfExists(
+    path.join(sourceDirectoryPath, 'sensor-helper', 'HWInfoXSensorHelper.source.sha256')
+  )
+  const helperVersion = /^[a-f0-9]{16,}$/i.test(helperFingerprint)
+    ? helperFingerprint.slice(0, 16)
+    : 'legacy'
+  return safePathSegment(`${version}-${helperVersion}`)
 }
 
 function copyDirectoryRecursive(sourceDir, targetDir) {
@@ -1615,8 +1635,8 @@ function ensurePhysicalOpenHardwareMonitor(resolved = resolveOpenHardwareMonitor
     }
   }
 
-  const version = safePathSegment(getOpenHardwareMonitorBundleVersion(resolved.directoryPath))
-  const runtimeDirectoryPath = path.join(userDataPath, 'system-info-plugin', 'vendor', `openhardwaremonitor-${version}`)
+  const runtimeBundleKey = getOpenHardwareMonitorRuntimeBundleKey(resolved.directoryPath)
+  const runtimeDirectoryPath = path.join(userDataPath, 'system-info-plugin', 'vendor', `openhardwaremonitor-${runtimeBundleKey}`)
   const runtimeExecutablePath = path.join(runtimeDirectoryPath, OPEN_HARDWARE_MONITOR_PROCESS_NAME)
 
   if (!fs.existsSync(runtimeExecutablePath)) {
@@ -1786,11 +1806,22 @@ function releaseOpenHardwareMonitorStartLock(lock) {
   }
 }
 
-async function waitForOpenHardwareMonitorRunning(settings, timeoutMs = OPEN_HARDWARE_MONITOR_START_WAIT_MS) {
+async function isPreferredWindowsSensorBackendRunning(settings, bundledHelperAvailable) {
+  const helperStatus = await getWindowsSensorHelperStatus()
+  if (helperStatus?.running) return true
+  if (bundledHelperAvailable) return false
+  return isLegacyOpenHardwareMonitorRunning(settings)
+}
+
+async function waitForOpenHardwareMonitorRunning(
+  settings,
+  timeoutMs = OPEN_HARDWARE_MONITOR_START_WAIT_MS,
+  bundledHelperAvailable = false
+) {
   const deadline = Date.now() + timeoutMs
 
   do {
-    if (await isOpenHardwareMonitorRunning(settings)) return true
+    if (await isPreferredWindowsSensorBackendRunning(settings, bundledHelperAvailable)) return true
     await new Promise((resolve) => setTimeout(resolve, OPEN_HARDWARE_MONITOR_START_POLL_MS))
   } while (Date.now() < deadline)
 
@@ -1942,7 +1973,9 @@ async function startBundledOpenHardwareMonitor() {
 }
 
 async function startPreferredWindowsSensorBackend() {
-  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
+  const bundledResolved = resolveOpenHardwareMonitorExecutable()
+  const bundledHelperAvailable = hasBundledWindowsSensorHelper(bundledResolved)
+  const resolved = ensurePhysicalOpenHardwareMonitor(bundledResolved)
   const helperResolved = resolveWindowsSensorHelperExecutable(resolved)
 
   if (helperResolved.exists) {
@@ -1966,21 +1999,48 @@ async function startPreferredWindowsSensorBackend() {
     })
   }
 
-  const legacyResult = await startBundledOpenHardwareMonitor()
-  return {
-    ...legacyResult,
-    backend: legacyResult.started ? 'legacy-ohm' : 'none',
-    legacyFallback: true,
-    helperAvailable: false,
-    suggestion: legacyResult.started
-      ? '当前包未包含无界面 helper，已使用后台兼容模式'
-      : legacyResult.suggestion,
+  if (bundledHelperAvailable && !helperResolved.exists) {
+    return buildOpenHardwareMonitorStatusResult({
+      resolved,
+      helperResolved,
+      running: false,
+      backend: 'none',
+      executableExists: false,
+      executablePath: helperResolved.executablePath,
+      executableDirectory: helperResolved.directoryPath,
+      reason: 'WINDOWS_SENSOR_HELPER_RUNTIME_MISSING',
+      suggestion: 'Windows 传感器增强组件已随插件提供，但运行时复制不完整；请重启插件后重试',
+    })
   }
+
+  if (!bundledHelperAvailable) {
+    const legacyResult = await startBundledOpenHardwareMonitor()
+    return {
+      ...legacyResult,
+      backend: legacyResult.started ? 'legacy-ohm' : 'none',
+      legacyFallback: true,
+      helperAvailable: false,
+      suggestion: legacyResult.started
+        ? '当前包未包含无界面 helper，已使用后台兼容模式'
+        : legacyResult.suggestion,
+    }
+  }
+
+  return buildOpenHardwareMonitorStatusResult({
+    resolved,
+    helperResolved,
+    running: false,
+    backend: 'none',
+    reason: 'WINDOWS_SENSOR_HELPER_UNAVAILABLE',
+    suggestion: 'Windows 传感器增强组件不可用',
+  })
 }
 
 async function ensureOpenHardwareMonitorRunning(options = {}) {
   const settings = getHardwareSensorSettings()
-  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
+  const bundledResolved = resolveOpenHardwareMonitorExecutable()
+  const bundledHelperAvailable = hasBundledWindowsSensorHelper(bundledResolved)
+  const resolved = ensurePhysicalOpenHardwareMonitor(bundledResolved)
   const allowStartWithoutAutoStart = Boolean(options.allowStartWithoutAutoStart)
 
   if (!isWindows()) {
@@ -1991,8 +2051,8 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
     })
   }
 
-  const running = await isOpenHardwareMonitorRunning(settings)
-  if (running) {
+  const preferredBackendRunning = await isPreferredWindowsSensorBackendRunning(settings, bundledHelperAvailable)
+  if (preferredBackendRunning) {
     return getOpenHardwareMonitorStatus()
   }
 
@@ -2029,7 +2089,7 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
   const now = Date.now()
   const lastStartAt = Math.max(openHardwareMonitorLastStartAt, readOpenHardwareMonitorSharedLastStartAt())
   if (now - lastStartAt < OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS) {
-    const runningAfterCooldownCheck = await isOpenHardwareMonitorRunning(settings)
+    const runningAfterCooldownCheck = await isPreferredWindowsSensorBackendRunning(settings, bundledHelperAvailable)
     if (runningAfterCooldownCheck) return getOpenHardwareMonitorStatus()
     return buildOpenHardwareMonitorStatusResult({
       settings,
@@ -2045,7 +2105,11 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
 
   const startLock = acquireOpenHardwareMonitorStartLock()
   if (!startLock.acquired) {
-    const runningAfterWait = await waitForOpenHardwareMonitorRunning(settings)
+    const runningAfterWait = await waitForOpenHardwareMonitorRunning(
+      settings,
+      OPEN_HARDWARE_MONITOR_START_WAIT_MS,
+      bundledHelperAvailable
+    )
     if (runningAfterWait) return getOpenHardwareMonitorStatus()
     return buildOpenHardwareMonitorStatusResult({
       settings,
@@ -2061,7 +2125,7 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
 
   openHardwareMonitorStartPromise = (async () => {
     try {
-      if (await isOpenHardwareMonitorRunning(settings)) {
+      if (await isPreferredWindowsSensorBackendRunning(settings, bundledHelperAvailable)) {
         return getOpenHardwareMonitorStatus()
       }
 
@@ -2071,7 +2135,11 @@ async function ensureOpenHardwareMonitorRunning(options = {}) {
         return startResult
       }
 
-      const startedRunning = await waitForOpenHardwareMonitorRunning(settings)
+      const startedRunning = await waitForOpenHardwareMonitorRunning(
+        settings,
+        OPEN_HARDWARE_MONITOR_START_WAIT_MS,
+        bundledHelperAvailable
+      )
       const latestStatus = await getOpenHardwareMonitorStatus()
       return {
         ...latestStatus,

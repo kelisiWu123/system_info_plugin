@@ -14,10 +14,24 @@ function sha256File(filePath) {
   return createHash('sha256').update(readFileSync(filePath)).digest('hex')
 }
 
+function canonicalizeFingerprintText(value) {
+  return String(value).replace(/\r\n|\r/g, '\n')
+}
+
 function computeFingerprint(runtimeManifestContent) {
   const hash = createHash('sha256')
   for (const filePath of [source, appManifest]) {
-    hash.update(readFileSync(filePath))
+    hash.update(canonicalizeFingerprintText(readFileSync(filePath, 'utf8')))
+  }
+  hash.update(canonicalizeFingerprintText(runtimeManifestContent))
+  return hash.digest('hex')
+}
+
+function computeLegacyWindowsFingerprint(runtimeManifestContent) {
+  const hash = createHash('sha256')
+  for (const filePath of [source, appManifest]) {
+    const canonicalText = canonicalizeFingerprintText(readFileSync(filePath, 'utf8'))
+    hash.update(canonicalText.replace(/\n/g, '\r\n'))
   }
   hash.update(runtimeManifestContent)
   return hash.digest('hex')
@@ -82,11 +96,16 @@ for (const entry of runtimeManifest.files) {
 }
 
 const expectedFingerprint = computeFingerprint(runtimeManifestContent)
+const legacyWindowsFingerprint = computeLegacyWindowsFingerprint(runtimeManifestContent)
 const actualFingerprint = readFileSync(fingerprintFile, 'utf8').trim().toLowerCase()
-if (actualFingerprint !== expectedFingerprint) {
+if (actualFingerprint !== expectedFingerprint && actualFingerprint !== legacyWindowsFingerprint) {
   console.error('Windows sensor helper prebuilt asset is stale relative to Program.cs/app.manifest/runtime-manifest.json.')
   console.error('Regenerate it with `npm run build:windows-helper` on Windows before creating a release build.')
   process.exit(1)
 }
 
-console.log('Windows sensor helper prebuilt asset verified.')
+if (actualFingerprint === legacyWindowsFingerprint && actualFingerprint !== expectedFingerprint) {
+  console.log('Windows sensor helper prebuilt asset verified with legacy CRLF source fingerprint; the next regeneration will write the cross-platform canonical fingerprint.')
+} else {
+  console.log('Windows sensor helper prebuilt asset verified.')
+}

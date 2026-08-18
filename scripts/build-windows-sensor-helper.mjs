@@ -56,6 +56,10 @@ function sha256File(filePath) {
   return createHash('sha256').update(readFileSync(filePath)).digest('hex')
 }
 
+function canonicalizeFingerprintText(value) {
+  return String(value).replace(/\r\n|\r/g, '\n')
+}
+
 function downloadFile(url, destination, redirectCount = 0) {
   if (redirectCount > 6) {
     return Promise.reject(new Error(`Too many redirects while downloading ${url}`))
@@ -252,9 +256,9 @@ function buildRuntimeManifest(runtimeAssets) {
 function computeSourceFingerprint(runtimeManifestContent) {
   const hash = createHash('sha256')
   for (const filePath of [source, appManifest]) {
-    hash.update(readFileSync(filePath))
+    hash.update(canonicalizeFingerprintText(readFileSync(filePath, 'utf8')))
   }
-  hash.update(runtimeManifestContent)
+  hash.update(canonicalizeFingerprintText(runtimeManifestContent))
   return hash.digest('hex')
 }
 
