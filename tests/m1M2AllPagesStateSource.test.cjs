@@ -7,19 +7,25 @@ function readSource(relativePath) {
   return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8')
 }
 
-test('graphics, memory, storage, processor, and overview pages use StateBlock for loading and retryable error or empty states', () => {
+test('detail pages keep blocking loading states while overview progressively renders and preserves retryable error or empty states', () => {
   const graphics = readSource('src/components/GraphicsPage/index.vue')
   const memory = readSource('src/components/MemoryPage/index.vue')
   const storage = readSource('src/components/StoragePage/index.vue')
   const processor = readSource('src/components/Processor/index.vue')
   const overview = readSource('src/components/Computer/index.vue')
 
-  for (const source of [graphics, memory, storage, processor, overview]) {
+  for (const source of [graphics, memory, storage, processor]) {
     assert.match(source, /import StateBlock from '..\/common\/StateBlock.vue'/)
     assert.match(source, /<StateBlock[\s\S]*variant="loading"/)
     assert.match(source, /<StateBlock[\s\S]*:variant="pageStateBlock\.variant"/)
     assert.match(source, /@retry="retry[A-Za-z]+Page"/)
   }
+
+  assert.match(overview, /import StateBlock from '..\/common\/StateBlock.vue'/)
+  assert.match(overview, /v-if="!loading && pageStateBlock"/)
+  assert.match(overview, /class="overview-progress"/)
+  assert.match(overview, /:variant="pageStateBlock\.variant"/)
+  assert.match(overview, /@retry="retryOverviewPage"/)
 })
 
 test('graphics, memory, storage, processor, and overview pages consume fetchState instead of relying only on field placeholders', () => {

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
+import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import StateBlock from '../common/StateBlock.vue'
+import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 import {
   bytesToGB,
   clampPercent,
@@ -127,25 +129,6 @@ function sparklinePoints(values: number[]) {
       return `${x},${y}`
     })
     .join(' ')
-}
-
-async function writeClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  const copied = document.execCommand('copy')
-  document.body.removeChild(textarea)
-
-  if (!copied) throw new Error('execCommand copy failed')
 }
 
 function normalizeKitPart(partNum?: string) {
@@ -337,18 +320,15 @@ const memoryReportText = computed(() => {
 })
 
 function exportReport() {
-  const blob = new Blob([memoryReportText.value], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `memory-report-${new Date().toISOString().slice(0, 10)}.txt`
-  anchor.click()
-  URL.revokeObjectURL(url)
+  downloadTextFile(
+    `memory-report-${new Date().toISOString().slice(0, 10)}.txt`,
+    memoryReportText.value
+  )
 }
 
 async function copyMemoryInfo() {
   try {
-    await writeClipboard(memoryReportText.value)
+    await writeClipboardText(memoryReportText.value)
     return true
   } catch (error) {
     console.error('复制内存信息失败:', error)
@@ -377,22 +357,11 @@ function releaseStore() {
   subscribed.value = false
 }
 
-watch(
+useActivePageLifecycle(
   () => props.active,
-  async (active) => {
-    if (active === false) {
-      releaseStore()
-      return
-    }
-
-    await ensureStoreActive()
-  },
-  { immediate: true }
+  ensureStoreActive,
+  releaseStore,
 )
-
-onUnmounted(() => {
-  releaseStore()
-})
 </script>
 
 <template>
@@ -639,9 +608,7 @@ onUnmounted(() => {
 .memory-detail {
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background:
-    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
-    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  background: var(--surface-card-background);
   box-shadow: var(--panel-shadow);
 }
 
@@ -786,7 +753,7 @@ onUnmounted(() => {
   padding: 12px 12px 10px;
   border: 1px solid rgba(86, 101, 126, 0.14);
   border-radius: 14px;
-  background: rgba(16, 25, 36, 0.58);
+  background: var(--surface-softer-background);
 
   span {
     display: block;
@@ -807,7 +774,7 @@ onUnmounted(() => {
   height: 3px;
   margin-top: 12px;
   border-radius: 999px;
-  background: rgba(91, 110, 136, 0.24);
+  background: var(--surface-track-background);
   overflow: hidden;
 
   i {
@@ -967,7 +934,7 @@ onUnmounted(() => {
   padding: 14px;
   border: 1px solid rgba(86, 101, 126, 0.16);
   border-radius: 14px;
-  background: rgba(16, 25, 36, 0.58);
+  background: var(--surface-softer-background);
 }
 
 .channel-card__label {
@@ -989,7 +956,7 @@ onUnmounted(() => {
   padding: 10px 12px;
   border: 1px solid rgba(84, 104, 132, 0.24);
   border-radius: 10px;
-  background: rgba(20, 29, 42, 0.58);
+  background: var(--surface-soft-background);
 
   span {
     color: var(--text-muted);
@@ -1004,8 +971,8 @@ onUnmounted(() => {
 }
 
 .channel-slot--active {
-  border-color: rgba(67, 133, 255, 0.32);
-  background: rgba(28, 52, 84, 0.42);
+  border-color: var(--control-active-border);
+  background: var(--control-active-bg);
 
   span,
   strong {

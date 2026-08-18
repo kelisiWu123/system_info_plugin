@@ -17,6 +17,12 @@ interface MetricRow {
 defineProps<{
   status: SuperLiteStatus
   metrics: MetricRow[]
+  throughput: {
+    networkDown: string
+    networkUp: string
+    diskRead: string
+    diskWrite: string
+  }
   footerLeft: string
   footerRight: string
   pinned: boolean
@@ -87,6 +93,19 @@ function progressWidth(label: string) {
           </span>
         </span>
       </article>
+
+      <section class="super-lite-throughput" aria-label="网络与磁盘实时吞吐">
+        <div class="super-lite-throughput__row super-lite-throughput__row--network">
+          <strong>NET</strong>
+          <span><em>↓</em>{{ throughput.networkDown }}</span>
+          <span><em>↑</em>{{ throughput.networkUp }}</span>
+        </div>
+        <div class="super-lite-throughput__row super-lite-throughput__row--disk">
+          <strong>DISK</strong>
+          <span><em>读</em>{{ throughput.diskRead }}</span>
+          <span><em>写</em>{{ throughput.diskWrite }}</span>
+        </div>
+      </section>
     </main>
 
     <footer class="super-lite-footer">
@@ -104,14 +123,14 @@ function progressWidth(label: string) {
   height: 200px;
   box-sizing: border-box;
   padding: 8px;
-  border: 1px solid rgba(210, 223, 248, 0.22);
+  border: 1px solid var(--panel-border);
   border-radius: 8px;
-  background: rgba(10, 18, 30, 0.56);
-  color: rgba(244, 248, 255, 0.94);
+  background: var(--surface-watch);
+  color: var(--text-watch);
   backdrop-filter: blur(24px);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 14px 32px rgba(1, 8, 18, 0.22);
+    inset 0 1px 0 var(--surface-inset-highlight),
+    var(--shadow-watch);
 }
 
 .super-lite-header,
@@ -182,7 +201,7 @@ function progressWidth(label: string) {
   height: 18px;
   padding: 0 5px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--watch-muted-surface);
   font-size: 9px;
 }
 
@@ -193,7 +212,7 @@ function progressWidth(label: string) {
   width: 24px;
   height: 20px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--watch-muted-surface);
 }
 
 .super-lite-pin[aria-pressed='true'] {
@@ -207,7 +226,7 @@ function progressWidth(label: string) {
   width: 24px;
   height: 20px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--watch-muted-surface);
 }
 
 .super-lite-close:hover {
@@ -217,10 +236,11 @@ function progressWidth(label: string) {
 
 .super-lite-body {
   display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr)) auto;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 5px;
-  padding: 4px 0 5px;
+  gap: 4px;
+  padding: 3px 0 4px;
 }
 
 .super-lite-row {
@@ -232,7 +252,7 @@ function progressWidth(label: string) {
   gap: 2px;
   padding: 4px 6px;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--surface-soft-background);
   text-align: left;
 }
 
@@ -267,7 +287,7 @@ function progressWidth(label: string) {
 }
 
 .super-lite-row__top em {
-  color: #f7fbff;
+  color: var(--text-watch);
   font-style: normal;
   font-weight: 800;
 }
@@ -287,7 +307,7 @@ function progressWidth(label: string) {
 
 .super-lite-row__bottom small {
   overflow: hidden;
-  color: rgba(212, 224, 242, 0.74);
+  color: var(--text-watch-muted);
   font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -317,7 +337,7 @@ function progressWidth(label: string) {
   height: 4px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(74, 91, 120, 0.48);
+  background: var(--surface-track-background);
 }
 
 .super-lite-progress i {
@@ -331,12 +351,62 @@ function progressWidth(label: string) {
   background: rgba(133, 221, 118, 0.88);
 }
 
+.super-lite-throughput {
+  display: grid;
+  gap: 2px;
+  padding: 3px 5px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: 6px;
+  background: var(--surface-soft-background);
+  font-variant-numeric: tabular-nums;
+}
+
+.super-lite-throughput__row {
+  display: grid;
+  grid-template-columns: 28px repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  font-size: 8px;
+  line-height: 1.1;
+}
+
+.super-lite-throughput__row strong {
+  color: var(--text-watch-muted);
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.super-lite-throughput__row span {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-watch);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.super-lite-throughput__row em {
+  flex: 0 0 auto;
+  color: #58baff;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.super-lite-throughput__row--disk em {
+  color: #ffb14d;
+}
+
 .super-lite-footer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   height: 20px;
   gap: 5px;
-  color: rgba(208, 219, 238, 0.78);
+  color: var(--text-watch-muted);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
 }

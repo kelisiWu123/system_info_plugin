@@ -12,14 +12,38 @@ function isWatchWindowName(fileName) {
   return ['a_watch', 'watch', 'a_watch_super_lite'].includes(fileName)
 }
 
+function getInitialOpaqueWindowBackgroundColor() {
+  let preference = 'system'
+
+  try {
+    const mirroredPreference = globalThis?.localStorage?.getItem?.('appThemePreferenceMirror')
+    if (mirroredPreference === 'light' || mirroredPreference === 'dark') {
+      preference = mirroredPreference
+    }
+  } catch {
+    // Fall through to the system preference when renderer storage is unavailable.
+  }
+
+  if (preference === 'light') return '#f3f6fa'
+  if (preference === 'dark') return '#0f1722'
+
+  try {
+    return globalThis?.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? '#0f1722' : '#f3f6fa'
+  } catch {
+    return '#0f1722'
+  }
+}
+
 function getWindowHash(fileName) {
   if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
+  if (fileName === 'a_monitor') return 'monitor'
   if (fileName === 'a_specs_lite') return 'deviceSpecs'
   return isWatchWindowName(fileName) ? 'watch?floatingMode=standard&entry=hardwareWatch' : 'computer'
 }
 
 function getProductionWindowUrl(fileName) {
   if (fileName === 'a_watch_super_lite') return 'a_watch_super_lite/index.html'
+  if (fileName === 'a_monitor') return 'a_monitor/index.html'
   if (fileName === 'a_specs_lite') return 'a_specs_lite/index.html'
   if (isWatchWindowName(fileName)) return 'watch.html'
   return 'computer.html'
@@ -34,7 +58,9 @@ function buildChildWindowOptions(fileName, height, width, backgroundColor) {
     width,
     useContentSize: true,
     skipTaskbar: false,
-    backgroundColor: isWatchWindow ? `rgba(255, 255, 255, ${backgroundColor})` : '#0f1722',
+    backgroundColor: isWatchWindow
+      ? `rgba(255, 255, 255, ${backgroundColor})`
+      : getInitialOpaqueWindowBackgroundColor(),
     minimizable: !isWatchWindow,
     maximizable: !isWatchWindow,
     resizable: !isWatchWindow,
@@ -118,7 +144,10 @@ export const windowService = {
   alwaysOnTop: (flag) => {
     if (parentWindowId) {
       ipcRenderer.sendTo(parentWindowId, 'alwaysOnTop', { flag })
+      return
     }
+
+    ipcRenderer.send('window-action', 'always-on-top', { flag })
   },
 
   closeWindow: () => {
@@ -127,7 +156,7 @@ export const windowService = {
       return
     }
 
-    window.close()
+    ipcRenderer.send('window-action', 'close')
   },
 
   minimizeWindow: () => {
@@ -154,9 +183,7 @@ export const windowService = {
       return
     }
 
-    if (typeof window.resizeTo === 'function') {
-      window.resizeTo(Math.round(width), Math.round(height))
-    }
+    ipcRenderer.send('window-action', 'resize', { width, height })
   },
 
   createWindow: (fileName, height = 300, width = 300, backgroundColor = 0.3) => {

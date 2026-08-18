@@ -37,7 +37,7 @@
 		},
 		{
 			"code": "hardwareSpecsLite",
-			"explain": "轻量设备规格",
+			"explain": "设备规格",
 			"cmds": [
 				"设备规格",
 				"电脑规格",

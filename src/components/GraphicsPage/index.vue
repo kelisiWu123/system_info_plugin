@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
+import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle'
 import {
   activateGraphicsHardwareStore,
   deactivateGraphicsHardwareStore,
@@ -10,10 +11,17 @@ import { clampPercent, formatDisplayResolution } from '../../utils'
 import { formatGpuTemperatureSensorLabel, getGpuIdlePercent, getGraphicsPlatformPanelVisibility } from '../../utils/gpu'
 import { normalizeOsPlatform } from '../../utils/platform'
 import StateBlock from '../common/StateBlock.vue'
+import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   active?: boolean
-}>()
+  sensorEnhancementEnabled?: boolean
+  sensorEnhancementReady?: boolean
+}>(), {
+  active: false,
+  sensorEnhancementEnabled: false,
+  sensorEnhancementReady: false,
+})
 
 type MetricHistoryKey = 'load' | 'temp' | 'clock' | 'memory' | 'power'
 
@@ -120,7 +128,7 @@ function getHistoryMax(values: number[], fallback = 0) {
 function ringStyle(percent: number, accent: string) {
   const bounded = Math.max(0, Math.min(100, percent))
   return {
-    background: `conic-gradient(${accent} 0deg ${(bounded / 100) * 360}deg, rgba(255, 255, 255, 0.08) ${(bounded / 100) * 360}deg 360deg)`,
+    background: `conic-gradient(${accent} 0deg ${(bounded / 100) * 360}deg, var(--gauge-track) ${(bounded / 100) * 360}deg 360deg)`,
   }
 }
 
@@ -150,27 +158,44 @@ function formatSyncTime(value?: number) {
   })
 }
 
+function graphicsMetricFallbackLabel(metric: 'temperature' | 'power' | 'clock' | 'load') {
+  const platform = normalizeOsPlatform(osInfo.value)
+  const needsEnhancement = platform === 'win32'
+    || (platform === 'darwin' && metric !== 'temperature')
+
+  if (!needsEnhancement) return '系统未提供'
+  if (!props.sensorEnhancementEnabled) return '需要传感器增强'
+  if (!props.sensorEnhancementReady) return '增强组件未就绪'
+  return '系统未提供'
+}
+
 function formatTemperature(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)}°C` : '暂不支持'
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? `${Math.round(value)}°C`
+    : graphicsMetricFallbackLabel('temperature')
 }
 
 function formatPower(value: number | null) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '暂不支持'
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return graphicsMetricFallbackLabel('power')
   if (value < 1) return `${Math.round(value * 1000)} mW`
   if (value < 10) return `${value.toFixed(1)} W`
   return `${Math.round(value)} W`
 }
 
 function formatClock(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} MHz` : '暂不支持'
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? `${Math.round(value)} MHz`
+    : graphicsMetricFallbackLabel('clock')
 }
 
 function formatPercent(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? `${Math.round(value)}%` : '暂不支持'
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? `${Math.round(value)}%`
+    : graphicsMetricFallbackLabel('load')
 }
 
 function formatMemoryAmount(value: number | null | undefined) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '暂不支持'
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '系统未提供'
   return value >= 1024 ? `${(value / 1024).toFixed(1)} GB` : `${value.toFixed(1)} MB`
 }
 
@@ -212,7 +237,15 @@ function formatDisplayLine(item: DisplayData) {
 
 function inferHealthState(gpu: GpuData | undefined) {
   const temp = safeNumber(gpu?.temperatureGpu)
-  const load = safeNumber(gpu?.utilizationGpu) || 0
+  const load = safeNumber(gpu?.utilizationGpu)
+
+  if (temp === null && load === null) {
+    return {
+      title: '实时数据待补齐',
+      subtitle: graphicsMetricFallbackLabel('load'),
+      accent: 'var(--text-subtle)',
+    }
+  }
 
   if (typeof temp === 'number' && temp >= 85) {
     return {
@@ -222,7 +255,7 @@ function inferHealthState(gpu: GpuData | undefined) {
     }
   }
 
-  if (load >= 90) {
+  if (typeof load === 'number' && load >= 90) {
     return {
       title: '高性能运行',
       subtitle: 'GPU 当前处于高负载渲染状态',
@@ -291,25 +324,6 @@ function gpuBadgeData(gpu?: GpuData) {
   }
 }
 
-async function writeClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  const copied = document.execCommand('copy')
-  document.body.removeChild(textarea)
-
-  if (!copied) throw new Error('execCommand copy failed')
-}
-
 const connectedDisplays = computed(() =>
   displaysData.value.filter((item) => (item.resolutionX && item.resolutionY) || (item.currentResX && item.currentResY))
 )
@@ -354,7 +368,7 @@ const quickStats = computed(() => {
     {
       id: 'load',
       label: '使用率',
-      value: typeof gpu?.utilizationGpu === 'number' ? `${Math.round(gpu.utilizationGpu)}%` : '暂不支持',
+      value: formatPercent(safeNumber(gpu?.utilizationGpu)),
       accent: 'var(--accent-blue)',
       trend: metricHistory.load,
     },
@@ -620,7 +634,7 @@ const graphicsReportText = computed(() => {
       ? (
           gpu?.gpuCoreTemperatures?.length
             ? gpu.gpuCoreTemperatures.map((sensor, index) => `${formatGpuTemperatureSensorLabel(sensor, index)}：${formatTemperature(safeNumber(sensor.value))}`)
-            : ['GPU 温度测点：暂不支持']
+            : [`GPU 温度测点：${graphicsMetricFallbackLabel('temperature')}`]
         )
       : []),
     '',
@@ -633,18 +647,15 @@ const graphicsReportText = computed(() => {
 })
 
 function exportReport() {
-  const blob = new Blob([graphicsReportText.value], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `graphics-report-${new Date().toISOString().slice(0, 10)}.txt`
-  anchor.click()
-  URL.revokeObjectURL(url)
+  downloadTextFile(
+    `graphics-report-${new Date().toISOString().slice(0, 10)}.txt`,
+    graphicsReportText.value
+  )
 }
 
 async function copyGraphicsInfo() {
   try {
-    await writeClipboard(graphicsReportText.value)
+    await writeClipboardText(graphicsReportText.value)
     return true
   } catch (error) {
     console.error('复制显卡信息失败:', error)
@@ -684,22 +695,11 @@ function releaseStore() {
   subscribed.value = false
 }
 
-watch(
+useActivePageLifecycle(
   () => props.active,
-  async (active) => {
-    if (active === false) {
-      releaseStore()
-      return
-    }
-
-    await ensureStoreActive()
-  },
-  { immediate: true }
+  ensureStoreActive,
+  releaseStore,
 )
-
-onUnmounted(() => {
-  releaseStore()
-})
 </script>
 
 <template>
@@ -773,7 +773,6 @@ onUnmounted(() => {
             <h3>实时监控</h3>
             <p>聚焦 GPU 负载、空闲率、温度、频率、显存与功耗</p>
           </div>
-          <button type="button" class="panel-action">监控设置</button>
         </div>
 
         <div class="monitor-grid">
@@ -789,7 +788,7 @@ onUnmounted(() => {
               <polyline :points="sparklinePoints(card.trend)" :stroke="card.accent" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <div class="monitor-card__foot" :class="{ 'monitor-card__foot--single': card.unsupported }">
-              <span>{{ card.unsupported ? '当前机器暂不支持' : card.footerLeft }}</span>
+              <span>{{ card.unsupported ? card.value : card.footerLeft }}</span>
               <span v-if="!card.unsupported">{{ card.footerRight }}</span>
             </div>
           </article>
@@ -892,7 +891,7 @@ onUnmounted(() => {
   min-height: 320px;
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background: linear-gradient(180deg, rgba(19, 28, 40, 0.94), rgba(16, 24, 35, 0.96));
+  background: var(--surface-section-background);
   color: var(--text-muted);
   font-size: 15px;
 }
@@ -909,9 +908,7 @@ onUnmounted(() => {
 .graphics-panel {
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background:
-    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
-    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  background: var(--surface-card-background);
   box-shadow: var(--panel-shadow);
 }
 
@@ -934,7 +931,7 @@ onUnmounted(() => {
   padding: 12px 10px;
   border-radius: 14px;
   background: linear-gradient(160deg, rgba(69, 181, 255, 0.94), rgba(35, 79, 162, 0.9));
-  color: var(--text-primary);
+  color: var(--text-on-accent);
   box-shadow: 0 18px 36px rgba(13, 39, 80, 0.28);
   overflow: hidden;
 
@@ -1011,7 +1008,7 @@ onUnmounted(() => {
 
   h2 {
     margin: 0;
-    color: #f5f7fb;
+    color: var(--text-primary);
     font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.03em;
@@ -1150,17 +1147,6 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
-.panel-action {
-  min-height: var(--control-height);
-  padding: 0 14px;
-  border: 1px solid var(--control-border);
-  border-radius: var(--control-radius);
-  background: var(--control-bg);
-  color: var(--control-fg);
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .monitor-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1204,7 +1190,7 @@ onUnmounted(() => {
   width: 84px;
   height: 84px;
   border-radius: 50%;
-  background: rgba(17, 25, 36, 0.96);
+  background: var(--panel-background-strong);
 
   strong {
     color: var(--text-primary);
@@ -1266,7 +1252,7 @@ onUnmounted(() => {
   padding: 10px 10px 8px;
   border: 1px solid rgba(84, 104, 132, 0.28);
   border-radius: 10px;
-  background: rgba(18, 29, 44, 0.72);
+  background: var(--surface-soft-background);
 
   strong {
     font-size: 13px;
@@ -1363,7 +1349,7 @@ onUnmounted(() => {
   padding: 10px 10px 8px;
   border: 1px solid rgba(84, 104, 132, 0.28);
   border-radius: 10px;
-  background: rgba(18, 29, 44, 0.72);
+  background: var(--surface-soft-background);
 
   strong {
     color: var(--text-primary);

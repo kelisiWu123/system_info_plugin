@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
-import { clampPercent, formatBytes, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes, hasDiskHealthTelemetry } from '../../utils'
+import { clampPercent, formatBytes, formatSpeed, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes, hasDiskHealthTelemetry } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
+import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 
 const props = defineProps<{
   active?: boolean
@@ -58,6 +60,7 @@ const {
   lastSyncedAt,
   diskLayoutData,
   diskData,
+  storageIoData,
   storageUsage,
   osInfo,
   fetchState,
@@ -143,14 +146,29 @@ function formatTemperature(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)}°C` : '--'
 }
 
+function formatIops(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? `${Math.round(value)} IOPS` : '--'
+}
+
 function formatHealthText(disk: DiskLayoutData) {
   const smartPassed = disk.smartData?.smart_status?.passed
   if (smartPassed === true) return { text: '良好', variant: 'good' as const }
   if (smartPassed === false) return { text: '注意', variant: 'warn' as const }
 
+  const criticalWarning = disk.smartData?.nvme_smart_health_information_log?.critical_warning
+  if (typeof criticalWarning === 'number') {
+    return criticalWarning === 0
+      ? { text: '良好', variant: 'good' as const }
+      : { text: '注意', variant: 'warn' as const }
+  }
+
   const smartStatus = cleanText(disk.smartStatus).toLowerCase()
-  if (smartStatus === 'ok' || smartStatus === 'passed') return { text: '良好', variant: 'good' as const }
-  if (smartStatus) return { text: cleanText(disk.smartStatus), variant: 'warn' as const }
+  if (['ok', 'passed', 'healthy', 'good'].includes(smartStatus)) {
+    return { text: '良好', variant: 'good' as const }
+  }
+  if (['failed', 'fail', 'bad', 'warning', 'critical', 'pred fail', 'pred-fail'].includes(smartStatus)) {
+    return { text: '注意', variant: 'warn' as const }
+  }
 
   return undefined
 }
@@ -179,25 +197,6 @@ function buildFeatures(disk: DiskLayoutData) {
   if (disk.smartData?.ata_smart_error_log?.summary?.count !== undefined) featureSet.add('SMART Error Log')
 
   return [...featureSet]
-}
-
-async function writeClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  const copied = document.execCommand('copy')
-  document.body.removeChild(textarea)
-
-  if (!copied) throw new Error('execCommand copy failed')
 }
 
 const physicalDisks = computed<PhysicalDiskRow[]>(() =>
@@ -265,8 +264,8 @@ const totalPhysicalCapacity = computed(() => getPhysicalDiskTotalBytes(diskLayou
 const displayCapacityTotal = computed(() => totalPhysicalCapacity.value > 0 ? totalPhysicalCapacity.value : storageUsage.value.total)
 const mountedVolumeUsed = computed(() => volumeRows.value.reduce((sum, volume) => sum + volume.used, 0))
 const mountedVolumeAvailable = computed(() => volumeRows.value.reduce((sum, volume) => sum + volume.available, 0))
-const disksWithHealthData = computed(() => physicalDisks.value.filter((disk) => disk.hasHealthData))
-const hasDiskHealthSupport = computed(() => disksWithHealthData.value.length > 0)
+const disksWithHealthStatus = computed(() => physicalDisks.value.filter((disk) => Boolean(disk.healthText && disk.healthVariant)))
+const hasDiskHealthStatus = computed(() => disksWithHealthStatus.value.length > 0)
 
 const selectedDisk = computed(() => physicalDisks.value.find((disk) => disk.id === selectedDiskId.value) || physicalDisks.value[0])
 
@@ -284,15 +283,13 @@ const selectedDiskMountedUsage = computed(() => {
 })
 
 const overviewCards = computed<OverviewCard[]>(() => {
-  const healthyCount = disksWithHealthData.value.filter((disk) => disk.healthVariant === 'good').length
+  const healthyCount = disksWithHealthStatus.value.filter((disk) => disk.healthVariant === 'good').length
   const healthLabel =
-    disksWithHealthData.value.length === 0
-      ? '未识别'
-      : healthyCount === disksWithHealthData.value.length
-        ? '良好'
-        : healthyCount > 0
-          ? '部分关注'
-          : '需检查'
+    healthyCount === disksWithHealthStatus.value.length
+      ? '良好'
+      : healthyCount > 0
+        ? '部分关注'
+        : '需检查'
 
   const cards: OverviewCard[] = [
     {
@@ -313,13 +310,19 @@ const overviewCards = computed<OverviewCard[]>(() => {
       subvalue: interfaceTypes.value.join(' / ') || '--',
       tone: 'amber',
     },
+    {
+      label: '实时 I/O',
+      value: `↓ ${formatSpeed(storageIoData.value.readBytesPerSec)}`,
+      subvalue: `↑ ${formatSpeed(storageIoData.value.writeBytesPerSec)} · ${formatIops(storageIoData.value.totalIops)}`,
+      tone: 'blue',
+    },
   ]
 
-  if (hasDiskHealthSupport.value) {
+  if (hasDiskHealthStatus.value) {
     cards.splice(2, 0, {
       label: '健康状态',
       value: healthLabel,
-      subvalue: `${healthyCount} / ${disksWithHealthData.value.length} 设备状态良好`,
+      subvalue: `${healthyCount} / ${disksWithHealthStatus.value.length} 设备状态良好`,
       tone: 'green',
     })
   }
@@ -344,7 +347,7 @@ const selectedDiskDetails = computed(() => {
     { label: '设备路径', value: selectedDisk.value.devicePath },
     { label: '序列号', value: selectedDisk.value.serial },
     { label: '容量', value: formatBytes(selectedDisk.value.capacity) },
-  ]
+  ].filter((item) => item.value && item.value !== '--')
 })
 
 const storageReportText = computed(() => {
@@ -356,6 +359,9 @@ const storageReportText = computed(() => {
     `挂载卷：${volumeRows.value.length}`,
     `总容量：${formatBytes(displayCapacityTotal.value)}`,
     `挂载卷已用：${formatBytes(storageUsage.value.used)}`,
+    `实时读取：${formatSpeed(storageIoData.value.readBytesPerSec)}`,
+    `实时写入：${formatSpeed(storageIoData.value.writeBytesPerSec)}`,
+    `实时 IOPS：${formatIops(storageIoData.value.totalIops)}`,
     '',
     '[物理磁盘]',
     ...physicalDisks.value.map((disk) =>
@@ -364,8 +370,8 @@ const storageReportText = computed(() => {
         `类型：${disk.type}`,
         `接口：${disk.interfaceType}`,
         `容量：${formatBytes(disk.capacity)}`,
-        ...(disk.hasHealthData && disk.healthText ? [`健康：${disk.healthText}`] : []),
-        `温度：${formatTemperature(disk.temperature)}`,
+        ...(disk.healthText ? [`健康：${disk.healthText}`] : []),
+        ...(typeof disk.temperature === 'number' && disk.temperature > 0 ? [`温度：${formatTemperature(disk.temperature)}`] : []),
       ].join(' / ')
     ),
     '',
@@ -382,18 +388,15 @@ const storageReportText = computed(() => {
 })
 
 function exportReport() {
-  const blob = new Blob([storageReportText.value], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `storage-report-${new Date().toISOString().slice(0, 10)}.txt`
-  anchor.click()
-  URL.revokeObjectURL(url)
+  downloadTextFile(
+    `storage-report-${new Date().toISOString().slice(0, 10)}.txt`,
+    storageReportText.value
+  )
 }
 
 async function copyStorageInfo() {
   try {
-    await writeClipboard(storageReportText.value)
+    await writeClipboardText(storageReportText.value)
     return true
   } catch (error) {
     console.error('复制存储信息失败:', error)
@@ -437,22 +440,11 @@ watch(
   { immediate: true }
 )
 
-watch(
+useActivePageLifecycle(
   () => props.active,
-  async (active) => {
-    if (active === false) {
-      releaseStore()
-      return
-    }
-
-    await ensureStoreActive()
-  },
-  { immediate: true }
+  ensureStoreActive,
+  releaseStore,
 )
-
-onUnmounted(() => {
-  releaseStore()
-})
 </script>
 
 <template>
@@ -506,8 +498,8 @@ onUnmounted(() => {
               'storage-device-row',
               {
                 'storage-device-row--active': selectedDisk?.id === disk.id,
-                'storage-device-row--with-health': hasDiskHealthSupport,
-                'storage-device-row--compact': !hasDiskHealthSupport,
+                'storage-device-row--with-health': hasDiskHealthStatus,
+                'storage-device-row--compact': !hasDiskHealthStatus,
               },
             ]"
             @click="selectedDiskId = disk.id"
@@ -519,8 +511,8 @@ onUnmounted(() => {
             <span>{{ disk.type }}</span>
             <span>{{ disk.interfaceType }}</span>
             <span>{{ formatBytes(disk.capacity) }}</span>
-            <span v-if="hasDiskHealthSupport" class="storage-device-row__health">
-              <span v-if="disk.hasHealthData && disk.healthText && disk.healthVariant" :class="['health-chip', `health-chip--${disk.healthVariant}`]">{{ disk.healthText }}</span>
+            <span v-if="hasDiskHealthStatus" class="storage-device-row__health">
+              <span v-if="disk.healthText && disk.healthVariant" :class="['health-chip', `health-chip--${disk.healthVariant}`]">{{ disk.healthText }}</span>
             </span>
             <span>{{ formatTemperature(disk.temperature) }}</span>
           </button>
@@ -536,7 +528,7 @@ onUnmounted(() => {
               <h2>{{ selectedDisk.name }}</h2>
               <p>{{ selectedDisk.type }} / {{ selectedDisk.interfaceType }} / {{ selectedDisk.protocol }}</p>
             </div>
-            <div v-if="selectedDisk.hasHealthData && selectedDisk.healthText && selectedDisk.healthVariant" class="storage-focus-card__health">
+            <div v-if="selectedDisk.healthText && selectedDisk.healthVariant" class="storage-focus-card__health">
               <span :class="['health-chip', `health-chip--${selectedDisk.healthVariant}`]">{{ selectedDisk.healthText }}</span>
               <span v-if="selectedDisk.healthPercentText">{{ `剩余健康 ${selectedDisk.healthPercentText}` }}</span>
             </div>
@@ -547,7 +539,7 @@ onUnmounted(() => {
               <span>{{ item.label }}</span>
               <strong>{{ item.value }}</strong>
             </div>
-            <div class="storage-detail-item">
+            <div v-if="typeof selectedDisk.temperature === 'number' && selectedDisk.temperature > 0" class="storage-detail-item">
               <span>温度</span>
               <strong>{{ formatTemperature(selectedDisk.temperature) }}</strong>
             </div>
@@ -615,13 +607,13 @@ onUnmounted(() => {
           <div v-else class="storage-empty storage-empty--inline">未识别到可用挂载卷。</div>
         </section>
 
-        <section v-if="hasDiskHealthSupport" class="storage-section">
+        <section v-if="selectedDisk?.smartRows.length" class="storage-section">
           <div class="storage-section__header">
             <h2>SMART 摘要</h2>
             <span>仅展示当前数据源实际提供的属性</span>
           </div>
 
-          <div v-if="selectedDisk?.smartRows.length" class="storage-smart-table">
+          <div class="storage-smart-table">
             <div class="storage-smart-table__header">
               <span>ID</span>
               <span>属性名称</span>
@@ -640,8 +632,6 @@ onUnmounted(() => {
               <span :class="['smart-status', { 'smart-status--warn': row.status !== '正常' }]">{{ row.status }}</span>
             </div>
           </div>
-
-          <div v-else class="storage-empty storage-empty--inline">当前磁盘未返回 SMART 属性表。</div>
         </section>
       </div>
 
@@ -705,9 +695,7 @@ onUnmounted(() => {
   padding: var(--surface-padding);
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background:
-    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
-    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  background: var(--surface-card-background);
   box-shadow: var(--panel-shadow);
 }
 
@@ -732,7 +720,7 @@ onUnmounted(() => {
 
 .storage-overview-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 16px;
 }
 
@@ -744,9 +732,7 @@ onUnmounted(() => {
   padding: 18px;
   border: 1px solid var(--panel-border-soft);
   border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(21, 31, 44, 0.94), rgba(17, 25, 35, 0.94)),
-    rgba(18, 27, 38, 0.82);
+  background: var(--surface-section-background);
 }
 
 .storage-overview-card__label {
@@ -792,7 +778,7 @@ onUnmounted(() => {
   border: 1px solid rgba(65, 80, 102, 0.32);
   border-radius: 14px;
   overflow: hidden;
-  background: rgba(15, 23, 34, 0.84);
+  background: var(--surface-section-background);
 }
 
 .storage-device-row,
@@ -831,7 +817,7 @@ onUnmounted(() => {
 
 .storage-device-row:hover,
 .storage-device-row--active {
-  background: rgba(29, 42, 59, 0.8);
+  background: var(--surface-selected-background);
 }
 
 .storage-device-row--active {
@@ -990,7 +976,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: rgba(13, 20, 29, 0.96);
+  background: var(--panel-background-strong);
 
   span,
   small {
@@ -1055,7 +1041,7 @@ onUnmounted(() => {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
-  background: rgba(26, 35, 47, 0.92);
+  background: var(--surface-soft-background);
 }
 
 .storage-volume-row,
@@ -1138,7 +1124,7 @@ onUnmounted(() => {
   border-radius: 18px;
   color: var(--text-muted);
   font-size: 14px;
-  background: rgba(18, 26, 38, 0.76);
+  background: var(--surface-detail-background);
 }
 
 .storage-empty--inline {

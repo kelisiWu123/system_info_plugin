@@ -17,15 +17,38 @@ test('main shell exposes copy/export actions outside development mode and remove
   assert.doesNotMatch(source, /模块开发中/)
 })
 
-test('topbar controls include accessibility labels and sensor error diagnostics can be copied', () => {
-  const source = readSource('src/App.vue')
+test('advanced refresh controls stay in monitoring while sensor controls are limited to CPU and GPU details', () => {
+  const app = readSource('src/App.vue')
+  const monitor = readSource('src/components/MonitoringDashboard/index.vue')
+  const sensorController = readSource('src/composables/useSensorEnhancementController.ts')
 
-  assert.match(source, /:aria-label="`切换刷新档位为 \$\{profile\.label\}`"/)
-  assert.match(source, /aria-label="切换后台降频"/)
-  assert.match(source, /const processorSensorControlAriaLabel = computed\(\(\) => getSensorEnhancementMenuAriaLabel\(sensorEnhancementPlatform\.value\)\)/)
-  assert.match(source, /:aria-label="processorSensorControlAriaLabel"/)
-  assert.match(source, /copySensorDiagnostics/)
-  assert.match(source, /复制诊断/)
+  assert.doesNotMatch(app, /切换刷新档位/)
+  assert.doesNotMatch(app, /切换后台降频/)
+  assert.match(monitor, /monitor-profile-button/)
+  assert.match(monitor, /后台降频/)
+  assert.match(app, /selectedSection\.value === 'processor' \|\| selectedSection\.value === 'graphics'/)
+  assert.match(sensorController, /getSensorEnhancementMenuAriaLabel/)
+  assert.match(app, /:aria-label="processorSensorControlAriaLabel"/)
+  assert.match(app, /copySensorDiagnostics/)
+  assert.match(app, /复制诊断/)
+})
+
+test('sensor-heavy pages explain when telemetry needs enhancement instead of saying everything is unsupported', () => {
+  const app = readSource('src/App.vue')
+  const processor = readSource('src/components/Processor/index.vue')
+  const graphics = readSource('src/components/GraphicsPage/index.vue')
+
+  assert.match(processor, /function sensorMetricFallbackLabel/)
+  assert.match(processor, /return '需要传感器增强'/)
+  assert.match(processor, /return enhancementReady \? '系统未提供' : '增强组件未就绪'/)
+  assert.match(graphics, /sensorEnhancementEnabled\?: boolean/)
+  assert.match(graphics, /sensorEnhancementReady\?: boolean/)
+  assert.match(graphics, /function graphicsMetricFallbackLabel/)
+  assert.match(graphics, /return '需要传感器增强'/)
+  assert.match(graphics, /return '增强组件未就绪'/)
+  assert.match(app, /:sensor-enhancement-enabled="sensorSettings\.enhancedSensorEnabled"/)
+  assert.match(app, /:sensor-enhancement-ready="sensorEnhancementReady"/)
+  assert.doesNotMatch(graphics, /<button type="button" class="panel-action">监控设置<\/button>/)
 })
 
 test('overview, processor, and board pages use the shared StateBlock component', () => {
@@ -36,7 +59,8 @@ test('overview, processor, and board pages use the shared StateBlock component',
 
   assert.match(stateBlock, /defineProps/)
   assert.match(stateBlock, /variant: 'loading' \| 'empty' \| 'error' \| 'soon'/)
-  assert.match(overview, /<StateBlock[\s\S]*variant="loading"/)
+  assert.match(overview, /<StateBlock[\s\S]*v-if="!loading && pageStateBlock"/)
+  assert.match(overview, /class="overview-progress"/)
   assert.match(processor, /<StateBlock[\s\S]*@retry="retryProcessorPage"/)
   assert.match(board, /<StateBlock[\s\S]*variant="soon"/)
 })

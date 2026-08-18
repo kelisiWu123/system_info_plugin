@@ -1,8 +1,26 @@
-import { ref } from 'vue'
-import { readService } from '../utils/serviceReader'
+import { reactive, ref } from 'vue'
+import { normalizeErrorMessage, readService } from '../utils/serviceReader'
+
+type DeviceSpecsFetchStatus = 'pending' | 'ok' | 'missing' | 'error'
+export type DeviceSpecsServiceKey =
+  | 'cpuInfo'
+  | 'memInfo'
+  | 'memoryLayout'
+  | 'gpuInfo'
+  | 'diskData'
+  | 'diskLayout'
+  | 'boardData'
+  | 'biosData'
+  | 'systemData'
+  | 'displaysData'
+  | 'osInfo'
+  | 'audioDevices'
+  | 'networkAdapters'
 
 const loading = ref(true)
 const loaded = ref(false)
+const pendingReads = ref(0)
+const lastSyncedAt = ref<number>()
 
 const cpuData = ref<CpuData>()
 const memoData = ref<MemoData>({
@@ -33,59 +51,138 @@ const biosData = ref<BiosInfoData>()
 const systemData = ref<SystemData>()
 const displaysData = ref<DisplayData[]>([])
 const osInfo = ref<OsInfoData>()
-const timeInfo = ref<TimeData>()
 const audioDevices = ref<AudioDeviceData[]>([])
-const networkInterfaces = ref<NetworkInterfaceData[]>([])
+const networkAdapters = ref<NetworkAdapterSpecData[]>([])
+
+const fetchState = reactive<Record<DeviceSpecsServiceKey, { status: DeviceSpecsFetchStatus; note: string }>>({
+  cpuInfo: { status: 'pending', note: '' },
+  memInfo: { status: 'pending', note: '' },
+  memoryLayout: { status: 'pending', note: '' },
+  gpuInfo: { status: 'pending', note: '' },
+  diskData: { status: 'pending', note: '' },
+  diskLayout: { status: 'pending', note: '' },
+  boardData: { status: 'pending', note: '' },
+  biosData: { status: 'pending', note: '' },
+  systemData: { status: 'pending', note: '' },
+  displaysData: { status: 'pending', note: '' },
+  osInfo: { status: 'pending', note: '' },
+  audioDevices: { status: 'pending', note: '' },
+  networkAdapters: { status: 'pending', note: '' },
+})
 
 let loadPromise: Promise<void> | undefined
 
+function setFetchState(key: DeviceSpecsServiceKey, status: DeviceSpecsFetchStatus, note = '') {
+  fetchState[key].status = status
+  fetchState[key].note = note
+}
+
+async function readAndApply<T>(
+  key: DeviceSpecsServiceKey,
+  reader: () => Promise<T>,
+  apply: (value: T) => void,
+  hasValue: (value: T) => boolean
+) {
+  pendingReads.value += 1
+  loading.value = true
+  setFetchState(key, 'pending')
+
+  try {
+    const value = await reader()
+    apply(value)
+    setFetchState(key, hasValue(value) ? 'ok' : 'missing', hasValue(value) ? '' : '系统未返回可用数据')
+  } catch (error) {
+    setFetchState(key, 'error', normalizeErrorMessage(error))
+    // A specs surface should degrade per field; one unsupported source must not block the rest.
+  } finally {
+    pendingReads.value = Math.max(0, pendingReads.value - 1)
+    if (pendingReads.value === 0) loading.value = false
+  }
+}
+
 async function readDeviceSpecsHardwareData() {
-  const [
-    cpuRes,
-    memoRes,
-    memoryLayoutRes,
-    gpuRes,
-    diskRes,
-    diskLayoutRes,
-    boardRes,
-    biosRes,
-    systemRes,
-    displaysRes,
-    osRes,
-    timeRes,
-    audioRes,
-    networkRes,
-  ] = await Promise.allSettled([
-    readService(() => window.services.getCpuInfo(), 10000, 1),
-    readService(() => window.services.getStaticMemInfo(), 10000, 1),
-    readService(() => window.services.getMemoryLayout(), 10000, 1),
-    readService(() => window.services.getStaticGpuInfo(), 12000, 1),
-    readService(() => window.services.getDiskData(), 10000, 1),
-    readService(() => window.services.getDiskLayout(), 15000, 1),
-    readService(() => window.services.getBoardData(), 8000, 1),
-    readService(() => window.services.getBiosData(), 10000, 1),
-    readService(() => window.services.getSystemData(), 10000, 1),
-    readService(() => window.services.getDisplaysData(), 12000, 1),
-    readService(() => window.services.getOsInfo(), 8000, 1),
-    readService(() => window.services.getTimeInfo(), 6000, 1),
-    readService(() => window.services.getAudioDevices(), 10000, 1),
-    readService(() => window.services.getNetworkInterfaces(), 12000, 1),
+  await Promise.all([
+    readAndApply(
+      'cpuInfo',
+      () => readService(() => window.services.getCpuInfo(), 10000, 1),
+      (value) => { cpuData.value = value },
+      Boolean
+    ),
+    readAndApply(
+      'memInfo',
+      () => readService(() => window.services.getStaticMemInfo(), 10000, 1),
+      (value) => { memoData.value = value },
+      (value) => Boolean(value?.total)
+    ),
+    readAndApply(
+      'memoryLayout',
+      () => readService(() => window.services.getMemoryLayout(), 10000, 1),
+      (value) => { memoLayoutData.value = value || [] },
+      (value) => Boolean(value?.length)
+    ),
+    readAndApply(
+      'gpuInfo',
+      () => readService(() => window.services.getStaticGpuInfo(), 12000, 1),
+      (value) => { gpuData.value = value || [] },
+      (value) => Boolean(value?.length)
+    ),
+    readAndApply(
+      'diskData',
+      () => readService(() => window.services.getDiskData(), 10000, 1),
+      (value) => { diskData.value = value || [] },
+      (value) => Boolean(value?.length)
+    ),
+    readAndApply(
+      'diskLayout',
+      () => readService(() => window.services.getDiskLayout(), 15000, 1),
+      (value) => { diskLayoutData.value = value || [] },
+      (value) => Boolean(value?.length)
+    ),
+    readAndApply(
+      'boardData',
+      () => readService(() => window.services.getBoardData(), 8000, 1),
+      (value) => { boardData.value = value },
+      Boolean
+    ),
+    readAndApply(
+      'biosData',
+      () => readService(() => window.services.getBiosData(), 10000, 1),
+      (value) => { biosData.value = value },
+      Boolean
+    ),
+    readAndApply(
+      'systemData',
+      () => readService(() => window.services.getSystemData(), 10000, 1),
+      (value) => { systemData.value = value },
+      Boolean
+    ),
+    readAndApply(
+      'displaysData',
+      () => readService(() => window.services.getDisplaysData(), 12000, 1),
+      (value) => { displaysData.value = value || [] },
+      (value) => Boolean(value?.length)
+    ),
+    readAndApply(
+      'osInfo',
+      () => readService(() => window.services.getOsInfo(), 8000, 1),
+      (value) => { osInfo.value = value },
+      Boolean
+    ),
+    readAndApply(
+      'audioDevices',
+      () => readService(() => window.services.getAudioDevices(), 10000, 1),
+      (value) => { audioDevices.value = value || [] },
+      (value) => Boolean(value?.length)
+    ),
+    readAndApply(
+      'networkAdapters',
+      () => readService(() => window.services.getNetworkAdapters(), 12000, 1),
+      (value) => { networkAdapters.value = value || [] },
+      (value) => Boolean(value?.length)
+    ),
   ])
 
-  if (cpuRes.status === 'fulfilled') cpuData.value = cpuRes.value
-  if (memoRes.status === 'fulfilled') memoData.value = memoRes.value
-  if (memoryLayoutRes.status === 'fulfilled') memoLayoutData.value = memoryLayoutRes.value || []
-  if (gpuRes.status === 'fulfilled') gpuData.value = gpuRes.value || []
-  if (diskRes.status === 'fulfilled') diskData.value = diskRes.value || []
-  if (diskLayoutRes.status === 'fulfilled') diskLayoutData.value = diskLayoutRes.value || []
-  if (boardRes.status === 'fulfilled') boardData.value = boardRes.value
-  if (biosRes.status === 'fulfilled') biosData.value = biosRes.value
-  if (systemRes.status === 'fulfilled') systemData.value = systemRes.value
-  if (displaysRes.status === 'fulfilled') displaysData.value = displaysRes.value || []
-  if (osRes.status === 'fulfilled') osInfo.value = osRes.value
-  if (timeRes.status === 'fulfilled') timeInfo.value = timeRes.value
-  if (audioRes.status === 'fulfilled') audioDevices.value = audioRes.value || []
-  if (networkRes.status === 'fulfilled') networkInterfaces.value = networkRes.value || []
+  lastSyncedAt.value = Date.now()
 }
 
 export async function loadDeviceSpecsHardwareData(force = false) {
@@ -114,6 +211,9 @@ export async function refreshDeviceSpecsHardwareData() {
 export function useDeviceSpecsHardwareData() {
   return {
     loading,
+    loaded,
+    pendingReads,
+    lastSyncedAt,
     cpuData,
     memoData,
     memoLayoutData,
@@ -125,9 +225,9 @@ export function useDeviceSpecsHardwareData() {
     systemData,
     displaysData,
     osInfo,
-    timeInfo,
     audioDevices,
-    networkInterfaces,
+    networkAdapters,
+    fetchState,
     loadDeviceSpecsHardwareData,
     refreshDeviceSpecsHardwareData,
   }

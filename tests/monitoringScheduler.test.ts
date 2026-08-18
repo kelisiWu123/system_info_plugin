@@ -4,7 +4,6 @@ import test from 'node:test'
 import {
   createMonitoringDiagnostics,
   DEFAULT_MONITORING_REFRESH_SETTINGS,
-  getDynamicMetricRequirementsForScopes,
   getMonitoringRefreshIntervals,
   normalizeMonitoringRefreshSettings,
 } from '../src/utils/monitoring'
@@ -27,39 +26,6 @@ test('normalizes invalid refresh settings back to safe defaults', () => {
       backgroundThrottleEnabled: true,
     }
   )
-})
-
-test('maps active scopes to only the dynamic metrics they need', () => {
-  assert.deepEqual(getDynamicMetricRequirementsForScopes(['overview']), {
-    cpuTemp: true,
-    cpuLoad: true,
-    cpuLoadDetail: false,
-    cpuSpeed: true,
-    cpuAux: false,
-    gpu: true,
-    memory: true,
-    disk: true,
-    time: true,
-  })
-
-  assert.deepEqual(getDynamicMetricRequirementsForScopes(['processor']), {
-    cpuTemp: true,
-    cpuLoad: true,
-    cpuLoadDetail: true,
-    cpuSpeed: true,
-    cpuAux: true,
-    gpu: false,
-    memory: false,
-    disk: false,
-    time: true,
-  })
-})
-
-test('merges multiple active scopes without enabling unrelated heavy metrics in the background', () => {
-  const requirements = getDynamicMetricRequirementsForScopes(['overview', 'storage'])
-  assert.equal(requirements.cpuLoad, true)
-  assert.equal(requirements.disk, true)
-  assert.equal(requirements.cpuAux, false)
 })
 
 test('applies stronger throttling when the window is in the background', () => {

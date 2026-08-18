@@ -43,7 +43,7 @@ test('production child windows load real packaged HTML paths without hash suffix
   assert.doesNotMatch(source, /watch\.html#\$\{windowHash\}/)
 })
 
-test('fallback child window creation receives watch window options', () => {
+test('fallback child window creation receives watch window options and keeps current-window controls functional', () => {
   const windowService = readSource('utools/services/window.js')
   const electronMain = readSource('electron/main/index.ts')
 
@@ -54,6 +54,16 @@ test('fallback child window creation receives watch window options', () => {
   assert.match(electronMain, /transparent:\s*Boolean\(options\.transparent\)/)
   assert.match(electronMain, /width:\s*options\.width/)
   assert.match(electronMain, /height:\s*options\.height/)
+
+  assert.match(windowService, /ipcRenderer\.send\('window-action', 'resize', \{ width, height \}\)/)
+  assert.match(windowService, /ipcRenderer\.send\('window-action', 'close'\)/)
+  assert.match(windowService, /ipcRenderer\.send\('window-action', 'always-on-top', \{ flag \}\)/)
+  assert.doesNotMatch(windowService, /window\.resizeTo\(/)
+  assert.doesNotMatch(windowService, /window\.close\(\)/)
+
+  assert.match(electronMain, /if \(action === 'resize'\)[\s\S]*targetWindow\.setContentSize\(/)
+  assert.match(electronMain, /if \(action === 'close'\)[\s\S]*targetWindow\.close\(\)/)
+  assert.match(electronMain, /if \(action === 'always-on-top'\)[\s\S]*targetWindow\.setAlwaysOnTop\(/)
 })
 
 test('build script generates a super-lite watch alias rather than a second app', () => {

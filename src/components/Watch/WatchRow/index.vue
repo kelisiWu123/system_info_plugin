@@ -54,23 +54,20 @@ defineProps<{
 .watch-metric-card {
   --watch-card-accent: #35b6ff;
   --watch-card-border: rgba(102, 124, 161, 0.28);
-  --watch-card-icon-bg: rgba(255, 255, 255, 0.05);
+  --watch-card-icon-bg: var(--watch-muted-surface);
   --watch-card-side-width: 82px;
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) var(--watch-card-side-width);
   align-items: stretch;
   gap: 8px;
   min-height: 82px;
-  padding: 9px 10px;
+  padding: 7px 10px;
   border: 1px solid var(--watch-card-border);
   border-radius: 8px;
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--watch-card-accent) 16%, transparent), transparent 42%),
-    linear-gradient(180deg, rgba(22, 34, 53, 0.95), rgba(17, 27, 42, 0.95)),
-    rgba(17, 27, 42, 0.94);
+  background: var(--watch-card-background);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 18px 32px rgba(1, 7, 18, 0.22);
+    inset 0 1px 0 var(--surface-inset-highlight),
+    var(--shadow-watch);
 }
 
 .watch-metric-card--cpu {
@@ -96,10 +93,8 @@ defineProps<{
   height: 40px;
   align-self: center;
   border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03)),
-    var(--watch-card-icon-bg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: var(--watch-card-icon-background);
+  box-shadow: inset 0 1px 0 var(--surface-inset-highlight);
 }
 
 .watch-metric-card__main {
@@ -108,7 +103,7 @@ defineProps<{
   grid-template-rows: auto auto auto;
   align-items: end;
   column-gap: 8px;
-  row-gap: 4px;
+  row-gap: 3px;
   min-width: 0;
 }
 
@@ -120,21 +115,21 @@ defineProps<{
 }
 
 .watch-metric-card__title {
-  color: #f5f8ff;
+  color: var(--text-watch);
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
 }
 
 .watch-metric-card__subtitle {
-  color: rgba(190, 202, 222, 0.78);
+  color: var(--text-watch-muted);
   font-size: 10px;
   line-height: 1.2;
 }
 
 .watch-metric-card__value {
   grid-column: 1;
-  color: #ffffff;
+  color: var(--text-watch);
   font-size: 20px;
   font-weight: 700;
   line-height: 1;
@@ -158,6 +153,6 @@ defineProps<{
   gap: 7px;
   min-width: 0;
   padding-left: 10px;
-  border-left: 1px solid rgba(96, 115, 146, 0.24);
+  border-left: 1px solid var(--panel-border-soft);
 }
 </style>

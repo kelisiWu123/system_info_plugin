@@ -49,9 +49,7 @@ defineEmits<{
   padding: 28px;
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background:
-    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
-    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  background: var(--surface-card-background);
   box-shadow: var(--panel-shadow);
   text-align: center;
 }
@@ -64,7 +62,7 @@ defineEmits<{
   height: 42px;
   border: 1px solid var(--panel-border-soft);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--surface-soft-background);
   color: var(--accent-cyan);
   font-size: 18px;
   font-weight: 800;

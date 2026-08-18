@@ -1,6 +1,5 @@
 import { computed, reactive, ref } from 'vue'
 import {
-  DEFAULT_MONITORING_REFRESH_SETTINGS,
   appendMetricHistory,
   createMonitoringDiagnostics,
   getMonitoringRefreshIntervals,
@@ -16,7 +15,6 @@ type GraphicsServiceKey = 'gpuInfo' | 'displaysData' | 'boardData' | 'biosData' 
 const loading = ref(true)
 const initialized = ref(false)
 const lastSyncedAt = ref<number>()
-const monitoringRefreshSettings = ref<MonitoringRefreshSettingsData>({ ...DEFAULT_MONITORING_REFRESH_SETTINGS })
 const backgroundThrottled = ref(false)
 
 const gpuData = ref<GpuData[]>([])
@@ -44,7 +42,6 @@ const fetchState = reactive<Record<GraphicsServiceKey, { status: FetchStatus; no
 const primaryGpu = computed(() => selectPrimaryGpu(gpuData.value))
 
 let initPromise: Promise<void> | undefined
-let refreshSettingsPromise: Promise<void> | undefined
 let refreshInFlight: Promise<void> | undefined
 let pollingTimerId: number | undefined
 let subscriberCount = 0
@@ -58,7 +55,7 @@ function setFetchState(key: GraphicsServiceKey, status: FetchStatus, note = '') 
 }
 
 function getCurrentRefreshIntervals() {
-  return getMonitoringRefreshIntervals(monitoringRefreshSettings.value.profile, backgroundThrottled.value)
+  return getMonitoringRefreshIntervals('balanced', backgroundThrottled.value)
 }
 
 function hasActiveRefreshIntervals() {
@@ -100,7 +97,7 @@ function restartPolling() {
 }
 
 function updateBackgroundThrottled() {
-  const nextValue = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
+  const nextValue = resolveMonitoringBackgroundThrottled(true)
   if (backgroundThrottled.value === nextValue) return
   backgroundThrottled.value = nextValue
   restartPolling()
@@ -108,24 +105,7 @@ function updateBackgroundThrottled() {
 
 function syncMonitoringVisibility() {
   visibilityListenersBound = bindMonitoringVisibilityListeners(visibilityListenersBound, updateBackgroundThrottled)
-  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
-}
-
-async function ensureMonitoringRefreshSettingsLoaded() {
-  if (refreshSettingsPromise) return refreshSettingsPromise
-
-  refreshSettingsPromise = (async () => {
-    try {
-      monitoringRefreshSettings.value = await window.services.getMonitoringRefreshSettings()
-    } catch {
-      monitoringRefreshSettings.value = { ...DEFAULT_MONITORING_REFRESH_SETTINGS }
-    }
-    backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
-  })().finally(() => {
-    refreshSettingsPromise = undefined
-  })
-
-  return refreshSettingsPromise
+  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(true)
 }
 
 async function refreshGraphicsDynamicMetrics(force = false) {
@@ -233,7 +213,6 @@ export async function activateGraphicsHardwareStore() {
     await initPromise
   }
 
-  await ensureMonitoringRefreshSettingsLoaded()
   startPolling()
 }
 
@@ -275,7 +254,6 @@ export const graphicsHardwareStore = {
   osInfo,
   metricHistory,
   fetchState,
-  monitoringRefreshSettings,
   backgroundThrottled,
   diagnostics: diagnostics.state,
   primaryGpu,

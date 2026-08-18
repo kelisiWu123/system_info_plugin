@@ -21,13 +21,17 @@ const windowPresets = {
     prod: { height: 200, width: 200, backgroundColor: 0 },
     dev: { height: 200, width: 200, backgroundColor: 0 },
   },
+  a_monitor: {
+    prod: { height: 820, width: 1180, backgroundColor: 1 },
+    dev: { height: 860, width: 1240, backgroundColor: 1 },
+  },
   a_computer: {
     prod: { height: 860, width: 1380, backgroundColor: 1 },
     dev: { height: 900, width: 1440, backgroundColor: 1 },
   },
   a_specs_lite: {
-    prod: { height: 640, width: 960, backgroundColor: 1 },
-    dev: { height: 660, width: 1000, backgroundColor: 1 },
+    prod: { height: 720, width: 1080, backgroundColor: 1 },
+    dev: { height: 760, width: 1120, backgroundColor: 1 },
   },
 }
 
@@ -55,7 +59,7 @@ window.exports = {
     mode: 'none',
     args: {
       enter: () => {
-        openPresetWindow('a_watch')
+        openPresetWindow('a_monitor')
       },
     },
   },

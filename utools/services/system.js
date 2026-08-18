@@ -27,6 +27,7 @@ const MAC_POWERMETRICS_HELPER_SOCKET_PATH = '/var/run/hwinfox-powermetrics-helpe
 const HARDWARE_SENSOR_SETTINGS_STORAGE_KEY = 'hardwareSensorSettings'
 const MONITORING_REFRESH_SETTINGS_STORAGE_KEY = 'monitoringRefreshSettings'
 const FLOATING_MONITOR_SETTINGS_STORAGE_KEY = 'floatingMonitorSettings'
+const APP_THEME_SETTINGS_STORAGE_KEY = 'appThemeSettings'
 const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
   enhancedSensorEnabled: false,
   openHardwareMonitorAutoStart: false,
@@ -42,10 +43,16 @@ const DEFAULT_FLOATING_MONITOR_SETTINGS = {
   standardSize: { width: 432, height: 398 },
   superLiteSize: { width: 200, height: 200 },
 }
+const DEFAULT_APP_THEME_SETTINGS = {
+  preference: 'system',
+}
 const OPEN_HARDWARE_MONITOR_PROCESS_NAME = 'OpenHardwareMonitor.exe'
 const OPEN_HARDWARE_MONITOR_WMI_NAMESPACE = 'root\\OpenHardwareMonitor'
 const OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS = 1500
 const OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS = 15000
+const OPEN_HARDWARE_MONITOR_START_LOCK_STALE_MS = 30000
+const OPEN_HARDWARE_MONITOR_START_WAIT_MS = 7000
+const OPEN_HARDWARE_MONITOR_START_POLL_MS = 350
 const CPU_CLOCK_ANOMALY_MAX_GHZ = 7.5
 const CPU_CLOCK_SPEEDMAX_TOLERANCE_GHZ = 0.5
 const CPU_CLOCK_OUTLIER_DELTA_GHZ = 1.0
@@ -58,11 +65,6 @@ const MAC_MEMORY_PRESSURE_FALLBACK = {
   rawLevel: null,
   availablePercent: null,
   source: 'fallback',
-}
-
-const emptyNetworkStats = {
-  rx_sec: 0,
-  tx_sec: 0,
 }
 
 const emptyCurrentLoadData = {
@@ -86,13 +88,23 @@ const emptyCurrentLoadData = {
   cpus: [],
 }
 
+const OPEN_HARDWARE_MONITOR_TELEMETRY_CACHE_KEYS = [
+  'cpuTemperature',
+  'cpuPower',
+  'cpuCurrentSpeed',
+  'cpuVoltage',
+  'gpuInfo',
+]
+
 let openHardwareMonitorLastStartAt = 0
 let openHardwareMonitorStartPromise
 let openHardwareMonitorManagedPid = null
+let openHardwareMonitorKnownRunning = false
 let configuredPluginRoot = ''
 let configuredUtoolsRuntime
 const runtimeServiceCache = new Map()
 const runtimeServicePromiseCache = new Map()
+const runtimeServiceCacheRevision = new Map()
 
 async function readSystemInfo(label, fallback, reader) {
   try {
@@ -107,31 +119,61 @@ function isRuntimeCacheFresh(entry, maxAgeMs) {
   return Boolean(entry && Number.isFinite(entry.cachedAt) && Date.now() - entry.cachedAt < maxAgeMs)
 }
 
+function getRuntimeServiceCacheRevision(cacheKey) {
+  return runtimeServiceCacheRevision.get(cacheKey) || 0
+}
+
+function invalidateRuntimeServiceCache(...cacheKeyInputs) {
+  const cacheKeys = cacheKeyInputs.flat().filter((cacheKey) => typeof cacheKey === 'string' && cacheKey)
+  for (const cacheKey of cacheKeys) {
+    runtimeServiceCacheRevision.set(cacheKey, getRuntimeServiceCacheRevision(cacheKey) + 1)
+    runtimeServiceCache.delete(cacheKey)
+    runtimeServicePromiseCache.delete(cacheKey)
+  }
+}
+
+function recordOpenHardwareMonitorRunningState(running) {
+  const nextRunning = Boolean(running)
+  if (nextRunning !== openHardwareMonitorKnownRunning) {
+    invalidateRuntimeServiceCache(OPEN_HARDWARE_MONITOR_TELEMETRY_CACHE_KEYS)
+    openHardwareMonitorKnownRunning = nextRunning
+  }
+  return nextRunning
+}
+
 async function readCachedServiceValue(cacheKey, maxAgeMs, reader) {
+  const revision = getRuntimeServiceCacheRevision(cacheKey)
   const memoryEntry = runtimeServiceCache.get(cacheKey)
   if (isRuntimeCacheFresh(memoryEntry, maxAgeMs)) {
     return memoryEntry.value
   }
 
-  const runningPromise = runtimeServicePromiseCache.get(cacheKey)
-  if (runningPromise) {
-    return runningPromise
+  const runningEntry = runtimeServicePromiseCache.get(cacheKey)
+  if (runningEntry?.revision === revision) {
+    return runningEntry.promise
   }
 
   const nextPromise = (async () => {
     const value = await reader()
-    const entry = {
-      cachedAt: Date.now(),
-      value,
+    if (getRuntimeServiceCacheRevision(cacheKey) === revision) {
+      const entry = {
+        cachedAt: Date.now(),
+        value,
+      }
+      runtimeServiceCache.set(cacheKey, entry)
     }
-    runtimeServiceCache.set(cacheKey, entry)
     return value
-  })().finally(() => {
-    runtimeServicePromiseCache.delete(cacheKey)
-  })
+  })()
+  const nextEntry = { revision, promise: nextPromise }
 
-  runtimeServicePromiseCache.set(cacheKey, nextPromise)
-  return nextPromise
+  runtimeServicePromiseCache.set(cacheKey, nextEntry)
+  try {
+    return await nextPromise
+  } finally {
+    if (runtimeServicePromiseCache.get(cacheKey) === nextEntry) {
+      runtimeServicePromiseCache.delete(cacheKey)
+    }
+  }
 }
 
 export function configureSystemServiceContext({ pluginRoot, utools } = {}) {
@@ -303,13 +345,6 @@ function attachCpuCurrentSpeedDiagnostics(speed, { cpuSpeedMaxGhz } = {}) {
     ...speed,
     frequencyDiagnostics: buildCpuCurrentSpeedDiagnostics(speed, { cpuSpeedMaxGhz }),
   }
-}
-
-function invalidateRuntimeServiceCache(...cacheKeys) {
-  cacheKeys.forEach((cacheKey) => {
-    runtimeServiceCache.delete(cacheKey)
-    runtimeServicePromiseCache.delete(cacheKey)
-  })
 }
 
 function shellQuote(value) {
@@ -640,30 +675,6 @@ function roundFanSpeed(value) {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null
 }
 
-function buildBoardMetric(unit, value = null, source = 'unsupported', sensorName = undefined, max = null) {
-  return {
-    value,
-    source,
-    sensorName,
-    unit,
-    max,
-  }
-}
-
-function createEmptyBoardTelemetry() {
-  return {
-    boardTemperature: buildBoardMetric('°C'),
-    vrmTemperature: buildBoardMetric('°C'),
-    chipsetTemperature: buildBoardMetric('°C'),
-    systemFan: buildBoardMetric('RPM'),
-    voltage12V: buildBoardMetric('V'),
-    voltage5V: buildBoardMetric('V'),
-    voltage3V: buildBoardMetric('V'),
-    voltageVBat: buildBoardMetric('V'),
-    pchVoltage: buildBoardMetric('V'),
-  }
-}
-
 function normalizeSensorText(sensor) {
   return `${sensor.name} ${sensor.identifier} ${sensor.parent}`.toLowerCase()
 }
@@ -784,6 +795,42 @@ function writeFloatingMonitorSettingsRaw(value) {
   }
 }
 
+function readAppThemeSettingsRaw() {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.getItem) {
+    return storage.getItem(APP_THEME_SETTINGS_STORAGE_KEY)
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const value = localStorage.getItem(APP_THEME_SETTINGS_STORAGE_KEY)
+      return value ? JSON.parse(value) : null
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+function writeAppThemeSettingsRaw(value) {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.setItem) {
+    storage.setItem(APP_THEME_SETTINGS_STORAGE_KEY, value)
+    return
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(APP_THEME_SETTINGS_STORAGE_KEY, JSON.stringify(value))
+    } catch {
+      // ignore storage fallback failures
+    }
+  }
+}
+
 function normalizeHardwareSensorSettings(input) {
   const portCandidate = Number(input?.openHardwareMonitorPort)
   const port = Number.isInteger(portCandidate) && portCandidate >= 1 && portCandidate <= 65535
@@ -824,6 +871,14 @@ function normalizeFloatingMonitorSettings(input = {}) {
   }
 }
 
+function normalizeAppThemeSettings(input = {}) {
+  const preference = input?.preference === 'light' || input?.preference === 'dark'
+    ? input.preference
+    : DEFAULT_APP_THEME_SETTINGS.preference
+
+  return { preference }
+}
+
 function getHardwareSensorSettings() {
   if (!isWindows() && !isMacOS()) {
     return normalizeHardwareSensorSettings(getDefaultHardwareSensorSettings())
@@ -841,6 +896,10 @@ function getMonitoringRefreshSettings() {
 
 function getFloatingMonitorSettings() {
   return normalizeFloatingMonitorSettings(readFloatingMonitorSettingsRaw() || {})
+}
+
+function getAppThemeSettings() {
+  return normalizeAppThemeSettings(readAppThemeSettingsRaw() || {})
 }
 
 async function stopPluginManagedOpenHardwareMonitor() {
@@ -894,8 +953,13 @@ async function updateHardwareSensorSettings(patch = {}) {
   })
   writeHardwareSensorSettingsRaw(next)
 
+  if (isWindows() && previous.enhancedSensorEnabled !== next.enhancedSensorEnabled) {
+    invalidateRuntimeServiceCache(OPEN_HARDWARE_MONITOR_TELEMETRY_CACHE_KEYS)
+  }
+
   if (isWindows() && previous.enhancedSensorEnabled && !next.enhancedSensorEnabled) {
     await stopPluginManagedOpenHardwareMonitor()
+    recordOpenHardwareMonitorRunningState(false)
   }
 
   return next
@@ -916,6 +980,15 @@ function updateFloatingMonitorSettings(patch = {}) {
     ...patch,
   })
   writeFloatingMonitorSettingsRaw(next)
+  return next
+}
+
+function updateAppThemeSettings(patch = {}) {
+  const next = normalizeAppThemeSettings({
+    ...getAppThemeSettings(),
+    ...patch,
+  })
+  writeAppThemeSettingsRaw(next)
   return next
 }
 
@@ -989,40 +1062,6 @@ function isGpuSensor(sensor) {
     haystack.includes('radeon') ||
     haystack.includes('amd') ||
     haystack.includes('intel graphics')
-  )
-}
-
-const BOARD_SENSOR_EXCLUSION_TERMS = [
-  'cpu',
-  'gpu',
-  'ssd',
-  'hdd',
-  'nvme',
-  'acpi thermal zone',
-  'thermal zone',
-]
-
-function isBoardTelemetrySensor(sensor) {
-  const haystack = normalizeSensorText(sensor)
-  if (BOARD_SENSOR_EXCLUSION_TERMS.some((term) => haystack.includes(term))) return false
-
-  return (
-    haystack.includes('motherboard') ||
-    haystack.includes('mainboard') ||
-    haystack.includes('system') ||
-    haystack.includes('board') ||
-    haystack.includes('vrm') ||
-    haystack.includes('mos') ||
-    haystack.includes('pch') ||
-    haystack.includes('chipset') ||
-    haystack.includes('12v') ||
-    haystack.includes('5v') ||
-    haystack.includes('3.3v') ||
-    haystack.includes('3vcc') ||
-    haystack.includes('vbat') ||
-    haystack.includes('battery') ||
-    haystack.includes('chassis') ||
-    haystack.includes('case fan')
   )
 }
 
@@ -1248,71 +1287,6 @@ function scoreGpuPowerSensor(sensor) {
   if (haystack.includes('total')) return 95
   if (haystack.includes('power')) return 90
   return 50
-}
-
-function scoreBoardTemperatureSensor(sensor, target) {
-  const haystack = normalizeSensorText(sensor)
-
-  if (target === 'board') {
-    if (haystack.includes('motherboard')) return 130
-    if (haystack.includes('mainboard')) return 126
-    if (haystack.includes('system')) return 118
-    if (haystack.includes('board')) return 112
-  }
-
-  if (target === 'vrm') {
-    if (haystack.includes('vrm mos')) return 134
-    if (haystack.includes('vrm')) return 130
-    if (haystack.includes('mos')) return 118
-  }
-
-  if (target === 'chipset') {
-    if (haystack.includes('chipset')) return 132
-    if (haystack.includes('pch')) return 128
-    if (haystack.includes('southbridge')) return 120
-  }
-
-  return 0
-}
-
-function scoreBoardVoltageSensor(sensor, target) {
-  const haystack = normalizeSensorText(sensor)
-
-  if (target === '12v') {
-    if (haystack.includes('12v')) return 130
-  }
-
-  if (target === '5v') {
-    if (haystack.includes('5v')) return 130
-  }
-
-  if (target === '3v') {
-    if (haystack.includes('3.3v')) return 132
-    if (haystack.includes('3vcc')) return 128
-    if (haystack.includes('3v')) return 118
-  }
-
-  if (target === 'vbat') {
-    if (haystack.includes('vbat')) return 132
-    if (haystack.includes('battery')) return 120
-  }
-
-  if (target === 'pch') {
-    if (haystack.includes('pch')) return 132
-    if (haystack.includes('chipset')) return 122
-  }
-
-  return 0
-}
-
-function scoreBoardFanSensor(sensor) {
-  const haystack = normalizeSensorText(sensor)
-  if (haystack.includes('system fan')) return 132
-  if (haystack.includes('chassis')) return 126
-  if (haystack.includes('case fan')) return 122
-  if (haystack.includes('system')) return 114
-  if (haystack.includes('fan')) return 90
-  return 0
 }
 
 async function queryHardwareMonitorSensors(namespace, sensorType) {
@@ -1648,6 +1622,148 @@ async function isProcessRunning(processName) {
   }
 }
 
+async function isOpenHardwareMonitorHttpReachable(port) {
+  if (!isWindows() || typeof fetch !== 'function') return false
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : undefined
+  const timer = controller
+    ? setTimeout(() => controller.abort(), OPEN_HARDWARE_MONITOR_HTTP_TIMEOUT_MS)
+    : undefined
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/data.json`, {
+      signal: controller?.signal,
+    })
+    await response.body?.cancel?.()
+    return response.ok
+  } catch {
+    return false
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function isOpenHardwareMonitorRunning(settings = getHardwareSensorSettings()) {
+  if (!isWindows()) return false
+  if (await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)) {
+    return recordOpenHardwareMonitorRunningState(true)
+  }
+  return recordOpenHardwareMonitorRunningState(
+    await isOpenHardwareMonitorHttpReachable(settings.openHardwareMonitorPort)
+  )
+}
+
+function getOpenHardwareMonitorStateDirectory() {
+  if (!isWindows()) return ''
+
+  const userDataPath = getUtoolsRuntime()?.getPath?.('userData')
+  if (!userDataPath) return ''
+
+  return path.join(userDataPath, 'system-info-plugin')
+}
+
+function getOpenHardwareMonitorStartLockPath() {
+  const stateDirectory = getOpenHardwareMonitorStateDirectory()
+  return stateDirectory ? path.join(stateDirectory, 'openhardwaremonitor-start.lock') : ''
+}
+
+function getOpenHardwareMonitorStartCooldownPath() {
+  const stateDirectory = getOpenHardwareMonitorStateDirectory()
+  return stateDirectory ? path.join(stateDirectory, 'openhardwaremonitor-start.timestamp') : ''
+}
+
+function readOpenHardwareMonitorSharedLastStartAt() {
+  const cooldownPath = getOpenHardwareMonitorStartCooldownPath()
+  if (!cooldownPath) return 0
+
+  try {
+    const value = Number(fs.readFileSync(cooldownPath, 'utf8').trim())
+    return Number.isFinite(value) && value > 0 ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function markOpenHardwareMonitorStartAttempt(startedAt = Date.now()) {
+  openHardwareMonitorLastStartAt = startedAt
+
+  const cooldownPath = getOpenHardwareMonitorStartCooldownPath()
+  if (!cooldownPath) return
+
+  try {
+    fs.mkdirSync(path.dirname(cooldownPath), { recursive: true })
+    fs.writeFileSync(cooldownPath, String(startedAt), 'utf8')
+  } catch {
+    // in-memory cooldown still protects the current preload context
+  }
+}
+
+function acquireOpenHardwareMonitorStartLock() {
+  const lockPath = getOpenHardwareMonitorStartLockPath()
+  if (!lockPath) {
+    return { acquired: true, lockPath: '', fileHandle: null }
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+  } catch {
+    return { acquired: true, lockPath: '', fileHandle: null }
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fileHandle = fs.openSync(lockPath, 'wx')
+      fs.writeFileSync(fileHandle, `${process.pid}:${Date.now()}`)
+      return { acquired: true, lockPath, fileHandle }
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        return { acquired: true, lockPath: '', fileHandle: null }
+      }
+
+      try {
+        const stat = fs.statSync(lockPath)
+        if (Date.now() - stat.mtimeMs <= OPEN_HARDWARE_MONITOR_START_LOCK_STALE_MS) {
+          return { acquired: false, lockPath, fileHandle: null }
+        }
+        fs.unlinkSync(lockPath)
+      } catch {
+        return { acquired: false, lockPath, fileHandle: null }
+      }
+    }
+  }
+
+  return { acquired: false, lockPath, fileHandle: null }
+}
+
+function releaseOpenHardwareMonitorStartLock(lock) {
+  if (!lock?.lockPath) return
+
+  try {
+    if (lock.fileHandle !== null && lock.fileHandle !== undefined) {
+      fs.closeSync(lock.fileHandle)
+    }
+  } catch {
+    // best effort only
+  }
+
+  try {
+    fs.unlinkSync(lock.lockPath)
+  } catch {
+    // best effort only
+  }
+}
+
+async function waitForOpenHardwareMonitorRunning(settings, timeoutMs = OPEN_HARDWARE_MONITOR_START_WAIT_MS) {
+  const deadline = Date.now() + timeoutMs
+
+  do {
+    if (await isOpenHardwareMonitorRunning(settings)) return true
+    await new Promise((resolve) => setTimeout(resolve, OPEN_HARDWARE_MONITOR_START_POLL_MS))
+  } while (Date.now() < deadline)
+
+  return false
+}
+
 function buildOpenHardwareMonitorStatusResult(overrides = {}) {
   const settings = overrides.settings || getHardwareSensorSettings()
   const resolved = overrides.resolved || resolveOpenHardwareMonitorExecutable()
@@ -1683,7 +1799,7 @@ async function getOpenHardwareMonitorStatus() {
 
   const executablePath = resolved.runtimeExecutablePath
   const executableExists = resolved.runtimeExists
-  const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+  const running = recordOpenHardwareMonitorRunningState(await isOpenHardwareMonitorRunning(settings))
 
   return buildOpenHardwareMonitorStatusResult({
     settings,
@@ -1758,9 +1874,10 @@ async function startBundledOpenHardwareMonitor() {
   }
 }
 
-async function ensureOpenHardwareMonitorRunning() {
+async function ensureOpenHardwareMonitorRunning(options = {}) {
   const settings = getHardwareSensorSettings()
   const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
+  const allowStartWithoutAutoStart = Boolean(options.allowStartWithoutAutoStart)
 
   if (!isWindows()) {
     return buildOpenHardwareMonitorStatusResult({
@@ -1770,53 +1887,116 @@ async function ensureOpenHardwareMonitorRunning() {
     })
   }
 
-  const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
+  const running = await isOpenHardwareMonitorRunning(settings)
   if (running) {
     return buildOpenHardwareMonitorStatusResult({
-        settings,
-        resolved,
-        running: true,
-        executableExists: resolved.runtimeExists,
-        executableDirectory: resolved.runtimeDirectoryPath,
-        executablePath: resolved.runtimeExecutablePath,
-      })
+      settings,
+      resolved,
+      running: true,
+      executableExists: resolved.runtimeExists,
+      executableDirectory: resolved.runtimeDirectoryPath,
+      executablePath: resolved.runtimeExecutablePath,
+    })
   }
 
-  if (!settings.enhancedSensorEnabled || !settings.openHardwareMonitorAutoStart) {
+  if (!settings.enhancedSensorEnabled) {
     return buildOpenHardwareMonitorStatusResult({
-        settings,
-        resolved,
-        running: false,
-        executableExists: resolved.runtimeExists,
-        executableDirectory: resolved.runtimeDirectoryPath,
-        executablePath: resolved.runtimeExecutablePath,
-        reason: resolved.runtimeExists ? 'OHM_AUTOSTART_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
-        suggestion: '启用 OpenHardwareMonitor 支持后，可再开启自动启动',
-      })
+      settings,
+      resolved,
+      running: false,
+      executableExists: resolved.runtimeExists,
+      executableDirectory: resolved.runtimeDirectoryPath,
+      executablePath: resolved.runtimeExecutablePath,
+      reason: resolved.runtimeExists ? 'ENHANCED_SENSOR_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
+      suggestion: '请先启用 OpenHardwareMonitor 支持',
+    })
   }
 
-  const now = Date.now()
+  if (!settings.openHardwareMonitorAutoStart && !allowStartWithoutAutoStart) {
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: false,
+      executableExists: resolved.runtimeExists,
+      executableDirectory: resolved.runtimeDirectoryPath,
+      executablePath: resolved.runtimeExecutablePath,
+      reason: resolved.runtimeExists ? 'OHM_AUTOSTART_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
+      suggestion: 'OpenHardwareMonitor 自动启动已关闭',
+    })
+  }
+
   if (openHardwareMonitorStartPromise) {
     return openHardwareMonitorStartPromise
   }
 
-  if (now - openHardwareMonitorLastStartAt < OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS) {
+  const now = Date.now()
+  const lastStartAt = Math.max(openHardwareMonitorLastStartAt, readOpenHardwareMonitorSharedLastStartAt())
+  if (now - lastStartAt < OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS) {
+    const runningAfterCooldownCheck = await isOpenHardwareMonitorRunning(settings)
     return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: runningAfterCooldownCheck,
+      executableExists: resolved.runtimeExists,
+      executableDirectory: resolved.runtimeDirectoryPath,
+      executablePath: resolved.runtimeExecutablePath,
+      reason: runningAfterCooldownCheck ? undefined : 'OHM_START_COOLDOWN',
+      suggestion: runningAfterCooldownCheck ? undefined : '刚刚尝试过启动 OpenHardwareMonitor，请稍后再试',
+    })
+  }
+
+  const startLock = acquireOpenHardwareMonitorStartLock()
+  if (!startLock.acquired) {
+    const runningAfterWait = await waitForOpenHardwareMonitorRunning(settings)
+    return buildOpenHardwareMonitorStatusResult({
+      settings,
+      resolved,
+      running: runningAfterWait,
+      executableExists: resolved.runtimeExists,
+      executableDirectory: resolved.runtimeDirectoryPath,
+      executablePath: resolved.runtimeExecutablePath,
+      reason: runningAfterWait ? undefined : 'OHM_START_IN_PROGRESS',
+      suggestion: runningAfterWait ? undefined : '另一个窗口正在启动 OpenHardwareMonitor，请稍后再试',
+    })
+  }
+
+  openHardwareMonitorStartPromise = (async () => {
+    try {
+      if (await isOpenHardwareMonitorRunning(settings)) {
+        return buildOpenHardwareMonitorStatusResult({
+          settings,
+          resolved,
+          running: true,
+          executableExists: resolved.runtimeExists,
+          executableDirectory: resolved.runtimeDirectoryPath,
+          executablePath: resolved.runtimeExecutablePath,
+        })
+      }
+
+      markOpenHardwareMonitorStartAttempt()
+      const startResult = await startBundledOpenHardwareMonitor()
+      if (!startResult.started) {
+        return startResult
+      }
+
+      const startedRunning = await waitForOpenHardwareMonitorRunning(settings)
+      return buildOpenHardwareMonitorStatusResult({
         settings,
         resolved,
-        running: false,
+        running: startedRunning,
         executableExists: resolved.runtimeExists,
         executableDirectory: resolved.runtimeDirectoryPath,
         executablePath: resolved.runtimeExecutablePath,
-        reason: 'OHM_START_COOLDOWN',
-        suggestion: '刚刚尝试过启动 OpenHardwareMonitor，请稍后再试',
+        started: startedRunning,
+        reason: startedRunning ? undefined : 'OHM_START_FAILED',
+        suggestion: startedRunning ? undefined : '插件尝试启动失败。请手动打开一次 OpenHardwareMonitor，确认没有被权限或安全软件拦截。',
       })
-  }
-
-  openHardwareMonitorStartPromise = Promise.resolve(startBundledOpenHardwareMonitor())
-    .finally(() => {
-      openHardwareMonitorStartPromise = undefined
-    })
+    } finally {
+      releaseOpenHardwareMonitorStartLock(startLock)
+    }
+  })().finally(() => {
+    openHardwareMonitorStartPromise = undefined
+  })
 
   return openHardwareMonitorStartPromise
 }
@@ -1987,60 +2167,7 @@ async function readOpenHardwareMonitorHttp(port = DEFAULT_HARDWARE_SENSOR_SETTIN
 }
 
 async function startOpenHardwareMonitorManually() {
-  const settings = getHardwareSensorSettings()
-  const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
-
-  if (!isWindows()) {
-    return buildOpenHardwareMonitorStatusResult({
-      settings,
-      resolved,
-      reason: 'NOT_WINDOWS',
-    })
-  }
-
-  if (!settings.enhancedSensorEnabled) {
-    return buildOpenHardwareMonitorStatusResult({
-        settings,
-        resolved,
-        executableExists: resolved.runtimeExists,
-        executableDirectory: resolved.runtimeDirectoryPath,
-        executablePath: resolved.runtimeExecutablePath,
-        reason: resolved.runtimeExists ? 'ENHANCED_SENSOR_DISABLED' : (resolved.reason || 'OHM_EXE_NOT_FOUND'),
-        suggestion: '请先启用 OpenHardwareMonitor 支持',
-      })
-  }
-
-  const running = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
-  if (running) {
-    return buildOpenHardwareMonitorStatusResult({
-      settings,
-      resolved,
-      running: true,
-      executableExists: resolved.runtimeExists,
-      executableDirectory: resolved.runtimeDirectoryPath,
-      executablePath: resolved.runtimeExecutablePath,
-    })
-  }
-
-  const startResult = await startBundledOpenHardwareMonitor()
-  if (!startResult.started) {
-    return startResult
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, 1200))
-  const startedRunning = await isProcessRunning(OPEN_HARDWARE_MONITOR_PROCESS_NAME)
-
-  return buildOpenHardwareMonitorStatusResult({
-    settings,
-    resolved,
-    running: startedRunning,
-    executableExists: resolved.runtimeExists,
-    executableDirectory: resolved.runtimeDirectoryPath,
-    executablePath: resolved.runtimeExecutablePath,
-    started: startedRunning,
-    reason: startedRunning ? undefined : 'OHM_START_FAILED',
-    suggestion: startedRunning ? undefined : '插件尝试启动失败。请手动打开一次 OpenHardwareMonitor，确认没有被权限或安全软件拦截。',
-  })
+  return ensureOpenHardwareMonitorRunning({ allowStartWithoutAutoStart: true })
 }
 
 async function openOpenHardwareMonitorDirectory() {
@@ -2305,70 +2432,6 @@ async function getHardwareMonitorCpuCurrentSpeedFromNamespace(namespace, cpuInfo
 
 async function getHardwareMonitorCpuCurrentSpeed(cpuInfo) {
   return getHardwareMonitorCpuCurrentSpeedFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE, cpuInfo)
-}
-
-function pickBestBoardSensor(sensors, scorer, rounder, unit) {
-  if (!sensors.length) {
-    return buildBoardMetric(unit)
-  }
-
-  const scored = sensors
-    .map((sensor) => ({
-      sensor,
-      score: scorer(sensor),
-    }))
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score)
-
-  if (!scored.length) {
-    return buildBoardMetric(unit)
-  }
-
-  const { sensor } = scored[0]
-  const values = sensors.map((item) => item.value).filter((value) => typeof value === 'number')
-  return buildBoardMetric(
-    unit,
-    rounder(sensor.value),
-    'OpenHardwareMonitor',
-    sensor.name,
-    values.length
-      ? unit === 'RPM'
-        ? roundFanSpeed(Math.max(...values))
-        : unit === 'V'
-          ? roundVoltage(Math.max(...values))
-          : roundTemperature(Math.max(...values))
-      : null
-  )
-}
-
-async function getBoardTelemetry() {
-  const [temperatureSensors, voltageSensors, fanSensors] = await Promise.all([
-    getHardwareMonitorSensors('Temperature'),
-    getHardwareMonitorSensors('Voltage'),
-    getHardwareMonitorSensors('Fan'),
-  ])
-
-  const candidateTemperatures = temperatureSensors.filter(isBoardTelemetrySensor)
-  const candidateVoltages = voltageSensors.filter(isBoardTelemetrySensor)
-  const candidateFans = fanSensors.filter((sensor) => {
-    const haystack = normalizeSensorText(sensor)
-    if (haystack.includes('cpu') || haystack.includes('gpu') || haystack.includes('pump')) return false
-    return isBoardTelemetrySensor(sensor) || haystack.includes('system fan') || haystack.includes('chassis') || haystack.includes('case fan')
-  })
-
-  const telemetry = createEmptyBoardTelemetry()
-
-  telemetry.boardTemperature = pickBestBoardSensor(candidateTemperatures, (sensor) => scoreBoardTemperatureSensor(sensor, 'board'), roundTemperature, '°C')
-  telemetry.vrmTemperature = pickBestBoardSensor(candidateTemperatures, (sensor) => scoreBoardTemperatureSensor(sensor, 'vrm'), roundTemperature, '°C')
-  telemetry.chipsetTemperature = pickBestBoardSensor(candidateTemperatures, (sensor) => scoreBoardTemperatureSensor(sensor, 'chipset'), roundTemperature, '°C')
-  telemetry.systemFan = pickBestBoardSensor(candidateFans, scoreBoardFanSensor, roundFanSpeed, 'RPM')
-  telemetry.voltage12V = pickBestBoardSensor(candidateVoltages, (sensor) => scoreBoardVoltageSensor(sensor, '12v'), roundVoltage, 'V')
-  telemetry.voltage5V = pickBestBoardSensor(candidateVoltages, (sensor) => scoreBoardVoltageSensor(sensor, '5v'), roundVoltage, 'V')
-  telemetry.voltage3V = pickBestBoardSensor(candidateVoltages, (sensor) => scoreBoardVoltageSensor(sensor, '3v'), roundVoltage, 'V')
-  telemetry.voltageVBat = pickBestBoardSensor(candidateVoltages, (sensor) => scoreBoardVoltageSensor(sensor, 'vbat'), roundVoltage, 'V')
-  telemetry.pchVoltage = pickBestBoardSensor(candidateVoltages, (sensor) => scoreBoardVoltageSensor(sensor, 'pch'), roundVoltage, 'V')
-
-  return telemetry
 }
 
 async function getCpuTemperature() {
@@ -2747,6 +2810,7 @@ async function readGpuInfo() {
             || typeof helperGpuTelemetry.powerDraw === 'number'
           )
         )
+        const systemInformationHasTemperature = isMacOS && typeof controller.temperatureGpu === 'number'
         const nativeHasTemperature = Boolean(
           macGpuTemperature
           && (
@@ -2761,7 +2825,7 @@ async function readGpuInfo() {
           idleResidencyGpu,
           utilizationMemory: controller.utilizationMemory ?? null,
           temperatureGpu: isMacOS
-            ? macGpuTemperature?.temperatureGpu ?? controller.temperatureGpu ?? null
+            ? controller.temperatureGpu ?? macGpuTemperature?.temperatureGpu ?? null
             : controller.temperatureGpu ?? fallbackTelemetry?.temperatureGpu ?? null,
           gpuCoreTemperatures: isMacOS
             ? macGpuTemperature?.gpuCoreTemperatures ?? []
@@ -2804,12 +2868,12 @@ async function readGpuInfo() {
                 ? 'systeminformation'
                 : undefined,
           temperatureSource: isMacOS
-            ? nativeHasTemperature
-              ? macGpuTemperature?.source === 'apple-smc'
-                ? 'apple-smc'
-                : 'macos-temperature-sensor'
-              : typeof controller.temperatureGpu === 'number'
-                ? 'systeminformation'
+            ? systemInformationHasTemperature
+              ? 'systeminformation'
+              : nativeHasTemperature
+                ? macGpuTemperature?.source === 'apple-smc'
+                  ? 'apple-smc'
+                  : 'macos-temperature-sensor'
                 : undefined
             : fallbackTelemetry && typeof fallbackTelemetry.temperatureGpu === 'number' && controller.temperatureGpu == null
               ? 'OpenHardwareMonitor'
@@ -2837,6 +2901,216 @@ async function getCurrentLoadSnapshot() {
   )
 }
 
+function normalizeRateValue(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+async function getStorageIo() {
+  return readCachedServiceValue('storageIo', 1500, async () => {
+    const [fsStatsResult, disksIoResult] = await Promise.allSettled([
+      si.fsStats(),
+      si.disksIO(),
+    ])
+
+    const fsStats = fsStatsResult.status === 'fulfilled' ? fsStatsResult.value : undefined
+    const disksIo = disksIoResult.status === 'fulfilled' ? disksIoResult.value : undefined
+
+    return {
+      readBytesPerSec: normalizeRateValue(fsStats?.rx_sec),
+      writeBytesPerSec: normalizeRateValue(fsStats?.wx_sec),
+      totalBytesPerSec: normalizeRateValue(fsStats?.tx_sec),
+      readIops: normalizeRateValue(disksIo?.rIO_sec),
+      writeIops: normalizeRateValue(disksIo?.wIO_sec),
+      totalIops: normalizeRateValue(disksIo?.tIO_sec),
+      waitPercent: normalizeRateValue(disksIo?.tWaitPercent),
+    }
+  })
+}
+
+function parseMacDiskutilTopology(stdout) {
+  const text = typeof stdout === 'string' ? stdout : ''
+  const virtualMatch = text.match(/^\s*Virtual:\s*(Yes|No)\s*$/im)
+  const physicalStoreMatch = text.match(/^\s*APFS Physical Store:\s*(\S+)\s*$/im)
+
+  return {
+    virtual: virtualMatch ? virtualMatch[1].toLowerCase() === 'yes' : null,
+    physicalStore: physicalStoreMatch?.[1] || '',
+  }
+}
+
+async function readMacDiskTopology(device) {
+  if (!isMacOS() || typeof device !== 'string' || !/^disk\d+$/i.test(device.trim())) {
+    return { virtual: null, physicalStore: '' }
+  }
+
+  try {
+    const { stdout } = await execFileAsync('/usr/sbin/diskutil', ['info', device.trim()], {
+      timeout: 5000,
+      maxBuffer: 512 * 1024,
+    })
+    return parseMacDiskutilTopology(stdout)
+  } catch {
+    return { virtual: null, physicalStore: '' }
+  }
+}
+
+async function normalizeDiskLayoutForPlatform(disks) {
+  if (!Array.isArray(disks) || !isMacOS()) return Array.isArray(disks) ? disks : []
+
+  const topologyRows = await Promise.all(disks.map(async (disk) => ({
+    disk,
+    topology: await readMacDiskTopology(disk?.device),
+  })))
+
+  return topologyRows
+    .filter(({ topology }) => topology.virtual !== true)
+    .map(({ disk }) => disk)
+}
+
+async function readMacEthernetHardwareProfiles() {
+  if (!isMacOS()) return []
+
+  try {
+    const { stdout } = await execFileAsync('/usr/sbin/system_profiler', ['SPEthernetDataType', '-json'], {
+      timeout: 8000,
+      maxBuffer: 5 * 1024 * 1024,
+    })
+    const parsed = JSON.parse(stdout || '{}')
+    const entries = Array.isArray(parsed?.SPEthernetDataType) ? parsed.SPEthernetDataType : []
+
+    return entries
+      .map((item) => ({
+        iface: typeof item?.spethernet_BSD_Device_Name === 'string' ? item.spethernet_BSD_Device_Name.trim() : '',
+        name: typeof item?._name === 'string' ? item._name.trim() : '',
+        mac: typeof item?.spethernet_mac_address === 'string' ? item.spethernet_mac_address.trim() : '',
+      }))
+      .filter((item) => item.iface)
+  } catch {
+    return []
+  }
+}
+
+function inferNetworkAdapterVendor(model, explicitVendor = '') {
+  if (typeof explicitVendor === 'string' && explicitVendor.trim()) return explicitVendor.trim()
+  if (typeof model !== 'string') return ''
+
+  const normalized = model.trim()
+  if (!normalized) return ''
+  const knownVendor = ['Broadcom', 'Intel', 'Realtek', 'Qualcomm', 'MediaTek', 'Marvell', 'Aquantia']
+    .find((vendor) => normalized.toLowerCase().startsWith(vendor.toLowerCase()))
+  return knownVendor || ''
+}
+
+async function getNetworkAdapters() {
+  return readCachedServiceValue('networkAdapters', 30000, async () => {
+    const [interfacesResult, wifiResult, macEthernetResult] = await Promise.allSettled([
+      si.networkInterfaces(),
+      si.wifiInterfaces(),
+      readMacEthernetHardwareProfiles(),
+    ])
+
+    const interfaces = interfacesResult.status === 'fulfilled' && Array.isArray(interfacesResult.value)
+      ? interfacesResult.value
+      : []
+    const wifiInterfaces = wifiResult.status === 'fulfilled' && Array.isArray(wifiResult.value)
+      ? wifiResult.value
+      : []
+    const macEthernetProfiles = macEthernetResult.status === 'fulfilled' && Array.isArray(macEthernetResult.value)
+      ? macEthernetResult.value
+      : []
+
+    return interfaces
+      .filter((item) => item && !item.internal && typeof item.iface === 'string' && item.iface.trim())
+      .map((item) => {
+        const wifi = wifiInterfaces.find((candidate) => candidate?.iface === item.iface)
+        const macEthernet = macEthernetProfiles.find((candidate) => candidate?.iface === item.iface)
+        const model = macEthernet?.name || wifi?.model || item.ifaceName || item.iface
+        const vendor = inferNetworkAdapterVendor(model, wifi?.vendor)
+
+        return {
+          iface: item.iface,
+          name: item.ifaceName || item.iface,
+          vendor,
+          model,
+          type: item.type || (wifi ? 'wireless' : ''),
+          mac: item.mac || wifi?.mac || macEthernet?.mac || '',
+          ip4: item.ip4 || '',
+          speed: typeof item.speed === 'number' && Number.isFinite(item.speed) ? item.speed : null,
+          default: Boolean(item.default),
+          operstate: item.operstate || '',
+        }
+      })
+  })
+}
+
+async function getNetworkStatus() {
+  return readCachedServiceValue('networkStatus', 3000, async () => {
+    const defaultInterface = await readSystemInfo('networkInterfaceDefault', '', () => si.networkInterfaceDefault())
+    const [gatewayResult, statsResult] = await Promise.allSettled([
+      si.networkGatewayDefault(),
+      defaultInterface ? si.networkStats(defaultInterface) : Promise.resolve([]),
+    ])
+
+    const gateway = gatewayResult.status === 'fulfilled' ? gatewayResult.value || '' : ''
+    const stats = statsResult.status === 'fulfilled' ? statsResult.value?.[0] : undefined
+    let latencyMs = null
+
+    if (gateway) {
+      const latency = await readSystemInfo('inetLatency', null, () => si.inetLatency(gateway))
+      latencyMs = normalizeRateValue(latency)
+    }
+
+    return {
+      defaultInterface,
+      gateway,
+      latencyMs,
+      operstate: stats?.operstate || '',
+      rxSec: normalizeRateValue(stats?.rx_sec),
+      txSec: normalizeRateValue(stats?.tx_sec),
+    }
+  })
+}
+
+async function getTopProcesses() {
+  return readCachedServiceValue('topProcesses', 6000, async () => {
+    const processes = await readSystemInfo('processes', { list: [] }, () => si.processes())
+    const candidates = (Array.isArray(processes?.list) ? processes.list : [])
+      .filter((item) => item && item.pid > 0 && typeof item.name === 'string' && item.name.trim())
+
+    const byCpu = [...candidates]
+      .sort((left, right) => {
+        const cpuDelta = (right.cpu || 0) - (left.cpu || 0)
+        if (Math.abs(cpuDelta) > 0.01) return cpuDelta
+        return (right.memRss || 0) - (left.memRss || 0)
+      })
+      .slice(0, 3)
+
+    const byMemory = [...candidates]
+      .sort((left, right) => {
+        const memoryDelta = (right.memRss || 0) - (left.memRss || 0)
+        if (memoryDelta !== 0) return memoryDelta
+        return (right.cpu || 0) - (left.cpu || 0)
+      })
+      .slice(0, 3)
+
+    const merged = new Map()
+    for (const item of [...byCpu, ...byMemory]) {
+      if (!merged.has(item.pid)) merged.set(item.pid, item)
+    }
+
+    return [...merged.values()]
+      .slice(0, 6)
+      .map((item) => ({
+        pid: item.pid,
+        name: item.name.trim(),
+        cpu: Number.isFinite(item.cpu) ? item.cpu : 0,
+        mem: Number.isFinite(item.mem) ? item.mem : 0,
+        memRss: Number.isFinite(item.memRss) ? item.memRss : 0,
+        user: typeof item.user === 'string' ? item.user : '',
+      }))
+  })
+}
+
 export const systemService = {
   getHardwareSensorSettings: async () => getHardwareSensorSettings(),
 
@@ -2849,6 +3123,10 @@ export const systemService = {
   getFloatingMonitorSettings: async () => getFloatingMonitorSettings(),
 
   updateFloatingMonitorSettings: async (patch) => updateFloatingMonitorSettings(patch),
+
+  getAppThemeSettings: async () => getAppThemeSettings(),
+
+  updateAppThemeSettings: async (patch) => updateAppThemeSettings(patch),
 
   getOpenHardwareMonitorStatus,
 
@@ -2997,13 +3275,6 @@ export const systemService = {
 
   getCpuFanSpeed: () => readSystemInfo('cpuFanSpeed', { value: null, source: 'unsupported', unit: 'RPM', max: null }, getHardwareMonitorCpuFanSpeed),
 
-  getBoardTelemetry: () =>
-    readCachedServiceValue(
-      'boardTelemetry',
-      8000,
-      () => readSystemInfo('boardTelemetry', createEmptyBoardTelemetry(), getBoardTelemetry)
-    ),
-
   getMemInfo: () => readCachedServiceValue(
     'memInfo',
     3000,
@@ -3054,17 +3325,13 @@ export const systemService = {
       readStaticGpuInfo
     ),
 
-  getNetworkInfo: () =>
-    readSystemInfo('networkStats', emptyNetworkStats, async () => {
-      const [networkInterface] = await si.networkStats()
-      return networkInterface || emptyNetworkStats
-    }),
+  getNetworkStatus,
 
-  getWifiInterfaces: () => readSystemInfo('wifiInterfaces', [], () => si.wifiInterfaces()),
-
-  getWifiConnections: () => readSystemInfo('wifiConnections', [], () => si.wifiConnections()),
+  getNetworkAdapters,
 
   getNetworkInterfaces: () => readSystemInfo('networkInterfaces', [], () => si.networkInterfaces()),
+
+  getTopProcesses,
 
   getDiskData: () =>
     readCachedServiceValue(
@@ -3076,11 +3343,13 @@ export const systemService = {
       })
     ),
 
+  getStorageIo,
+
   getDiskLayout: () =>
     readCachedServiceValue(
       'diskLayout',
       30000,
-      () => readSystemInfo('diskLayout', [], () => si.diskLayout())
+      () => readSystemInfo('diskLayout', [], async () => normalizeDiskLayoutForPlatform(await si.diskLayout()))
     ),
 
   getBiosData: () =>
@@ -3114,15 +3383,7 @@ export const systemService = {
       () => readSystemInfo('baseboard', undefined, () => si.baseboard())
     ),
 
-  getBatteryInfo: () => readSystemInfo('battery', undefined, () => si.battery()),
-
-  getUsbDevices: () => readSystemInfo('usb', [], () => si.usb()),
-
   getAudioDevices: () => readSystemInfo('audio', [], () => si.audio()),
-
-  getBluetoothDevices: () => readSystemInfo('bluetoothDevices', [], () => si.bluetoothDevices()),
-
-  getPrinterInfo: () => readSystemInfo('printer', [], () => si.printer()),
 
   getOsInfo: () =>
     readCachedServiceValue(
@@ -3131,7 +3392,6 @@ export const systemService = {
       () => readSystemInfo('osInfo', undefined, () => si.osInfo())
     ),
 
-  getSysEnv: () => readSystemInfo('versions', {}, () => si.versions()),
   getTimeInfo: () =>
     readCachedServiceValue(
       'timeInfo',

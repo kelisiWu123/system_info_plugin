@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Chip, HardDisk, Memory, Signal } from '@icon-park/vue-next'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
+import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import StateBlock from '../common/StateBlock.vue'
 import {
@@ -10,7 +11,8 @@ import {
   inferBoardChipsetName,
 } from '../../utils/board'
 import { selectPrimaryGpu } from '../../utils/gpu'
-import { bytesToGB, formatBytes } from '../../utils'
+import { bytesToGB, formatBytes, getPhysicalDiskLayout } from '../../utils'
+import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 
 const props = defineProps<{
   active?: boolean
@@ -118,25 +120,6 @@ function makePlaceholderRows(message: string): BoardListRow[] {
   return [{ label: '当前版本', primary: message }]
 }
 
-async function writeClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  const copied = document.execCommand('copy')
-  document.body.removeChild(textarea)
-
-  if (!copied) throw new Error('execCommand copy failed')
-}
-
 const isDarwinPlatform = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
 const boardName = computed(() =>
   getBoardDisplayName({
@@ -203,8 +186,9 @@ const tabRows = computed<Record<BoardTabKey, BoardListRow[]>>(() => {
     })
   }
 
-  const storageRows = diskLayoutData.value.length
-    ? diskLayoutData.value.map((item, index) => ({
+  const physicalStorageDisks = getPhysicalDiskLayout(diskLayoutData.value)
+  const storageRows = physicalStorageDisks.length
+    ? physicalStorageDisks.map((item, index) => ({
         label: cleanText(item.interfaceType) || `存储接口 ${index + 1}`,
         primary: cleanText(item.name) || cleanText(item.device) || '未知设备',
         secondary: joinParts([item.size ? formatBytes(item.size) : '', item.type, item.firmwareRevision], ' / '),
@@ -304,18 +288,15 @@ const boardReportText = computed(() => {
 })
 
 function exportReport() {
-  const blob = new Blob([boardReportText.value], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `board-report-${new Date().toISOString().slice(0, 10)}.txt`
-  anchor.click()
-  URL.revokeObjectURL(url)
+  downloadTextFile(
+    `board-report-${new Date().toISOString().slice(0, 10)}.txt`,
+    boardReportText.value
+  )
 }
 
 async function copyBoardInfo() {
   try {
-    await writeClipboard(boardReportText.value)
+    await writeClipboardText(boardReportText.value)
     return true
   } catch (error) {
     console.error('复制主板信息失败:', error)
@@ -339,7 +320,7 @@ async function ensureBoardGpuSnapshot() {
   boardGpuSnapshotLoading.value = true
 
   try {
-    const gpuData = await window.services.getGpuInfo()
+    const gpuData = await window.services.getStaticGpuInfo()
     boardPrimaryGpu.value = selectPrimaryGpu(gpuData || [])
     boardGpuSnapshotLoaded.value = true
   } catch (error) {
@@ -362,22 +343,11 @@ function releaseStore() {
   subscribed.value = false
 }
 
-watch(
+useActivePageLifecycle(
   () => props.active,
-  async (active) => {
-    if (active === false) {
-      releaseStore()
-      return
-    }
-
-    await ensureStoreActive()
-  },
-  { immediate: true }
+  ensureStoreActive,
+  releaseStore,
 )
-
-onUnmounted(() => {
-  releaseStore()
-})
 </script>
 
 <template>
@@ -589,9 +559,7 @@ onUnmounted(() => {
 .board-manufacturing {
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background:
-    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
-    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  background: var(--surface-card-background);
   box-shadow: var(--panel-shadow);
 }
 
@@ -762,9 +730,7 @@ onUnmounted(() => {
   height: 270px;
   border-radius: var(--surface-radius);
   border: 1px solid rgba(124, 144, 173, 0.22);
-  background:
-    linear-gradient(180deg, rgba(17, 24, 35, 0.94), rgba(13, 20, 30, 0.96)),
-    radial-gradient(circle at top right, rgba(88, 146, 255, 0.12), transparent 30%);
+  background: var(--surface-detail-background);
 }
 
 .board-schematic__cpu,
@@ -774,7 +740,7 @@ onUnmounted(() => {
   position: absolute;
   border: 1px solid rgba(186, 201, 223, 0.18);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-soft-background);
   transition: box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
 

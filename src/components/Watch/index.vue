@@ -19,6 +19,7 @@ import {
   getDisplayMemoryUsedBytes,
   getDisplayMemoryUsagePercent,
   getMemoryPressureLabel,
+  formatSpeed,
 } from '../../utils'
 import { withTimeout } from '../../utils/serviceReader'
 import {
@@ -75,6 +76,23 @@ const cpuPower = ref<CpuPowerData>()
 const cpuVoltage = ref<CpuVoltageData>()
 const cpuFanSpeed = ref<CpuFanData>()
 const timeInfo = ref<TimeData>()
+const networkStatus = ref<NetworkStatusData>({
+  defaultInterface: '',
+  gateway: '',
+  latencyMs: null,
+  operstate: '',
+  rxSec: null,
+  txSec: null,
+})
+const storageIoData = ref<StorageIoData>({
+  readBytesPerSec: null,
+  writeBytesPerSec: null,
+  totalBytesPerSec: null,
+  readIops: null,
+  writeIops: null,
+  totalIops: null,
+  waitPercent: null,
+})
 const memoryLayout = ref<MemoLayoutData[]>([])
 const pinned = ref(true)
 const monitorMode = ref<'overview' | 'cpu' | 'gpu'>('overview')
@@ -103,14 +121,19 @@ let lastCpuSpeedRefreshAt = 0
 let lastGpuRefreshAt = 0
 let lastInfoRefreshAt = 0
 let lastTimeRefreshAt = 0
+let lastOpenHardwareMonitorStatusAt = 0
+let lastOpenHardwareMonitorRunning: boolean | null = null
+let openHardwareMonitorPlatform: 'unknown' | 'windows' | 'other' = 'unknown'
 let watchRefreshGeneration = 0
 let floatingSettingsLoaded = false
 
 const STATIC_INFO_INTERVAL_MS = 20000
 const TIME_INFO_INTERVAL_MS = 10000
 const CPU_SPEED_INFO_INTERVAL_MS = 4500
+const OPEN_HARDWARE_MONITOR_STATUS_INTERVAL_MS = 4000
 
 function getCurrentPollProfile() {
+  if (floatingMode.value === 'super-lite') return WATCH_MODE_POLL_PROFILES.overview
   return WATCH_MODE_POLL_PROFILES[monitorMode.value]
 }
 
@@ -287,7 +310,7 @@ const gpuMemoryUsedValue = computed(() => (
 const footerStatus = computed(() => {
   if (cpuPercent.value || memoryPercent.value || gpuPercent.value) return '状态良好'
   if (!primaryGpu.value) return '未检测到显卡信息'
-  return '部分指标暂不支持'
+  return '部分指标未提供'
 })
 
 const superLiteStatus = computed(() => resolveSuperLiteOverallStatus({
@@ -300,6 +323,16 @@ const superLiteStatus = computed(() => resolveSuperLiteOverallStatus({
 }))
 const superLiteFooterLeft = computed(() => formatSuperLiteRefreshLabel(getCurrentPollProfile().fast))
 const superLiteFooterRight = computed(() => `⏱${formatWatchRuntime(timeInfo.value?.uptime)}`)
+const superLiteThroughput = computed(() => ({
+  networkDown: formatSpeed(networkStatus.value.rxSec),
+  networkUp: formatSpeed(networkStatus.value.txSec),
+  diskRead: formatSpeed(storageIoData.value.readBytesPerSec),
+  diskWrite: formatSpeed(storageIoData.value.writeBytesPerSec),
+}))
+const standardRefreshLabel = computed(() => {
+  const seconds = getCurrentPollProfile().fast / 1000
+  return `${Number.isInteger(seconds) ? seconds.toFixed(0) : seconds.toFixed(1)}s`
+})
 const superLiteMetrics = computed(() => [
   {
     key: 'cpu' as const,
@@ -448,22 +481,76 @@ const gpuDetailStats = computed(() => [
   },
 ])
 
+async function refreshOpenHardwareMonitorReadiness(force = false) {
+  if (openHardwareMonitorPlatform === 'other') return false
+
+  const now = Date.now()
+  if (!force && now - lastOpenHardwareMonitorStatusAt < OPEN_HARDWARE_MONITOR_STATUS_INTERVAL_MS) {
+    return false
+  }
+  lastOpenHardwareMonitorStatusAt = now
+
+  try {
+    const status = await withTimeout(window.services.getOpenHardwareMonitorStatus(), 3000)
+    if (status.platform !== 'win32') {
+      openHardwareMonitorPlatform = 'other'
+      lastOpenHardwareMonitorRunning = false
+      return false
+    }
+
+    openHardwareMonitorPlatform = 'windows'
+    const running = Boolean(status.running && status.settings?.enhancedSensorEnabled)
+    const becameReady = running && lastOpenHardwareMonitorRunning !== true
+    lastOpenHardwareMonitorRunning = running
+
+    if (becameReady) {
+      lastCpuSensorRefreshAt = 0
+      lastCpuPowerRefreshAt = 0
+      lastCpuAuxSensorRefreshAt = 0
+      lastCpuSpeedRefreshAt = 0
+      lastGpuRefreshAt = 0
+    }
+
+    return becameReady
+  } catch {
+    return false
+  }
+}
+
 async function refreshFastMetrics(force = false) {
   try {
     const refreshGeneration = watchRefreshGeneration
+    const ohmBecameReady = await refreshOpenHardwareMonitorReadiness(force)
+    if (refreshGeneration !== watchRefreshGeneration) return
+
+    const effectiveForce = force || ohmBecameReady
     const now = Date.now()
     const pollProfile = getCurrentPollProfile()
-    const needsCpuDetailSensors = monitorMode.value === 'cpu'
-    const needsCpuTemp = pollProfile.cpuTemp > 0 && (force || now - lastCpuSensorRefreshAt >= pollProfile.cpuTemp)
-    const needsCpuSpeed = (monitorMode.value === 'overview' || needsCpuDetailSensors)
-      && (force || now - lastCpuSpeedRefreshAt >= CPU_SPEED_INFO_INTERVAL_MS)
-    const needsCpuPower = pollProfile.cpuPower > 0 && (force || now - lastCpuPowerRefreshAt >= pollProfile.cpuPower)
+    const isStandardMode = floatingMode.value === 'standard'
+    const needsCpuDetailSensors = isStandardMode && monitorMode.value === 'cpu'
+    const needsCpuTemp = pollProfile.cpuTemp > 0 && (effectiveForce || now - lastCpuSensorRefreshAt >= pollProfile.cpuTemp)
+    const needsCpuSpeed = isStandardMode
+      && (monitorMode.value === 'overview' || needsCpuDetailSensors)
+      && (effectiveForce || now - lastCpuSpeedRefreshAt >= CPU_SPEED_INFO_INTERVAL_MS)
+    const needsCpuPower = pollProfile.cpuPower > 0 && (effectiveForce || now - lastCpuPowerRefreshAt >= pollProfile.cpuPower)
     const needsCpuAuxSensors = needsCpuDetailSensors
       && pollProfile.cpuAux > 0
-      && (force || now - lastCpuAuxSensorRefreshAt >= pollProfile.cpuAux)
-    const needsTimeInfo = force || now - lastTimeRefreshAt >= TIME_INFO_INTERVAL_MS
+      && (effectiveForce || now - lastCpuAuxSensorRefreshAt >= pollProfile.cpuAux)
+    const needsTimeInfo = effectiveForce || now - lastTimeRefreshAt >= TIME_INFO_INTERVAL_MS
+    const needsThroughputMetrics = floatingMode.value === 'super-lite' || monitorMode.value === 'overview'
 
-    const [cpuLoadRes, memoRes, cpuTemperatureRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, cpuFanRes, timeRes] = await Promise.allSettled([
+    const [
+      cpuLoadRes,
+      memoRes,
+      cpuTemperatureRes,
+      cpuSpeedRes,
+      cpuPowerRes,
+      cpuVoltageRes,
+      cpuFanRes,
+      timeRes,
+      networkStatusRes,
+      storageIoRes,
+    ] = await Promise.allSettled([
       withTimeout(window.services.getCpuFullLoad()),
       withTimeout(window.services.getMemInfo()),
       needsCpuTemp ? withTimeout(window.services.getCpuTemperature(), 3500) : Promise.resolve(undefined),
@@ -472,6 +559,8 @@ async function refreshFastMetrics(force = false) {
       needsCpuAuxSensors ? withTimeout(window.services.getCpuVoltage(), 3500) : Promise.resolve(undefined),
       needsCpuAuxSensors ? withTimeout(window.services.getCpuFanSpeed(), 3500) : Promise.resolve(undefined),
       needsTimeInfo ? withTimeout(window.services.getTimeInfo(), 3500) : Promise.resolve(undefined),
+      needsThroughputMetrics ? withTimeout(window.services.getNetworkStatus(), 3500) : Promise.resolve(undefined),
+      needsThroughputMetrics ? withTimeout(window.services.getStorageIo(), 3500) : Promise.resolve(undefined),
     ])
 
     if (refreshGeneration !== watchRefreshGeneration) return
@@ -535,6 +624,14 @@ async function refreshFastMetrics(force = false) {
     if (needsTimeInfo && timeRes.status === 'fulfilled') {
       timeInfo.value = timeRes.value
       lastTimeRefreshAt = now
+    }
+
+    if (needsThroughputMetrics && networkStatusRes.status === 'fulfilled' && networkStatusRes.value) {
+      networkStatus.value = networkStatusRes.value
+    }
+
+    if (needsThroughputMetrics && storageIoRes.status === 'fulfilled' && storageIoRes.value) {
+      storageIoData.value = storageIoRes.value
     }
   } catch (error) {
     console.warn('悬浮监控快速刷新失败:', error)
@@ -640,8 +737,8 @@ function applyFloatingMode(mode: FloatingMonitorMode, persist = true) {
     return
   }
 
-  floatingMode.value = mode
   resizeFloatingMode(mode)
+  floatingMode.value = mode
 
   if (persist) {
     void persistFloatingMonitorSettings({ mode })
@@ -650,6 +747,11 @@ function applyFloatingMode(mode: FloatingMonitorMode, persist = true) {
 
 function switchFloatingMode(mode: FloatingMonitorMode) {
   applyFloatingMode(mode)
+
+  const needsImmediateThroughputRefresh = mode === 'super-lite' || monitorMode.value === 'overview'
+  if (needsImmediateThroughputRefresh && props.active !== false) {
+    void refreshFastMetrics(true)
+  }
 }
 
 async function loadFloatingMonitorSettings() {
@@ -738,6 +840,7 @@ onUnmounted(() => {
       v-if="floatingMode === 'super-lite'"
       :status="superLiteStatus"
       :metrics="superLiteMetrics"
+      :throughput="superLiteThroughput"
       :footer-left="superLiteFooterLeft"
       :footer-right="superLiteFooterRight"
       :pinned="pinned"
@@ -791,7 +894,7 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <div v-if="monitorMode === 'overview'" class="monitor-shell__body">
+      <div v-if="monitorMode === 'overview'" class="monitor-shell__body monitor-shell__body--overview">
         <WatchRow
           tone="cpu"
           :accent="cpuWatchPalette.stroke"
@@ -930,6 +1033,30 @@ onUnmounted(() => {
             </div>
           </template>
         </WatchRow>
+
+        <div class="overview-throughput-strip" aria-label="网络与磁盘实时吞吐">
+          <section class="overview-throughput-card overview-throughput-card--network">
+            <div class="overview-throughput-card__label">
+              <span class="overview-throughput-card__dot" />
+              <strong>网络</strong>
+            </div>
+            <div class="overview-throughput-card__values">
+              <span title="下载速度"><em>↓</em><strong>{{ formatSpeed(networkStatus.rxSec) }}</strong></span>
+              <span title="上传速度"><em>↑</em><strong>{{ formatSpeed(networkStatus.txSec) }}</strong></span>
+            </div>
+          </section>
+
+          <section class="overview-throughput-card overview-throughput-card--storage">
+            <div class="overview-throughput-card__label">
+              <span class="overview-throughput-card__dot" />
+              <strong>磁盘 I/O</strong>
+            </div>
+            <div class="overview-throughput-card__values">
+              <span title="读取速度"><em>读</em><strong>{{ formatSpeed(storageIoData.readBytesPerSec) }}</strong></span>
+              <span title="写入速度"><em>写</em><strong>{{ formatSpeed(storageIoData.writeBytesPerSec) }}</strong></span>
+            </div>
+          </section>
+        </div>
       </div>
 
       <div v-else-if="monitorMode === 'cpu'" class="monitor-shell__body monitor-shell__body--cpu-detail">
@@ -974,7 +1101,7 @@ onUnmounted(() => {
       <footer class="monitor-shell__footer">
         <div class="monitor-shell__footer-meta">
           <span>运行时间 {{ formatWatchRuntime(timeInfo?.uptime) }}</span>
-          <span>更新频率 1s</span>
+          <span>更新频率 {{ standardRefreshLabel }}</span>
         </div>
         <div class="monitor-shell__footer-status">
           <span class="monitor-shell__footer-pulse" />
@@ -999,14 +1126,12 @@ onUnmounted(() => {
   box-sizing: border-box;
   gap: 8px;
   padding: 10px 12px 8px;
-  border: 1px solid rgba(210, 223, 248, 0.34);
+  border: 1px solid var(--panel-border);
   border-radius: 8px;
-  background:
-    radial-gradient(circle at top left, rgba(53, 119, 255, 0.2), transparent 28%),
-    linear-gradient(180deg, rgba(27, 45, 79, 0.62), rgba(13, 22, 40, 0.58));
+  background: var(--watch-shell-background);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 20px 40px rgba(1, 8, 18, 0.26);
+    inset 0 1px 0 var(--surface-inset-highlight),
+    var(--shadow-watch);
   backdrop-filter: blur(28px);
 }
 
@@ -1023,7 +1148,7 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   padding: 1px 2px 8px;
-  border-bottom: 1px solid rgba(129, 149, 183, 0.18);
+  border-bottom: 1px solid var(--panel-border-soft);
   -webkit-app-region: drag;
 }
 
@@ -1032,7 +1157,7 @@ onUnmounted(() => {
   align-items: center;
   justify-self: start;
   gap: 8px;
-  color: rgba(236, 242, 251, 0.96);
+  color: var(--text-watch);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1058,8 +1183,8 @@ onUnmounted(() => {
   gap: 4px;
   padding: 2px 4px;
   border-radius: 999px;
-  border: 1px solid rgba(103, 126, 166, 0.18);
-  background: rgba(17, 27, 44, 0.42);
+  border: 1px solid var(--panel-border-soft);
+  background: var(--watch-muted-surface);
   -webkit-app-region: no-drag;
 }
 
@@ -1070,14 +1195,14 @@ onUnmounted(() => {
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: rgba(205, 216, 235, 0.66);
+  color: var(--text-watch-muted);
   font-size: 9px;
   font-weight: 600;
 }
 
 .monitor-mode--active {
-  background: rgba(59, 132, 255, 0.2);
-  color: #f5f9ff;
+  background: var(--state-info-bg);
+  color: var(--text-watch);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
@@ -1099,14 +1224,14 @@ onUnmounted(() => {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: rgba(215, 223, 239, 0.84);
+  color: var(--text-watch-muted);
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;
 }
 
 .monitor-action:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #f3f7ff;
+  background: var(--window-control-hover);
+  color: var(--text-watch);
 }
 
 .monitor-action--active {
@@ -1133,6 +1258,105 @@ onUnmounted(() => {
 
 .monitor-shell__body:not(.monitor-shell__body--cpu-detail) {
   justify-content: center;
+  gap: 6px;
+}
+
+.monitor-shell__body--overview {
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr)) 42px;
+  align-content: stretch;
+  justify-content: stretch;
+  gap: 6px;
+}
+
+.monitor-shell__body--overview > :deep(.watch-metric-card) {
+  min-height: 0;
+  height: 100%;
+}
+
+.overview-throughput-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-height: 42px;
+}
+
+.overview-throughput-card {
+  --throughput-accent: #5aa8ff;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--throughput-accent) 12%, transparent), transparent 54%),
+    var(--watch-throughput-background);
+  box-shadow: inset 0 1px 0 var(--surface-inset-highlight);
+}
+
+.overview-throughput-card--network {
+  --throughput-accent: #5aa8ff;
+}
+
+.overview-throughput-card--storage {
+  --throughput-accent: #ffb14d;
+}
+
+.overview-throughput-card__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--text-watch-muted);
+  font-size: 9px;
+}
+
+.overview-throughput-card__label strong {
+  font-weight: 650;
+}
+
+.overview-throughput-card__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--throughput-accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--throughput-accent) 62%, transparent);
+}
+
+.overview-throughput-card__values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+
+.overview-throughput-card__values > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.overview-throughput-card__values em {
+  flex: 0 0 auto;
+  color: var(--throughput-accent);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.overview-throughput-card__values strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-watch);
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
 }
 
 .monitor-shell__body--cpu-detail {
@@ -1145,14 +1369,12 @@ onUnmounted(() => {
 .detail-glass-panel {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(101, 123, 160, 0.24);
+  border: 1px solid var(--panel-border);
   border-radius: 8px;
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.04), transparent 34%),
-    linear-gradient(180deg, rgba(22, 34, 53, 0.84), rgba(15, 24, 39, 0.82));
+  background: var(--watch-detail-background);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 14px 28px rgba(1, 7, 18, 0.16);
+    inset 0 1px 0 var(--surface-inset-highlight),
+    var(--shadow-watch);
 }
 
 .detail-glass-panel::before {
@@ -1177,7 +1399,7 @@ onUnmounted(() => {
 
 .metric-sparkline {
   width: 100%;
-  height: 48px;
+  height: 40px;
 }
 
 .metric-sparkline polygon {
@@ -1263,12 +1485,12 @@ onUnmounted(() => {
   gap: 14px;
 
   span {
-    color: rgba(205, 216, 235, 0.76);
+    color: var(--text-watch-muted);
     font-size: 11px;
   }
 
   strong {
-    color: #f7faff;
+    color: var(--text-watch);
     font-size: 15px;
     font-weight: 700;
     line-height: 1;
@@ -1350,12 +1572,12 @@ onUnmounted(() => {
   }
 
   span {
-    color: rgba(200, 212, 232, 0.72);
+    color: var(--text-watch-muted);
     font-size: 11px;
   }
 
   strong {
-    color: #f5f8ff;
+    color: var(--text-watch);
     font-size: 14px;
     font-weight: 700;
     line-height: 1.25;
@@ -1438,10 +1660,10 @@ onUnmounted(() => {
 
 .metric-progress {
   position: relative;
-  height: 8px;
+  height: 7px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(62, 79, 110, 0.34);
+  background: var(--surface-track-background);
 }
 
 .metric-progress--gpu {
@@ -1495,7 +1717,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: rgba(205, 216, 235, 0.78);
+  color: var(--text-watch-muted);
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
@@ -1518,7 +1740,7 @@ onUnmounted(() => {
 
 .monitor-shell__footer {
   padding: 2px 4px 1px;
-  color: rgba(206, 215, 232, 0.86);
+  color: var(--text-watch-muted);
   font-size: 9px;
 }
 

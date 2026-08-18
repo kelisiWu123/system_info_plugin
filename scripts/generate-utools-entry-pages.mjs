@@ -40,6 +40,7 @@ function writePageEntry(filePath, pageName) {
 
 for (const [entryName, pageName] of [
   ['a_computer', 'computer'],
+  ['a_monitor', 'monitor'],
   ['a_specs_lite', 'deviceSpecs'],
   ['a_watch', 'watch?floatingMode=standard&entry=hardwareWatch'],
   ['a_watch_super_lite', 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'],

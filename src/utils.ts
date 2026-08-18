@@ -34,8 +34,10 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[unitIndex]}`
 }
 
-function formatSpeed(bytesPerSecond: number): string {
-  return `${formatBytes(bytesPerSecond)}/s`
+function formatSpeed(bytesPerSecond: number | null | undefined): string {
+  return typeof bytesPerSecond === 'number' && Number.isFinite(bytesPerSecond) && bytesPerSecond >= 0
+    ? `${formatBytes(bytesPerSecond)}/s`
+    : '--'
 }
 
 function formatUptime(seconds: number): string {
@@ -155,13 +157,94 @@ function getPhysicalDiskKey(disk: DiskLayoutData, index: number): string {
   return `disk:${index}:${disk.size || 0}`
 }
 
+function normalizeDiskProtocolText(disk: DiskLayoutData): string {
+  const text = [
+    cleanStorageText(disk.smartData?.device?.protocol),
+    cleanStorageText(disk.smartData?.device?.type),
+    cleanStorageText(disk.type),
+    cleanStorageText(disk.interfaceType),
+  ].join(' ').toLowerCase()
+
+  if (text.includes('nvme')) return 'nvme'
+  if (text.includes('sata')) return 'sata'
+  if (text.includes('usb')) return 'usb'
+  if (text.includes('pci')) return 'pcie'
+  return text.trim()
+}
+
+function isNearSameDiskCapacity(first: DiskLayoutData, second: DiskLayoutData): boolean {
+  const firstSize = first.size || 0
+  const secondSize = second.size || 0
+  if (firstSize <= 0 || secondSize <= 0) return false
+
+  const largest = Math.max(firstSize, secondSize)
+  const difference = Math.abs(firstSize - secondSize)
+  return difference <= Math.max(512 * 1024 * 1024, largest * 0.005)
+}
+
+function isSparsePcieMirrorEntry(disk: DiskLayoutData): boolean {
+  const serial = cleanStorageText(disk.serialNum)
+  const firmware = cleanStorageText(disk.firmwareRevision)
+  const type = cleanStorageText(disk.type).toLowerCase()
+  const interfaceType = cleanStorageText(disk.interfaceType).toLowerCase()
+  const genericPcie = type.includes('pci') && interfaceType.includes('pci') && !type.includes('nvme') && !interfaceType.includes('nvme')
+  return !serial && !firmware && genericPcie
+}
+
+function isLikelyPhysicalDiskMirror(first: DiskLayoutData, second: DiskLayoutData): boolean {
+  const firstName = cleanStorageText(first.name).toLowerCase()
+  const secondName = cleanStorageText(second.name).toLowerCase()
+  if (!firstName || firstName !== secondName || !isNearSameDiskCapacity(first, second)) return false
+
+  const firstSerial = cleanStorageText(first.serialNum).toLowerCase()
+  const secondSerial = cleanStorageText(second.serialNum).toLowerCase()
+  if (firstSerial && secondSerial) return firstSerial === secondSerial
+
+  const firstProtocol = normalizeDiskProtocolText(first)
+  const secondProtocol = normalizeDiskProtocolText(second)
+  if (firstProtocol && secondProtocol && firstProtocol !== secondProtocol) return false
+
+  return (isSparsePcieMirrorEntry(first) && Boolean(secondSerial))
+    || (isSparsePcieMirrorEntry(second) && Boolean(firstSerial))
+}
+
+function getDiskIdentityScore(disk: DiskLayoutData): number {
+  let score = 0
+  if (cleanStorageText(disk.serialNum)) score += 8
+  if (cleanStorageText(disk.firmwareRevision)) score += 4
+  if (disk.smartData?.device) score += 3
+  if (cleanStorageText(disk.type).toLowerCase().includes('nvme')) score += 2
+  if (cleanStorageText(disk.interfaceType).toLowerCase().includes('nvme')) score += 1
+  return score
+}
+
+function collapsePhysicalDiskMirrorEntries(disks: DiskLayoutData[]): DiskLayoutData[] {
+  const result: DiskLayoutData[] = []
+
+  disks.forEach((disk) => {
+    const duplicateIndex = result.findIndex((candidate) => isLikelyPhysicalDiskMirror(candidate, disk))
+    if (duplicateIndex < 0) {
+      result.push(disk)
+      return
+    }
+
+    if (getDiskIdentityScore(disk) > getDiskIdentityScore(result[duplicateIndex])) {
+      result[duplicateIndex] = disk
+    }
+  })
+
+  return result
+}
+
 function getPhysicalDiskLayout(disks: DiskLayoutData[]): DiskLayoutData[] {
+  const candidates = disks
+    .filter((disk) => (disk.size || 0) > 0)
+    .filter((disk) => !isLikelyVirtualDisk(disk))
+    .filter((disk) => hasHardwareIdentity(disk))
+
   return Array.from(
     new Map(
-      disks
-        .filter((disk) => (disk.size || 0) > 0)
-        .filter((disk) => !isLikelyVirtualDisk(disk))
-        .filter((disk) => hasHardwareIdentity(disk))
+      collapsePhysicalDiskMirrorEntries(candidates)
         .map((disk, index) => [getPhysicalDiskKey(disk, index), disk] as const)
     ).values()
   )
@@ -171,15 +254,37 @@ function getPhysicalDiskTotalBytes(disks: DiskLayoutData[]): number {
   return getPhysicalDiskLayout(disks).reduce((sum, disk) => sum + (disk.size || 0), 0)
 }
 
+const DISK_HEALTH_PLACEHOLDER_VALUES = new Set([
+  'unknown',
+  'unsupported',
+  'unavailable',
+  'not available',
+  'n/a',
+  'na',
+  'none',
+  '-',
+  '--',
+])
+
+function isMeaningfulDiskHealthStatus(value: unknown): boolean {
+  const normalized = cleanStorageText(value).toLowerCase()
+  return Boolean(normalized) && !DISK_HEALTH_PLACEHOLDER_VALUES.has(normalized)
+}
+
 function hasDiskHealthTelemetry(disk: DiskLayoutData | undefined): boolean {
   if (!disk) return false
 
   const smartPassed = disk.smartData?.smart_status?.passed
   if (typeof smartPassed === 'boolean') return true
 
-  if (cleanStorageText(disk.smartStatus)) return true
+  if (isMeaningfulDiskHealthStatus(disk.smartStatus)) return true
 
-  if (disk.smartData?.nvme_smart_health_information_log) return true
+  const nvmeHealth = disk.smartData?.nvme_smart_health_information_log
+  if (nvmeHealth && (
+    typeof nvmeHealth.critical_warning === 'number'
+    || typeof nvmeHealth.percentage_used === 'number'
+    || typeof nvmeHealth.media_errors === 'number'
+  )) return true
 
   const smartRows = disk.smartData?.ata_smart_attributes?.table
   if (Array.isArray(smartRows) && smartRows.length > 0) return true
@@ -266,19 +371,12 @@ function getDisplayStorageVolumes(volumes: DiskData[], platform?: string): DiskD
 
 function getStorageUsageSummary(volumes: DiskData[], disks: DiskLayoutData[], platform?: string) {
   const list = getDisplayStorageVolumes(volumes, platform)
-
-  if (platform === 'darwin') {
-    const total = list.reduce((sum, item) => sum + (item.size || 0), 0)
-    const used = list.reduce((sum, item) => sum + (item.used || 0), 0)
-    const percent = total > 0 ? Math.round(clampPercent((used / total) * 100) * 10) / 10 : 0
-    return { total, used, percent }
-  }
-
   const physicalTotal = getPhysicalDiskTotalBytes(disks)
-  const total = physicalTotal > 0 ? physicalTotal : list.reduce((sum, item) => sum + (item.size || 0), 0)
+  const mountedTotal = list.reduce((sum, item) => sum + (item.size || 0), 0)
+  const total = physicalTotal > 0 ? physicalTotal : mountedTotal
   const rawUsed = list.reduce((sum, item) => sum + (item.used || 0), 0)
   const used = total > 0 ? Math.min(rawUsed, total) : rawUsed
-  const percent = total > 0 ? clampPercent((used / total) * 100) : 0
+  const percent = total > 0 ? Math.round(clampPercent((used / total) * 100) * 10) / 10 : 0
   return { total, used, percent }
 }
 

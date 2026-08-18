@@ -32,13 +32,13 @@ function closeWindow() {
   width: 34px;
   height: 28px;
   border-radius: 8px;
-  color: rgba(233, 238, 247, 0.86);
+  color: var(--text-muted);
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;
 }
 
 .control:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--window-control-hover);
 }
 
 .control::before,

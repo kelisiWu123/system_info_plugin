@@ -1,25 +1,11 @@
 import { reactive } from 'vue'
 import { clampPercent } from '../utils'
 
-export type HardwareMonitorScope = 'overview' | 'processor' | 'graphics' | 'board' | 'memory' | 'storage'
-
 export type MonitoringRefreshProfile = 'eco' | 'balanced' | 'realtime'
 
 export interface MonitoringRefreshSettingsData {
   profile: MonitoringRefreshProfile
   backgroundThrottleEnabled: boolean
-}
-
-export interface DynamicMetricRequirements {
-  cpuTemp: boolean
-  cpuLoad: boolean
-  cpuLoadDetail: boolean
-  cpuSpeed: boolean
-  cpuAux: boolean
-  gpu: boolean
-  memory: boolean
-  disk: boolean
-  time: boolean
 }
 
 export interface MonitoringRefreshIntervals {
@@ -58,87 +44,6 @@ export interface MonitoringDiagnosticsState {
 export const DEFAULT_MONITORING_REFRESH_SETTINGS: MonitoringRefreshSettingsData = {
   profile: 'balanced',
   backgroundThrottleEnabled: true,
-}
-
-const EMPTY_DYNAMIC_REQUIREMENTS: DynamicMetricRequirements = {
-  cpuTemp: false,
-  cpuLoad: false,
-  cpuLoadDetail: false,
-  cpuSpeed: false,
-  cpuAux: false,
-  gpu: false,
-  memory: false,
-  disk: false,
-  time: false,
-}
-
-const SCOPE_REQUIREMENTS: Record<HardwareMonitorScope, DynamicMetricRequirements> = {
-  overview: {
-    cpuTemp: true,
-    cpuLoad: true,
-    cpuLoadDetail: false,
-    cpuSpeed: true,
-    cpuAux: false,
-    gpu: true,
-    memory: true,
-    disk: true,
-    time: true,
-  },
-  processor: {
-    cpuTemp: true,
-    cpuLoad: true,
-    cpuLoadDetail: true,
-    cpuSpeed: true,
-    cpuAux: true,
-    gpu: false,
-    memory: false,
-    disk: false,
-    time: true,
-  },
-  graphics: {
-    cpuTemp: false,
-    cpuLoad: false,
-    cpuLoadDetail: false,
-    cpuSpeed: false,
-    cpuAux: false,
-    gpu: true,
-    memory: false,
-    disk: false,
-    time: false,
-  },
-  board: {
-    cpuTemp: false,
-    cpuLoad: false,
-    cpuLoadDetail: false,
-    cpuSpeed: false,
-    cpuAux: false,
-    gpu: false,
-    memory: false,
-    disk: false,
-    time: false,
-  },
-  memory: {
-    cpuTemp: false,
-    cpuLoad: false,
-    cpuLoadDetail: false,
-    cpuSpeed: false,
-    cpuAux: false,
-    gpu: false,
-    memory: true,
-    disk: false,
-    time: true,
-  },
-  storage: {
-    cpuTemp: false,
-    cpuLoad: false,
-    cpuLoadDetail: false,
-    cpuSpeed: false,
-    cpuAux: false,
-    gpu: false,
-    memory: false,
-    disk: true,
-    time: false,
-  },
 }
 
 const PROFILE_INTERVALS: Record<MonitoringRefreshProfile, MonitoringRefreshIntervals> = {
@@ -189,23 +94,6 @@ export function normalizeMonitoringRefreshSettings(input: Partial<MonitoringRefr
         ? input.backgroundThrottleEnabled
         : DEFAULT_MONITORING_REFRESH_SETTINGS.backgroundThrottleEnabled,
   }
-}
-
-export function getDynamicMetricRequirementsForScopes(scopes: HardwareMonitorScope[]): DynamicMetricRequirements {
-  return scopes.reduce<DynamicMetricRequirements>((merged, scope) => {
-    const next = SCOPE_REQUIREMENTS[scope]
-    return {
-      cpuTemp: merged.cpuTemp || next.cpuTemp,
-      cpuLoad: merged.cpuLoad || next.cpuLoad,
-      cpuLoadDetail: merged.cpuLoadDetail || next.cpuLoadDetail,
-      cpuSpeed: merged.cpuSpeed || next.cpuSpeed,
-      cpuAux: merged.cpuAux || next.cpuAux,
-      gpu: merged.gpu || next.gpu,
-      memory: merged.memory || next.memory,
-      disk: merged.disk || next.disk,
-      time: merged.time || next.time,
-    }
-  }, { ...EMPTY_DYNAMIC_REQUIREMENTS })
 }
 
 export function getMonitoringRefreshIntervals(profile: MonitoringRefreshProfile, isBackground: boolean): MonitoringRefreshIntervals {

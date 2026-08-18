@@ -213,9 +213,28 @@ app.on('activate', () => {
     }
 })
 
-ipcMain.on('window-action', (event, action) => {
+ipcMain.on('window-action', (event, action, payload) => {
     const targetWindow = BrowserWindow.fromWebContents(event.sender)
-    if (!targetWindow) return
+    if (!targetWindow || targetWindow.isDestroyed()) return
+
+    if (action === 'close') {
+        targetWindow.close()
+        return
+    }
+
+    if (action === 'resize') {
+        const width = Number(payload?.width)
+        const height = Number(payload?.height)
+        if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+            targetWindow.setContentSize(Math.round(width), Math.round(height))
+        }
+        return
+    }
+
+    if (action === 'always-on-top') {
+        targetWindow.setAlwaysOnTop(Boolean(payload?.flag))
+        return
+    }
 
     if (action === 'minimize') {
         targetWindow.minimize()

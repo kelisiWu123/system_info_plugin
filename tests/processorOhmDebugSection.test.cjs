@@ -21,7 +21,7 @@ test('processor page exposes a Windows-only collapsible CPU frequency diagnostic
   assert.match(source, /function formatCpuFrequencyAnomalyReason\(reason\?: string\)/)
   assert.match(source, /const cpuSpeedDiagnosticReportText = computed\(\(\) => \{/)
   assert.match(source, /async function copyCpuSpeedDiagnosticReport\(\)/)
-  assert.match(source, /await writeClipboard\(cpuSpeedDiagnosticReportText\.value\)/)
+  assert.match(source, /await writeClipboardText\(cpuSpeedDiagnosticReportText\.value\)/)
   assert.match(source, /<details v-if="hasCpuSpeedDiagnosticsPanel" class="sensor-debug-panel">/)
   assert.match(source, /<summary>CPU 频率诊断信息<\/summary>/)
   assert.match(source, /复制异常信息/)

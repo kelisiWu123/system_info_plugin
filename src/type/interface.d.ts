@@ -101,9 +101,42 @@ declare global {
   type BoardData = Systeminformation.BaseboardData
   type SystemData = Systeminformation.SystemData
   type BiosInfoData = Systeminformation.BiosData
-  interface NetworkStateData {
-    rx_sec: number
-    tx_sec: number
+  interface NetworkStatusData {
+    defaultInterface: string
+    gateway: string
+    latencyMs: number | null
+    operstate: string
+    rxSec: number | null
+    txSec: number | null
+  }
+  interface NetworkAdapterSpecData {
+    iface: string
+    name: string
+    vendor: string
+    model: string
+    type: string
+    mac: string
+    ip4: string
+    speed: number | null
+    default: boolean
+    operstate: string
+  }
+  interface StorageIoData {
+    readBytesPerSec: number | null
+    writeBytesPerSec: number | null
+    totalBytesPerSec: number | null
+    readIops: number | null
+    writeIops: number | null
+    totalIops: number | null
+    waitPercent: number | null
+  }
+  interface TopProcessData {
+    pid: number
+    name: string
+    cpu: number
+    mem: number
+    memRss: number
+    user: string
   }
   type CpuTemperatureData = Systeminformation.CpuTemperatureData & {
     ok?: boolean
@@ -139,6 +172,11 @@ declare global {
   interface MonitoringRefreshSettingsData {
     profile: 'eco' | 'balanced' | 'realtime'
     backgroundThrottleEnabled: boolean
+  }
+  type AppThemePreference = 'system' | 'light' | 'dark'
+  type AppResolvedTheme = 'light' | 'dark'
+  interface AppThemeSettingsData {
+    preference: AppThemePreference
   }
   type FloatingMonitorMode = 'standard' | 'super-lite'
   interface FloatingMonitorSettingsData {
@@ -227,35 +265,10 @@ declare global {
     message?: string
     suggestion?: string
   }
-  interface BoardMetricData {
-    value: number | null
-    source: 'OpenHardwareMonitor' | 'unsupported'
-    sensorName?: string
-    unit: '°C' | 'V' | 'RPM'
-    max?: number | null
-  }
-  interface BoardTelemetryData {
-    boardTemperature: BoardMetricData
-    vrmTemperature: BoardMetricData
-    chipsetTemperature: BoardMetricData
-    systemFan: BoardMetricData
-    voltage12V: BoardMetricData
-    voltage5V: BoardMetricData
-    voltage3V: BoardMetricData
-    voltageVBat: BoardMetricData
-    pchVoltage: BoardMetricData
-  }
-  type BatteryInfoData = Systeminformation.BatteryData
   type DiskLayoutData = Systeminformation.DiskLayoutData
-  type UsbDeviceData = Systeminformation.UsbData
   type AudioDeviceData = Systeminformation.AudioData
-  type BluetoothDeviceData = Systeminformation.BluetoothDeviceData
-  type PrinterInfoData = Systeminformation.PrinterData
   type OsInfoData = Systeminformation.OsData
-  type VersionInfoData = Systeminformation.VersionData
   type TimeData = Systeminformation.TimeData
-  type WifiInterfaceData = Systeminformation.WifiInterfaceData
-  type WifiConnectionData = Systeminformation.WifiConnectionData
   type NetworkInterfaceData = Systeminformation.NetworkInterfacesData
   type GraphicsData = Systeminformation.GraphicsData
   type DisplayData = Systeminformation.GraphicsDisplayData
@@ -280,6 +293,8 @@ declare global {
       updateMonitoringRefreshSettings: (patch: Partial<MonitoringRefreshSettingsData>) => Promise<MonitoringRefreshSettingsData>
       getFloatingMonitorSettings: () => Promise<FloatingMonitorSettingsData>
       updateFloatingMonitorSettings: (patch: Partial<FloatingMonitorSettingsData>) => Promise<FloatingMonitorSettingsData>
+      getAppThemeSettings: () => Promise<AppThemeSettingsData>
+      updateAppThemeSettings: (patch: Partial<AppThemeSettingsData>) => Promise<AppThemeSettingsData>
       getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>
       startOpenHardwareMonitor: () => Promise<OpenHardwareMonitorStatusData>
       openOpenHardwareMonitorDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>
@@ -294,30 +309,25 @@ declare global {
       getCpuLoadData: () => Promise<CurrentLoadData | undefined>
       getCpuVoltage: () => Promise<CpuVoltageData | undefined>
       getCpuFanSpeed: () => Promise<CpuFanData | undefined>
-      getBoardTelemetry: () => Promise<BoardTelemetryData>
       getMemInfo: () => Promise<MemoData>
       getStaticMemInfo: () => Promise<MemoData>
       getMemoryLayout: () => Promise<MemoLayoutData[]>
       getGpuInfo: () => Promise<GpuData[]>
       getStaticGpuInfo: () => Promise<GpuData[]>
-      getNetworkInfo: () => Promise<NetworkStateData>
+      getNetworkStatus: () => Promise<NetworkStatusData>
+      getNetworkAdapters: () => Promise<NetworkAdapterSpecData[]>
       getNetworkInterfaces: () => Promise<NetworkInterfaceData[]>
-      getWifiInterfaces: () => Promise<WifiInterfaceData[]>
-      getWifiConnections: () => Promise<WifiConnectionData[]>
+      getTopProcesses: () => Promise<TopProcessData[]>
       getDiskData: () => Promise<DiskData[]>
+      getStorageIo: () => Promise<StorageIoData>
       getDiskLayout: () => Promise<DiskLayoutData[]>
       getBiosData: () => Promise<BiosInfoData | undefined>
       getSystemData: () => Promise<SystemData | undefined>
       getDisplaysData: () => Promise<DisplayData[]>
       getBoardData: () => Promise<BoardData | undefined>
-      getBatteryInfo: () => Promise<BatteryInfoData | undefined>
-      getUsbDevices: () => Promise<UsbDeviceData[]>
       getAudioDevices: () => Promise<AudioDeviceData[]>
-      getBluetoothDevices: () => Promise<BluetoothDeviceData[]>
-      getPrinterInfo: () => Promise<PrinterInfoData[]>
       getOsInfo: () => Promise<OsInfoData | undefined>
       getTimeInfo: () => Promise<TimeData | undefined>
-      getSysEnv: () => Promise<VersionInfoData>
       getWinId: () => string | undefined
       alwaysOnTop: (flag: boolean) => void
       closeWindow: () => void

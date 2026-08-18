@@ -1,11 +1,9 @@
 import { computed, reactive, ref } from 'vue'
 import {
-  DEFAULT_MONITORING_REFRESH_SETTINGS,
-  appendMetricHistory,
   createMonitoringDiagnostics,
   getMonitoringRefreshIntervals,
 } from '../utils/monitoring'
-import { getDisplayMemoryUsagePercent, getStorageUsageSummary } from '../utils'
+import { getStorageUsageSummary } from '../utils'
 import { selectPrimaryGpu } from '../utils/gpu'
 import { bindMonitoringVisibilityListeners, resolveMonitoringBackgroundThrottled } from '../utils/monitoringVisibility'
 import { normalizeErrorMessage, readService } from '../utils/serviceReader'
@@ -14,23 +12,19 @@ type FetchStatus = 'pending' | 'ok' | 'missing' | 'error'
 
 export type OverviewLiteServiceKey =
   | 'cpuInfo'
-  | 'cpuTemperature'
-  | 'cpuLoad'
   | 'memInfo'
   | 'memoryLayout'
   | 'gpuInfo'
   | 'diskData'
   | 'diskLayout'
   | 'biosData'
-  | 'systemData'
   | 'displaysData'
   | 'boardData'
   | 'osInfo'
   | 'audioDevices'
   | 'networkInterfaces'
+  | 'networkStatus'
   | 'timeInfo'
-
-type OverviewMetricHistoryKey = 'cpuTemp' | 'gpuTemp' | 'cpuLoad' | 'gpuLoad' | 'memoryLoad' | 'storageLoad'
 
 const emptyMemoData: MemoData = {
   active: 0,
@@ -54,33 +48,27 @@ const emptyMemoData: MemoData = {
 
 export const overviewLiteServiceLabels: Record<OverviewLiteServiceKey, string> = {
   cpuInfo: 'CPU 基础信息',
-  cpuTemperature: 'CPU 温度',
-  cpuLoad: 'CPU 负载',
   memInfo: '内存占用',
   memoryLayout: '内存布局',
   gpuInfo: 'GPU 信息',
   diskData: '磁盘占用',
   diskLayout: '磁盘布局',
   biosData: 'BIOS 信息',
-  systemData: '整机型号',
   displaysData: '显示器信息',
   boardData: '主板信息',
   osInfo: '操作系统',
   audioDevices: '音频设备',
   networkInterfaces: '网络接口',
+  networkStatus: '网络状态',
   timeInfo: '运行时间',
 }
 
 const loading = ref(true)
 const initialized = ref(false)
 const lastSyncedAt = ref<number>()
-const monitoringRefreshSettings = ref<MonitoringRefreshSettingsData>({ ...DEFAULT_MONITORING_REFRESH_SETTINGS })
 const backgroundThrottled = ref(false)
 
 const cpuData = ref<CpuData>()
-const cpuTemperature = ref<CpuTemperatureData>()
-const cpuLoad = ref(0)
-const cpuCurrentSpeed = ref<CpuCurrentSpeedData>({ min: 0, max: 0, avg: 0, cores: [] })
 const memoData = ref<MemoData>(emptyMemoData)
 const memoLayoutData = ref<MemoLayoutData[]>([])
 const gpuData = ref<GpuData[]>([])
@@ -89,52 +77,45 @@ const diskData = ref<DiskData[]>([])
 const diskLayoutData = ref<DiskLayoutData[]>([])
 const boardData = ref<BoardData>()
 const biosData = ref<BiosInfoData>()
-const systemData = ref<SystemData>()
 const displaysData = ref<DisplayData[]>([])
 const osInfo = ref<OsInfoData>()
 const timeInfo = ref<TimeData>()
 const audioDevices = ref<AudioDeviceData[]>([])
 const networkInterfaces = ref<NetworkInterfaceData[]>([])
-
-const metricHistory = reactive<Record<OverviewMetricHistoryKey, number[]>>({
-  cpuTemp: [],
-  gpuTemp: [],
-  cpuLoad: [],
-  gpuLoad: [],
-  memoryLoad: [],
-  storageLoad: [],
+const networkStatus = ref<NetworkStatusData>({
+  defaultInterface: '',
+  gateway: '',
+  latencyMs: null,
+  operstate: '',
+  rxSec: null,
+  txSec: null,
 })
 
 const fetchState = reactive<Record<OverviewLiteServiceKey, { status: FetchStatus; note: string }>>({
   cpuInfo: { status: 'pending', note: '' },
-  cpuTemperature: { status: 'pending', note: '' },
-  cpuLoad: { status: 'pending', note: '' },
   memInfo: { status: 'pending', note: '' },
   memoryLayout: { status: 'pending', note: '' },
   gpuInfo: { status: 'pending', note: '' },
   diskData: { status: 'pending', note: '' },
   diskLayout: { status: 'pending', note: '' },
   biosData: { status: 'pending', note: '' },
-  systemData: { status: 'pending', note: '' },
   displaysData: { status: 'pending', note: '' },
   boardData: { status: 'pending', note: '' },
   osInfo: { status: 'pending', note: '' },
   audioDevices: { status: 'pending', note: '' },
   networkInterfaces: { status: 'pending', note: '' },
+  networkStatus: { status: 'pending', note: '' },
   timeInfo: { status: 'pending', note: '' },
 })
 
 let initPromise: Promise<void> | undefined
-let refreshSettingsPromise: Promise<void> | undefined
 let refreshInFlight: Promise<void> | undefined
 let pollingTimerId: number | undefined
 let subscriberCount = 0
-let lastCpuTempRefreshAt = 0
-let lastCpuSpeedRefreshAt = 0
-let lastGpuRefreshAt = 0
 let lastMemoryRefreshAt = 0
 let lastDiskRefreshAt = 0
 let lastTimeRefreshAt = 0
+let lastNetworkStatusRefreshAt = 0
 let visibilityListenersBound = false
 const diagnostics = createMonitoringDiagnostics('overview-lite')
 
@@ -142,8 +123,6 @@ function setFetchState(key: OverviewLiteServiceKey, status: FetchStatus, note = 
   fetchState[key].status = status
   fetchState[key].note = note
 }
-
-const usedMemoPercent = computed(() => getDisplayMemoryUsagePercent(memoData.value))
 
 const storageUsage = computed(() => {
   const platform = osInfo.value?.platform?.toLowerCase?.() || ''
@@ -156,7 +135,7 @@ function restartPolling() {
 }
 
 function updateBackgroundThrottled() {
-  const nextValue = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
+  const nextValue = resolveMonitoringBackgroundThrottled(true)
   if (backgroundThrottled.value === nextValue) return
   backgroundThrottled.value = nextValue
   restartPolling()
@@ -164,28 +143,11 @@ function updateBackgroundThrottled() {
 
 function syncMonitoringVisibility() {
   visibilityListenersBound = bindMonitoringVisibilityListeners(visibilityListenersBound, updateBackgroundThrottled)
-  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
-}
-
-async function ensureMonitoringRefreshSettingsLoaded() {
-  if (refreshSettingsPromise) return refreshSettingsPromise
-
-  refreshSettingsPromise = (async () => {
-    try {
-      monitoringRefreshSettings.value = await window.services.getMonitoringRefreshSettings()
-    } catch {
-      monitoringRefreshSettings.value = { ...DEFAULT_MONITORING_REFRESH_SETTINGS }
-    }
-    backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
-  })().finally(() => {
-    refreshSettingsPromise = undefined
-  })
-
-  return refreshSettingsPromise
+  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(true)
 }
 
 function getCurrentRefreshIntervals() {
-  return getMonitoringRefreshIntervals(monitoringRefreshSettings.value.profile, backgroundThrottled.value)
+  return getMonitoringRefreshIntervals('balanced', backgroundThrottled.value)
 }
 
 async function refreshOverviewMetrics(force = false) {
@@ -196,83 +158,30 @@ async function refreshOverviewMetrics(force = false) {
       const now = Date.now()
       const intervals = getCurrentRefreshIntervals()
       diagnostics.markRefreshAttempt(force, backgroundThrottled.value)
-      const needsCpuTemp = force || now - lastCpuTempRefreshAt >= intervals.cpuTemp
-      const needsCpuSpeed = force || now - lastCpuSpeedRefreshAt >= intervals.cpuSpeed
-      const needsGpu = intervals.gpu > 0 && (force || now - lastGpuRefreshAt >= intervals.gpu)
       const needsMemory = force || now - lastMemoryRefreshAt >= intervals.memory
       const needsDisk = force || now - lastDiskRefreshAt >= intervals.disk
       const needsTime = force || now - lastTimeRefreshAt >= intervals.time
+      const networkStatusInterval = Math.max(intervals.base * 2, 6000)
+      const needsNetworkStatus = force || now - lastNetworkStatusRefreshAt >= networkStatusInterval
 
-      if (!force && !needsCpuTemp && !needsCpuSpeed && !needsGpu && !needsMemory && !needsDisk && !needsTime) {
+      if (!force && !needsMemory && !needsDisk && !needsTime && !needsNetworkStatus) {
         diagnostics.markRefreshSkipped('not-due', backgroundThrottled.value)
         return
       }
 
-      const [temperatureRes, cpuLoadRes, cpuSpeedRes, gpuRes, memoRes, diskRes, timeRes] = await Promise.allSettled([
-        needsCpuTemp ? readService(() => window.services.getCpuTemperature(), 9000) : Promise.resolve(undefined),
-        readService(() => window.services.getCpuFullLoad(), 6000),
-        needsCpuSpeed ? readService(() => window.services.getCpuCurrentSpeed(), 7000) : Promise.resolve(undefined),
-        needsGpu ? readService(() => window.services.getGpuInfo(), 15000) : Promise.resolve(undefined),
+      const [memoRes, diskRes, timeRes, networkStatusRes] = await Promise.allSettled([
         needsMemory ? readService(() => window.services.getMemInfo(), 6000) : Promise.resolve(undefined),
         needsDisk ? readService(() => window.services.getDiskData(), 10000) : Promise.resolve(undefined),
         needsTime ? readService(() => window.services.getTimeInfo(), 6000) : Promise.resolve(undefined),
+        needsNetworkStatus ? readService(() => window.services.getNetworkStatus(), 10000) : Promise.resolve(undefined),
       ])
 
       let hasUpdatedMetric = false
-
-      if (needsCpuTemp && temperatureRes.status === 'fulfilled') {
-        cpuTemperature.value = temperatureRes.value
-        const nextValue =
-          typeof temperatureRes.value?.value === 'number'
-            ? temperatureRes.value.value
-            : typeof temperatureRes.value?.main === 'number'
-              ? temperatureRes.value.main
-              : null
-        setFetchState(
-          'cpuTemperature',
-          nextValue !== null || temperatureRes.value?.source === 'unsupported' ? 'ok' : 'missing',
-          nextValue !== null ? '' : temperatureRes.value?.message || temperatureRes.value?.errorCode || 'main 为空'
-        )
-        appendMetricHistory(metricHistory.cpuTemp, nextValue || 0)
-        lastCpuTempRefreshAt = now
-        hasUpdatedMetric = true
-      } else if (needsCpuTemp && temperatureRes.status === 'rejected') {
-        setFetchState('cpuTemperature', 'error', normalizeErrorMessage(temperatureRes.reason))
-      }
-
-      if (cpuLoadRes.status === 'fulfilled') {
-        cpuLoad.value = cpuLoadRes.value || 0
-        setFetchState('cpuLoad', 'ok')
-        appendMetricHistory(metricHistory.cpuLoad, cpuLoad.value, true)
-        hasUpdatedMetric = true
-      } else {
-        setFetchState('cpuLoad', 'error', normalizeErrorMessage(cpuLoadRes.reason))
-      }
-
-      if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
-        cpuCurrentSpeed.value = cpuSpeedRes.value || { min: 0, max: 0, avg: 0, cores: [] }
-        lastCpuSpeedRefreshAt = now
-        hasUpdatedMetric = true
-      }
-
-      if (needsGpu && gpuRes.status === 'fulfilled') {
-        const nextGpuData = gpuRes.value || []
-        gpuData.value = nextGpuData
-        primaryGpu.value = selectPrimaryGpu(nextGpuData)
-        setFetchState('gpuInfo', nextGpuData.length ? 'ok' : 'missing', nextGpuData.length ? '' : '返回空数组')
-        appendMetricHistory(metricHistory.gpuTemp, primaryGpu.value?.temperatureGpu || 0)
-        appendMetricHistory(metricHistory.gpuLoad, primaryGpu.value?.utilizationGpu || 0, true)
-        lastGpuRefreshAt = now
-        hasUpdatedMetric = true
-      } else if (needsGpu && gpuRes.status === 'rejected') {
-        setFetchState('gpuInfo', 'error', normalizeErrorMessage(gpuRes.reason))
-      }
 
       if (needsMemory && memoRes.status === 'fulfilled') {
         const nextMemoData = memoRes.value || emptyMemoData
         memoData.value = nextMemoData
         setFetchState('memInfo', nextMemoData.total > 0 ? 'ok' : 'missing', nextMemoData.total > 0 ? '' : 'total <= 0')
-        appendMetricHistory(metricHistory.memoryLoad, usedMemoPercent.value, true)
         lastMemoryRefreshAt = now
         hasUpdatedMetric = true
       } else if (needsMemory && memoRes.status === 'rejected') {
@@ -283,7 +192,6 @@ async function refreshOverviewMetrics(force = false) {
         const nextDiskData = diskRes.value || []
         diskData.value = nextDiskData
         setFetchState('diskData', nextDiskData.length ? 'ok' : 'missing', nextDiskData.length ? '' : '返回空数组')
-        appendMetricHistory(metricHistory.storageLoad, storageUsage.value.percent, true)
         lastDiskRefreshAt = now
         hasUpdatedMetric = true
       } else if (needsDisk && diskRes.status === 'rejected') {
@@ -297,6 +205,15 @@ async function refreshOverviewMetrics(force = false) {
         hasUpdatedMetric = true
       } else if (needsTime && timeRes.status === 'rejected') {
         setFetchState('timeInfo', 'error', normalizeErrorMessage(timeRes.reason))
+      }
+
+      if (needsNetworkStatus && networkStatusRes.status === 'fulfilled' && networkStatusRes.value) {
+        networkStatus.value = networkStatusRes.value
+        setFetchState('networkStatus', networkStatusRes.value.defaultInterface ? 'ok' : 'missing', networkStatusRes.value.defaultInterface ? '' : '未识别默认网络接口')
+        lastNetworkStatusRefreshAt = now
+        hasUpdatedMetric = true
+      } else if (needsNetworkStatus && networkStatusRes.status === 'rejected') {
+        setFetchState('networkStatus', 'error', normalizeErrorMessage(networkStatusRes.reason))
       }
 
       if (hasUpdatedMetric) {
@@ -313,98 +230,145 @@ async function refreshOverviewMetrics(force = false) {
   return refreshInFlight
 }
 
-async function initOverviewHardwareData() {
+async function runOverviewRead<T>(
+  reader: () => Promise<T>,
+  onSuccess: (value: T) => void,
+  onError: (error: unknown) => void
+) {
   try {
-    const [cpuRes, memoryLayoutRes, boardRes, osRes] = await Promise.allSettled([
-      readService(() => window.services.getCpuInfo(), 10000, 1),
-      readService(() => window.services.getMemoryLayout(), 10000, 1),
-      readService(() => window.services.getBoardData(), 8000, 1),
-      readService(() => window.services.getOsInfo(), 8000, 1),
-    ])
+    onSuccess(await reader())
+  } catch (error) {
+    onError(error)
+  }
+}
 
-    if (cpuRes.status === 'fulfilled') {
-      cpuData.value = cpuRes.value
-      setFetchState('cpuInfo', cpuRes.value ? 'ok' : 'missing', cpuRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('cpuInfo', 'error', normalizeErrorMessage(cpuRes.reason))
-    }
+async function loadOverviewCoreSummary() {
+  await Promise.all([
+    runOverviewRead(
+      () => readService(() => window.services.getCpuInfo(), 10000, 1),
+      (value) => {
+        cpuData.value = value
+        setFetchState('cpuInfo', value ? 'ok' : 'missing', value ? '' : '返回为空')
+      },
+      (error) => setFetchState('cpuInfo', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getMemInfo(), 6000, 1),
+      (value) => {
+        memoData.value = value || emptyMemoData
+        setFetchState('memInfo', memoData.value.total > 0 ? 'ok' : 'missing', memoData.value.total > 0 ? '' : 'total <= 0')
+        lastMemoryRefreshAt = Date.now()
+      },
+      (error) => setFetchState('memInfo', 'error', normalizeErrorMessage(error))
+    ),
+  ])
+}
 
-    if (memoryLayoutRes.status === 'fulfilled') {
-      memoLayoutData.value = memoryLayoutRes.value || []
-      setFetchState('memoryLayout', memoLayoutData.value.length ? 'ok' : 'missing', memoLayoutData.value.length ? '' : '返回空数组')
-    } else {
-      setFetchState('memoryLayout', 'error', normalizeErrorMessage(memoryLayoutRes.reason))
-    }
+async function loadOverviewEarlyEnrichment() {
+  await Promise.all([
+    runOverviewRead(
+      () => readService(() => window.services.getOsInfo(), 8000, 1),
+      (value) => {
+        osInfo.value = value
+        setFetchState('osInfo', value ? 'ok' : 'missing', value ? '' : '返回为空')
+      },
+      (error) => setFetchState('osInfo', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getNetworkInterfaces(), 12000, 1),
+      (value) => {
+        networkInterfaces.value = value || []
+        setFetchState('networkInterfaces', networkInterfaces.value.length ? 'ok' : 'missing', networkInterfaces.value.length ? '' : '返回空数组')
+      },
+      (error) => setFetchState('networkInterfaces', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getNetworkStatus(), 10000),
+      (value) => {
+        networkStatus.value = value
+        setFetchState('networkStatus', value.defaultInterface ? 'ok' : 'missing', value.defaultInterface ? '' : '未识别默认网络接口')
+        lastNetworkStatusRefreshAt = Date.now()
+      },
+      (error) => setFetchState('networkStatus', 'error', normalizeErrorMessage(error))
+    ),
+  ])
+}
 
-    if (boardRes.status === 'fulfilled') {
-      boardData.value = boardRes.value
-      setFetchState('boardData', boardRes.value ? 'ok' : 'missing', boardRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('boardData', 'error', normalizeErrorMessage(boardRes.reason))
-    }
+async function hydrateOverviewDetails() {
+  await Promise.all([
+    runOverviewRead(
+      () => readService(() => window.services.getMemoryLayout(), 10000, 1),
+      (value) => {
+        memoLayoutData.value = value || []
+        setFetchState('memoryLayout', memoLayoutData.value.length ? 'ok' : 'missing', memoLayoutData.value.length ? '' : '返回空数组')
+      },
+      (error) => setFetchState('memoryLayout', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getBoardData(), 8000, 1),
+      (value) => {
+        boardData.value = value
+        setFetchState('boardData', value ? 'ok' : 'missing', value ? '' : '返回为空')
+      },
+      (error) => setFetchState('boardData', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getDiskLayout(), 15000, 1),
+      (value) => {
+        diskLayoutData.value = value || []
+        setFetchState('diskLayout', diskLayoutData.value.length ? 'ok' : 'missing', diskLayoutData.value.length ? '' : '返回空数组')
+      },
+      (error) => setFetchState('diskLayout', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getBiosData(), 10000, 1),
+      (value) => {
+        biosData.value = value
+        setFetchState('biosData', value ? 'ok' : 'missing', value ? '' : '返回为空')
+      },
+      (error) => setFetchState('biosData', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getStaticGpuInfo(), 12000, 1),
+      (value) => {
+        gpuData.value = value || []
+        primaryGpu.value = selectPrimaryGpu(gpuData.value)
+        setFetchState('gpuInfo', gpuData.value.length ? 'ok' : 'missing', gpuData.value.length ? '' : '返回空数组')
+      },
+      (error) => setFetchState('gpuInfo', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getDisplaysData(), 12000, 1),
+      (value) => {
+        displaysData.value = value || []
+        setFetchState('displaysData', displaysData.value.length ? 'ok' : 'missing', displaysData.value.length ? '' : '返回空数组')
+      },
+      (error) => setFetchState('displaysData', 'error', normalizeErrorMessage(error))
+    ),
+    runOverviewRead(
+      () => readService(() => window.services.getAudioDevices(), 10000, 1),
+      (value) => {
+        audioDevices.value = value || []
+        setFetchState('audioDevices', audioDevices.value.length ? 'ok' : 'missing', audioDevices.value.length ? '' : '返回空数组')
+      },
+      (error) => setFetchState('audioDevices', 'error', normalizeErrorMessage(error))
+    ),
+  ])
 
-    if (osRes.status === 'fulfilled') {
-      osInfo.value = osRes.value
-      setFetchState('osInfo', osRes.value ? 'ok' : 'missing', osRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('osInfo', 'error', normalizeErrorMessage(osRes.reason))
-    }
+  await refreshOverviewMetrics()
+}
 
-    const [diskLayoutRes, biosRes, systemRes, displaysRes, audioRes, networkRes] = await Promise.allSettled([
-      readService(() => window.services.getDiskLayout(), 15000, 1),
-      readService(() => window.services.getBiosData(), 10000, 1),
-      readService(() => window.services.getSystemData(), 10000, 1),
-      readService(() => window.services.getDisplaysData(), 12000, 1),
-      readService(() => window.services.getAudioDevices(), 10000, 1),
-      readService(() => window.services.getNetworkInterfaces(), 12000, 1),
-    ])
+async function initOverviewHardwareData() {
+  const earlyEnrichmentPromise = loadOverviewEarlyEnrichment().catch(() => undefined)
 
-    if (diskLayoutRes.status === 'fulfilled') {
-      diskLayoutData.value = diskLayoutRes.value || []
-      setFetchState('diskLayout', diskLayoutData.value.length ? 'ok' : 'missing', diskLayoutData.value.length ? '' : '返回空数组')
-    } else {
-      setFetchState('diskLayout', 'error', normalizeErrorMessage(diskLayoutRes.reason))
-    }
-
-    if (biosRes.status === 'fulfilled') {
-      biosData.value = biosRes.value
-      setFetchState('biosData', biosRes.value ? 'ok' : 'missing', biosRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('biosData', 'error', normalizeErrorMessage(biosRes.reason))
-    }
-
-    if (systemRes.status === 'fulfilled') {
-      systemData.value = systemRes.value
-      setFetchState('systemData', systemRes.value ? 'ok' : 'missing', systemRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('systemData', 'error', normalizeErrorMessage(systemRes.reason))
-    }
-
-    if (displaysRes.status === 'fulfilled') {
-      displaysData.value = displaysRes.value || []
-      setFetchState('displaysData', displaysData.value.length ? 'ok' : 'missing', displaysData.value.length ? '' : '返回空数组')
-    } else {
-      setFetchState('displaysData', 'error', normalizeErrorMessage(displaysRes.reason))
-    }
-
-    if (audioRes.status === 'fulfilled') {
-      audioDevices.value = audioRes.value || []
-      setFetchState('audioDevices', audioDevices.value.length ? 'ok' : 'missing', audioDevices.value.length ? '' : '返回空数组')
-    } else {
-      setFetchState('audioDevices', 'error', normalizeErrorMessage(audioRes.reason))
-    }
-
-    if (networkRes.status === 'fulfilled') {
-      networkInterfaces.value = networkRes.value || []
-      setFetchState('networkInterfaces', networkInterfaces.value.length ? 'ok' : 'missing', networkInterfaces.value.length ? '' : '返回空数组')
-    } else {
-      setFetchState('networkInterfaces', 'error', normalizeErrorMessage(networkRes.reason))
-    }
-
-    await refreshOverviewMetrics(true)
+  try {
+    await loadOverviewCoreSummary()
+    loading.value = false
+    await hydrateOverviewDetails()
   } finally {
     initialized.value = true
     loading.value = false
+    void earlyEnrichmentPromise
   }
 }
 
@@ -453,7 +417,6 @@ export async function activateOverviewHardwareStore() {
     await initPromise
   }
 
-  await ensureMonitoringRefreshSettingsLoaded()
   startPolling()
 }
 
@@ -480,23 +443,12 @@ export function deactivateOverviewHardwareStore() {
   }
 }
 
-export async function updateOverviewMonitoringRefreshSettings(patch: Partial<MonitoringRefreshSettingsData>) {
-  monitoringRefreshSettings.value = await window.services.updateMonitoringRefreshSettings(patch)
-  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(monitoringRefreshSettings.value.backgroundThrottleEnabled)
-  restartPolling()
-  return monitoringRefreshSettings.value
-}
-
 export const overviewHardwareStore = {
   loading,
   initialized,
   lastSyncedAt,
-  monitoringRefreshSettings,
   backgroundThrottled,
   cpuData,
-  cpuTemperature,
-  cpuLoad,
-  cpuCurrentSpeed,
   memoData,
   memoLayoutData,
   gpuData,
@@ -505,15 +457,13 @@ export const overviewHardwareStore = {
   diskLayoutData,
   boardData,
   biosData,
-  systemData,
   displaysData,
   osInfo,
   timeInfo,
   audioDevices,
   networkInterfaces,
-  metricHistory,
+  networkStatus,
   fetchState,
   diagnostics: diagnostics.state,
-  usedMemoPercent,
   storageUsage,
 }

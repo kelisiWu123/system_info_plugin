@@ -7,8 +7,10 @@ import {
   HardDisk,
   Memory,
 } from '@icon-park/vue-next'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { overviewHardwareStore, updateOverviewMonitoringRefreshSettings } from './composables/useOverviewHardwareData'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import ThemeControl from './components/common/ThemeControl.vue'
+import { overviewHardwareStore } from './composables/useOverviewHardwareData'
+import { useSensorEnhancementController } from './composables/useSensorEnhancementController'
 import { resolveDevPageCopyTarget } from './utils/devPageCopy'
 import {
   resolveInitialFloatingEntry,
@@ -16,13 +18,6 @@ import {
   resolvePageName,
   type PageName,
 } from './utils/hashRoute'
-import {
-  getSensorEnhancementControlLabel,
-  getSensorEnhancementMenuAriaLabel,
-  getSensorEnhancementPlatform,
-  getSensorEnhancementPrimaryActionLabel,
-  shouldAutoPrepareSensorEnhancement,
-} from './utils/platform'
 
 type ComputerSection =
   | 'overview'
@@ -77,33 +72,51 @@ function syncHash() {
 }
 
 const currentPage = computed<PageName>(() => resolvePageName(currentHash.value))
+const hasExplicitPageRoute = computed(() => Boolean(currentHash.value.replace(/^#\/?/, '').trim()))
 const initialFloatingMode = computed(() => resolveInitialFloatingMode(currentHash.value))
 const initialFloatingEntry = computed(() => resolveInitialFloatingEntry(currentHash.value))
 const isWatchPage = computed(() => currentPage.value === 'watch')
+const isMonitorPage = computed(() => currentPage.value === 'monitor')
 const isDeviceSpecsPage = computed(() => currentPage.value === 'deviceSpecs')
 const currentDevCopyTarget = computed(() => resolveDevPageCopyTarget(selectedSection.value))
-const overviewRefreshSettings = overviewHardwareStore.monitoringRefreshSettings
-const overviewBackgroundThrottled = overviewHardwareStore.backgroundThrottled
-const refreshSettingsPending = ref(false)
-const sensorSettings = ref<HardwareSensorSettingsData>({
-  enhancedSensorEnabled: false,
-  openHardwareMonitorAutoStart: false,
-  openHardwareMonitorPort: 18085,
-})
-const sensorSettingsLoading = ref(false)
-const sensorActionLoading = ref(false)
-const sensorAutoPrepareAttempted = ref(false)
-const sensorMenuOpen = ref(false)
-const sensorAuthorizationPromptVisible = ref(false)
-const sensorActionMessage = ref('')
-const openHardwareMonitorStatus = ref<OpenHardwareMonitorStatusData | null>(null)
-const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
 
-const refreshProfiles = [
-  { id: 'eco', label: '省电' },
-  { id: 'balanced', label: '平衡' },
-  { id: 'realtime', label: '实时' },
-] as const
+const {
+  sensorSettings,
+  sensorSettingsLoading,
+  sensorActionLoading,
+  sensorMenuOpen,
+  sensorAuthorizationPromptVisible,
+  sensorActionMessage,
+  platform: sensorEnhancementPlatform,
+  ready: sensorEnhancementReady,
+  active: processorSensorControlActive,
+  disabled: processorSensorControlDisabled,
+  controlLabel: processorSensorControlLabel,
+  controlAriaLabel: processorSensorControlAriaLabel,
+  primaryActionLabel: processorSensorPrimaryActionLabel,
+  status: sensorEnhancementStatus,
+  statusLabel: processorSensorControlStatus,
+  controlTitle: processorSensorControlTitle,
+  description: sensorEnhancementDescription,
+  refreshState: refreshGlobalSensorEnhancementState,
+  prepare: prepareGlobalSensorEnhancement,
+  setEnabled: setProcessorSensorEnhancementEnabled,
+  continueAuthorization: continueSensorAuthorization,
+  disableFromPrompt: disableSensorFromPrompt,
+  retry: retrySensorEnhancement,
+  refreshFromMenu: refreshSensorEnhancementFromMenu,
+  copyDiagnostics: copySensorDiagnostics,
+  toggleMenu: toggleSensorMenu,
+  openDetails: openProcessorSensorDetails,
+} = useSensorEnhancementController({
+  osInfo: overviewHardwareStore.osInfo,
+  refreshProcessorState: () => processorRef.value?.refreshSensorEnhancementState?.(),
+  openProcessorDetails: async () => {
+    selectedSection.value = 'processor'
+    await nextTick()
+    processorRef.value?.openSensorEnhancementPanel?.()
+  },
+})
 
 function syncBodyMode() {
   document.body.classList.toggle('watch-window-body', isWatchPage.value)
@@ -172,51 +185,6 @@ function exportCurrentSectionReport() {
   getCurrentCopyHandle()?.exportReport?.()
 }
 
-async function writeClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  const copied = document.execCommand('copy')
-  document.body.removeChild(textarea)
-
-  if (!copied) {
-    throw new Error('execCommand copy failed')
-  }
-}
-
-async function applyOverviewRefreshProfile(profile: MonitoringRefreshSettingsData['profile']) {
-  if (refreshSettingsPending.value || overviewRefreshSettings.value.profile === profile) return
-
-  refreshSettingsPending.value = true
-  try {
-    await updateOverviewMonitoringRefreshSettings({ profile })
-  } finally {
-    refreshSettingsPending.value = false
-  }
-}
-
-async function toggleOverviewBackgroundThrottle() {
-  if (refreshSettingsPending.value) return
-
-  refreshSettingsPending.value = true
-  try {
-    await updateOverviewMonitoringRefreshSettings({
-      backgroundThrottleEnabled: !overviewRefreshSettings.value.backgroundThrottleEnabled,
-    })
-  } finally {
-    refreshSettingsPending.value = false
-  }
-}
-
 const devCopyButtonClass = computed(() => [
   'debug-button',
   copyFeedback.value === 'success' ? 'debug-button--success' : '',
@@ -231,261 +199,13 @@ const devCopyButtonText = computed(() => {
 })
 
 const processorSensorControlVisible = computed(() =>
-  currentPage.value === 'computer' && sensorEnhancementPlatform.value !== 'unsupported'
+  currentPage.value === 'computer'
+  && (selectedSection.value === 'processor' || selectedSection.value === 'graphics')
+  && sensorEnhancementPlatform.value !== 'unsupported'
 )
-const sensorEnhancementPlatform = computed(() => getSensorEnhancementPlatform(overviewHardwareStore.osInfo.value))
-const sensorEnhancementReady = computed(() => {
-  if (sensorEnhancementPlatform.value === 'windows') return Boolean(openHardwareMonitorStatus.value?.running)
-  if (sensorEnhancementPlatform.value === 'macos') return Boolean(macHelperStatus.value?.loaded && macHelperStatus.value?.socketExists)
-  return false
-})
-const processorSensorControlActive = computed(() => sensorSettings.value.enhancedSensorEnabled && sensorEnhancementReady.value)
-const processorSensorControlDisabled = computed(() => sensorSettingsLoading.value || sensorActionLoading.value)
-const processorSensorControlLabel = computed(() => getSensorEnhancementControlLabel(sensorEnhancementPlatform.value))
-const processorSensorControlAriaLabel = computed(() => getSensorEnhancementMenuAriaLabel(sensorEnhancementPlatform.value))
-const processorSensorControlTitle = computed(() => `${processorSensorControlLabel.value}：${processorSensorControlStatus.value}`)
-const processorSensorPrimaryActionLabel = computed(() => getSensorEnhancementPrimaryActionLabel(
-  sensorEnhancementPlatform.value,
-  sensorSettings.value.enhancedSensorEnabled
-))
-const sensorEnhancementStatus = computed<'off' | 'running' | 'preparing' | 'needs-auth' | 'error' | 'pending'>(() => {
-  if (!sensorSettings.value.enhancedSensorEnabled) return 'off'
-  if (sensorActionLoading.value) return 'preparing'
-  if (sensorEnhancementReady.value) return 'running'
-
-  if (sensorEnhancementPlatform.value === 'macos') {
-    if (macHelperStatus.value?.reason === 'MACOS_POWERMETRICS_HELPER_INSTALL_FAILED') return 'error'
-    if (!macHelperStatus.value?.installed) return 'needs-auth'
-  }
-
-  if (sensorEnhancementPlatform.value === 'windows') {
-    const reason = openHardwareMonitorStatus.value?.reason || ''
-    if (reason === 'OHM_START_FAILED' || reason === 'OHM_EXE_NOT_FOUND' || reason === 'OHM_RUNTIME_COPY_FAILED') return 'error'
-  }
-
-  return 'pending'
-})
-const processorSensorControlStatus = computed(() => {
-  switch (sensorEnhancementStatus.value) {
-    case 'off':
-      return '已关闭'
-    case 'running':
-      return '运行中'
-    case 'preparing':
-      return '准备中'
-    case 'needs-auth':
-      return '需授权'
-    case 'error':
-      return '异常'
-    default:
-      return '待启用'
-  }
-})
-const sensorEnhancementDescription = computed(() => {
-  if (sensorEnhancementPlatform.value === 'windows') {
-    if (!sensorSettings.value.enhancedSensorEnabled) {
-      return 'OHM 已关闭。需要时可启用 OpenHardwareMonitor 补齐温度、频率和功耗数据。'
-    }
-    if (sensorEnhancementStatus.value === 'running') return 'OpenHardwareMonitor 正在补齐温度、频率、功耗等传感器数据。'
-    if (sensorEnhancementStatus.value === 'preparing') return '正在准备 OpenHardwareMonitor 组件，请稍候。'
-    if (sensorEnhancementStatus.value === 'error') return 'OpenHardwareMonitor 未能就绪，可以重试或查看详情。'
-    return 'OpenHardwareMonitor 已启用，组件就绪后会自动补齐缺失数据。'
-  }
-
-  if (!sensorSettings.value.enhancedSensorEnabled) return '已关闭'
-  if (sensorEnhancementStatus.value === 'running') return '正在补齐温度、频率、功耗等传感器数据。'
-  if (sensorEnhancementStatus.value === 'preparing') return '正在准备增强组件，请稍候。'
-  if (sensorEnhancementStatus.value === 'needs-auth') return '需要一次系统授权，授权后会自动启用增强采样。'
-  if (sensorEnhancementStatus.value === 'error') return '增强组件未能就绪，可以重试或查看详情。'
-  return '增强模式默认开启，组件就绪后会自动补齐缺失数据。'
-})
 const showMainHeaderActions = computed(() =>
   currentPage.value === 'computer' && Boolean(currentDevCopyTarget.value)
 )
-
-const sensorDiagnosticsText = computed(() => {
-  const lines = [
-    sensorEnhancementPlatform.value === 'windows' ? 'OpenHardwareMonitor 诊断' : '传感器增强诊断',
-    `生成时间：${new Date().toLocaleString('zh-CN')}`,
-    `平台：${sensorEnhancementPlatform.value}`,
-    `状态：${processorSensorControlStatus.value}`,
-    `${
-      sensorEnhancementPlatform.value === 'windows' ? 'OHM 支持' : '增强开关'
-    }：${sensorSettings.value.enhancedSensorEnabled ? '已开启' : '已关闭'}`,
-  ]
-
-  if (sensorEnhancementPlatform.value === 'windows') {
-    lines.push(
-      `OHM 自启动：${sensorSettings.value.openHardwareMonitorAutoStart ? '已开启' : '已关闭'}`,
-      `OHM 端口：${sensorSettings.value.openHardwareMonitorPort}`
-    )
-  }
-
-  if (sensorEnhancementPlatform.value === 'windows' && openHardwareMonitorStatus.value) {
-    lines.push(
-      '',
-      '[OpenHardwareMonitor]',
-      `running：${Boolean(openHardwareMonitorStatus.value.running)}`,
-      `reason：${openHardwareMonitorStatus.value.reason || ''}`,
-      `suggestion：${openHardwareMonitorStatus.value.suggestion || ''}`,
-      `executableExists：${Boolean(openHardwareMonitorStatus.value.executableExists)}`
-    )
-  }
-
-  if (sensorEnhancementPlatform.value === 'macos' && macHelperStatus.value) {
-    lines.push(
-      '',
-      '[macOS powermetrics helper]',
-      `installed：${Boolean(macHelperStatus.value.installed)}`,
-      `loaded：${Boolean(macHelperStatus.value.loaded)}`,
-      `socketExists：${Boolean(macHelperStatus.value.socketExists)}`,
-      `reason：${macHelperStatus.value.reason || ''}`,
-      `suggestion：${macHelperStatus.value.suggestion || ''}`
-    )
-  }
-
-  return lines.join('\n')
-})
-
-async function copySensorDiagnostics() {
-  try {
-    await writeClipboard(sensorDiagnosticsText.value)
-    sensorActionMessage.value = '诊断信息已复制'
-  } catch (error) {
-    console.error('复制传感器诊断失败:', error)
-    sensorActionMessage.value = '诊断信息复制失败'
-  }
-}
-
-function toggleSensorMenu() {
-  sensorMenuOpen.value = !sensorMenuOpen.value
-}
-
-async function setProcessorSensorEnhancementEnabled(nextEnabled: boolean) {
-  if (sensorEnhancementPlatform.value === 'unsupported' || sensorActionLoading.value) return
-
-  sensorActionLoading.value = true
-
-  try {
-    sensorActionMessage.value = ''
-    sensorSettings.value = await window.services.updateHardwareSensorSettings({
-      enhancedSensorEnabled: nextEnabled,
-      openHardwareMonitorAutoStart: nextEnabled,
-    })
-
-    if (nextEnabled) {
-      sensorAutoPrepareAttempted.value = false
-      await prepareGlobalSensorEnhancement(false)
-    } else if (sensorEnhancementPlatform.value === 'macos' && macHelperStatus.value?.installed) {
-      macHelperStatus.value = await window.services.uninstallMacPowermetricsHelper()
-    } else if (sensorEnhancementPlatform.value === 'windows') {
-      openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
-    }
-
-    await processorRef.value?.refreshSensorEnhancementState?.()
-    sensorMenuOpen.value = false
-  } finally {
-    sensorActionLoading.value = false
-  }
-}
-
-function openProcessorSensorDetails() {
-  if (selectedSection.value !== 'processor') {
-    selectedSection.value = 'processor'
-  }
-
-  sensorMenuOpen.value = false
-  processorRef.value?.openSensorEnhancementPanel?.()
-}
-
-async function refreshGlobalSensorEnhancementState() {
-  if (sensorEnhancementPlatform.value === 'unsupported') return
-
-  sensorSettingsLoading.value = true
-
-  try {
-    sensorSettings.value = await window.services.getHardwareSensorSettings()
-
-    if (sensorEnhancementPlatform.value === 'windows') {
-      openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
-    } else if (sensorEnhancementPlatform.value === 'macos') {
-      macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
-    }
-  } finally {
-    sensorSettingsLoading.value = false
-  }
-}
-
-async function prepareGlobalSensorEnhancement(auto: boolean) {
-  if (auto && sensorAutoPrepareAttempted.value) return
-  if (auto) sensorAutoPrepareAttempted.value = true
-
-  if (!shouldAutoPrepareSensorEnhancement(
-    sensorEnhancementPlatform.value,
-    sensorSettings.value.enhancedSensorEnabled,
-    sensorEnhancementReady.value
-  )) {
-    return
-  }
-
-  sensorActionLoading.value = true
-
-  try {
-    if (sensorEnhancementPlatform.value === 'windows') {
-      openHardwareMonitorStatus.value = await window.services.startOpenHardwareMonitor()
-      openHardwareMonitorStatus.value = await window.services.getOpenHardwareMonitorStatus()
-    } else if (sensorEnhancementPlatform.value === 'macos') {
-      if (!macHelperStatus.value?.installed) {
-        sensorAuthorizationPromptVisible.value = true
-        return
-      }
-
-      macHelperStatus.value = await window.services.installMacPowermetricsHelper()
-      macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
-    }
-
-    await processorRef.value?.refreshSensorEnhancementState?.()
-  } finally {
-    sensorActionLoading.value = false
-  }
-}
-
-async function continueSensorAuthorization() {
-  if (sensorEnhancementPlatform.value !== 'macos' || sensorActionLoading.value) return
-
-  sensorAuthorizationPromptVisible.value = false
-  sensorActionLoading.value = true
-
-  try {
-    sensorActionMessage.value = '正在请求系统授权...'
-    macHelperStatus.value = await window.services.installMacPowermetricsHelper()
-    macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
-    sensorActionMessage.value = macHelperStatus.value.loaded && macHelperStatus.value.socketExists
-      ? '增强模式已运行'
-      : macHelperStatus.value.suggestion || '增强组件尚未就绪'
-    await processorRef.value?.refreshSensorEnhancementState?.()
-    sensorMenuOpen.value = false
-  } finally {
-    sensorActionLoading.value = false
-  }
-}
-
-async function disableSensorFromPrompt() {
-  sensorAuthorizationPromptVisible.value = false
-  await setProcessorSensorEnhancementEnabled(false)
-}
-
-async function retrySensorEnhancement() {
-  sensorAutoPrepareAttempted.value = false
-  await refreshGlobalSensorEnhancementState()
-  await prepareGlobalSensorEnhancement(false)
-  sensorMenuOpen.value = false
-}
-
-async function refreshSensorEnhancementFromMenu() {
-  await refreshGlobalSensorEnhancementState()
-  await processorRef.value?.refreshSensorEnhancementState?.()
-}
 
 const headerMeta = computed(() => {
   if (selectedSection.value === 'processor') {
@@ -543,19 +263,19 @@ watch(currentPage, () => {
 })
 
 watch(
-  [sensorEnhancementPlatform, currentPage],
-  async ([platform, page]) => {
-    if (page !== 'computer' || platform === 'unsupported') return
+  [currentPage, hasExplicitPageRoute, selectedSection],
+  async ([page, hasExplicitRoute, section]) => {
+    const needsEnhancedSensors = page === 'monitor'
+      || (page === 'computer' && (section === 'processor' || section === 'graphics'))
+    if (!hasExplicitRoute || !needsEnhancedSensors) return
     await refreshGlobalSensorEnhancementState()
+    if (sensorEnhancementPlatform.value === 'unsupported') return
     await prepareGlobalSensorEnhancement(true)
   },
   { immediate: true }
 )
 
 onMounted(() => {
-  if (!window.location.hash) {
-    window.location.hash = 'computer'
-  }
   window.addEventListener('hashchange', syncHash)
   syncBodyMode()
 })
@@ -575,6 +295,26 @@ onUnmounted(() => {
     <Watch :active="true" :initial-floating-mode="initialFloatingMode" :initial-floating-entry="initialFloatingEntry" />
   </div>
 
+  <div v-else-if="isMonitorPage" class="monitor-dashboard-stage">
+    <div class="window-titlebar standalone-titlebar">
+      <div class="window-titlebar__brand standalone-titlebar__brand">
+        <span class="window-titlebar__mark" aria-hidden="true">H</span>
+        <span class="standalone-titlebar__text">硬件监控</span>
+      </div>
+
+      <div class="window-titlebar__drag-spacer" aria-hidden="true" />
+
+      <div class="window-titlebar__actions standalone-titlebar__actions">
+        <ThemeControl compact />
+        <Bar />
+      </div>
+    </div>
+
+    <main class="monitor-dashboard-standalone-content">
+      <MonitoringDashboard :active="true" />
+    </main>
+  </div>
+
   <div v-else-if="isDeviceSpecsPage" class="device-specs-stage">
     <div class="window-titlebar device-specs-titlebar">
       <div class="window-titlebar__brand device-specs-titlebar__brand">
@@ -584,7 +324,8 @@ onUnmounted(() => {
 
       <div class="window-titlebar__drag-spacer" aria-hidden="true" />
 
-      <div class="window-titlebar__actions">
+      <div class="window-titlebar__actions standalone-titlebar__actions">
+        <ThemeControl compact />
         <Bar />
       </div>
     </div>
@@ -603,37 +344,8 @@ onUnmounted(() => {
       <div class="window-titlebar__drag-spacer" aria-hidden="true" />
 
       <div class="window-titlebar__right">
-        <div v-if="currentPage === 'computer'" class="window-titlebar__controls">
-          <div class="header-refresh-group">
-            <div class="header-refresh-chips">
-              <button
-                v-for="profile in refreshProfiles"
-                :key="profile.id"
-                type="button"
-                :disabled="refreshSettingsPending"
-                :aria-label="`切换刷新档位为 ${profile.label}`"
-                :title="`切换刷新档位为 ${profile.label}`"
-                :class="['header-chip', { 'header-chip--active': overviewRefreshSettings.profile === profile.id }]"
-                @click="applyOverviewRefreshProfile(profile.id)"
-              >
-                {{ profile.label }}
-              </button>
-            </div>
-
-            <button
-              type="button"
-              :disabled="refreshSettingsPending"
-              aria-label="切换后台降频"
-              :title="overviewRefreshSettings.backgroundThrottleEnabled ? '关闭窗口后台时自动降频' : '开启窗口后台时自动降频'"
-              :class="['header-toggle', { 'header-toggle--active': overviewRefreshSettings.backgroundThrottleEnabled }]"
-              @click="toggleOverviewBackgroundThrottle()"
-            >
-              后台降频
-              <em>{{ overviewBackgroundThrottled ? '生效中' : overviewRefreshSettings.backgroundThrottleEnabled ? '已开启' : '已关闭' }}</em>
-            </button>
-          </div>
-
-          <div v-if="processorSensorControlVisible" class="header-sensor-menu">
+        <div v-if="processorSensorControlVisible" class="window-titlebar__controls">
+          <div class="header-sensor-menu">
             <button
               type="button"
               :disabled="processorSensorControlDisabled"
@@ -735,36 +447,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="sensorAuthorizationPromptVisible" class="sensor-auth-overlay">
-      <section class="sensor-auth-dialog">
-        <div class="sensor-auth-dialog__head">
-          <span>传感器增强</span>
-          <h2>启用传感器增强</h2>
-        </div>
-        <p>
-          为了读取更完整的温度、频率和功耗数据，需要一次系统授权。授权后会自动启用增强模式，你也可以随时在顶部关闭。
-        </p>
-        <div class="sensor-auth-dialog__actions">
-          <button
-            type="button"
-            class="sensor-menu-action"
-            :disabled="sensorActionLoading"
-            @click="disableSensorFromPrompt()"
-          >
-            暂不启用
-          </button>
-          <button
-            type="button"
-            class="sensor-menu-action sensor-menu-action--primary"
-            :disabled="sensorActionLoading"
-            @click="continueSensorAuthorization()"
-          >
-            继续授权
-          </button>
-        </div>
-      </section>
-    </div>
-
     <aside class="sidebar">
       <nav class="sidebar-nav">
         <button
@@ -780,6 +462,7 @@ onUnmounted(() => {
       </nav>
 
       <div class="sidebar-footer">
+        <ThemeControl />
         <div class="sidebar-version">v1.0.0</div>
       </div>
     </aside>
@@ -811,13 +494,71 @@ onUnmounted(() => {
       </header>
 
       <main class="main-content">
-        <Computer ref="computerRef" v-show="selectedSection === 'overview'" :active="selectedSection === 'overview'" />
-        <Processor ref="processorRef" v-show="selectedSection === 'processor'" :active="selectedSection === 'processor'" />
-        <GraphicsPage ref="graphicsRef" v-show="selectedSection === 'graphics'" :active="selectedSection === 'graphics'" />
-        <BoardPage ref="boardRef" v-show="selectedSection === 'board'" :active="selectedSection === 'board'" />
-        <MemoryPage ref="memoryRef" v-show="selectedSection === 'memory'" :active="selectedSection === 'memory'" />
-        <StoragePage ref="storageRef" v-show="selectedSection === 'storage'" :active="selectedSection === 'storage'" />
+        <KeepAlive>
+          <Computer
+            v-if="selectedSection === 'overview'"
+            ref="computerRef"
+            :active="true"
+          />
+          <Processor
+            v-else-if="selectedSection === 'processor'"
+            ref="processorRef"
+            :active="true"
+          />
+          <GraphicsPage
+            v-else-if="selectedSection === 'graphics'"
+            ref="graphicsRef"
+            :active="true"
+            :sensor-enhancement-enabled="sensorSettings.enhancedSensorEnabled"
+            :sensor-enhancement-ready="sensorEnhancementReady"
+          />
+          <BoardPage
+            v-else-if="selectedSection === 'board'"
+            ref="boardRef"
+            :active="true"
+          />
+          <MemoryPage
+            v-else-if="selectedSection === 'memory'"
+            ref="memoryRef"
+            :active="true"
+          />
+          <StoragePage
+            v-else
+            ref="storageRef"
+            :active="true"
+          />
+        </KeepAlive>
       </main>
+    </section>
+  </div>
+
+  <div v-if="sensorAuthorizationPromptVisible" class="sensor-auth-overlay">
+    <section class="sensor-auth-dialog">
+      <div class="sensor-auth-dialog__head">
+        <span>传感器增强</span>
+        <h2>启用传感器增强</h2>
+      </div>
+      <p>
+        为了读取更完整的温度、频率和功耗数据，需要一次系统授权。授权后会自动启用增强模式，你也可以随时在传感器设置中关闭。
+      </p>
+      <div class="sensor-auth-dialog__actions">
+        <button
+          type="button"
+          class="sensor-menu-action"
+          :disabled="sensorActionLoading"
+          @click="disableSensorFromPrompt()"
+        >
+          暂不启用
+        </button>
+        <button
+          type="button"
+          class="sensor-menu-action sensor-menu-action--primary"
+          :disabled="sensorActionLoading"
+          @click="continueSensorAuthorization()"
+        >
+          继续授权
+        </button>
+      </div>
     </section>
   </div>
 </template>
@@ -828,7 +569,8 @@ onUnmounted(() => {
   width: 100%;
 }
 
-.device-specs-stage {
+.device-specs-stage,
+.monitor-dashboard-stage {
   display: grid;
   grid-template-rows: 44px minmax(0, 1fr);
   height: 100%;
@@ -836,7 +578,8 @@ onUnmounted(() => {
   background: var(--app-background);
 }
 
-.device-specs-titlebar {
+.device-specs-titlebar,
+.standalone-titlebar {
   grid-row: 1;
   grid-column: 1;
   min-height: 44px;
@@ -844,30 +587,38 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--panel-border);
 }
 
-.window-titlebar__brand.device-specs-titlebar__brand {
+.window-titlebar__brand.device-specs-titlebar__brand,
+.window-titlebar__brand.standalone-titlebar__brand {
   flex: 0 0 auto;
   min-width: 112px;
   gap: 10px;
 }
 
-.device-specs-titlebar .window-titlebar__mark {
+.device-specs-titlebar .window-titlebar__mark,
+.standalone-titlebar .window-titlebar__mark {
   width: 28px;
   height: 28px;
   border-radius: 10px;
 }
 
-.device-specs-titlebar__text {
+.device-specs-titlebar__text,
+.standalone-titlebar__text {
   color: var(--text-primary);
   font-size: 14px;
   font-weight: 800;
 }
 
-.device-specs-standalone-content {
+.device-specs-standalone-content,
+.monitor-dashboard-standalone-content {
   grid-row: 2;
   min-width: 0;
   min-height: 0;
   padding: 14px 16px 16px;
   overflow: hidden;
+}
+
+.monitor-dashboard-standalone-content {
+  padding: 16px 20px 20px;
 }
 
 .desktop-shell {
@@ -888,7 +639,7 @@ onUnmounted(() => {
   min-height: 0;
   padding: 18px 14px;
   border-right: 1px solid var(--panel-border);
-  background: linear-gradient(180deg, rgba(18, 25, 36, 0.98), rgba(13, 20, 30, 0.98));
+  background: var(--sidebar-background);
 }
 
 .sidebar-nav,
@@ -916,7 +667,7 @@ onUnmounted(() => {
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--nav-hover-background);
   color: var(--frame-fg-strong);
 }
 
@@ -930,7 +681,7 @@ onUnmounted(() => {
   color: var(--frame-fg-strong);
   box-shadow:
     inset 3px 0 0 var(--accent-blue),
-    0 10px 24px rgba(4, 10, 18, 0.24);
+    var(--nav-active-shadow);
 }
 
 .nav-item span {
@@ -963,8 +714,7 @@ onUnmounted(() => {
   min-height: 54px;
   padding: 0 12px 0 18px;
   border-bottom: 1px solid var(--panel-border);
-  background:
-    linear-gradient(180deg, rgba(18, 27, 39, 0.98), rgba(15, 23, 34, 0.98));
+  background: var(--titlebar-background);
   -webkit-app-region: drag;
   cursor: grab;
   user-select: none;
@@ -999,6 +749,7 @@ onUnmounted(() => {
 .window-titlebar__actions {
   display: flex;
   align-items: center;
+  gap: 10px;
   -webkit-app-region: no-drag;
 }
 
@@ -1048,25 +799,6 @@ onUnmounted(() => {
   padding-top: 6px;
 }
 
-.header-refresh-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.header-refresh-chips {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px;
-  border: 1px solid var(--frame-border);
-  border-radius: var(--frame-radius);
-  background: var(--frame-bg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-}
-
 .header-sensor-menu {
   display: inline-flex;
   align-items: center;
@@ -1074,8 +806,6 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-.header-chip,
-.header-toggle,
 .header-sensor-trigger,
 .sensor-menu-action {
   display: inline-flex;
@@ -1091,34 +821,12 @@ onUnmounted(() => {
   transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
-.header-chip {
-  min-width: 52px;
-  padding: 0 12px;
-  background: transparent;
-}
-
-.header-chip:hover,
-.header-toggle:hover,
 .header-sensor-trigger:hover,
 .sensor-menu-action:hover {
   color: var(--control-fg-strong);
   border-color: var(--control-border-strong);
 }
 
-.header-chip--active {
-  border-color: var(--control-active-border);
-  background: var(--control-active-bg);
-  color: var(--control-fg-strong);
-  box-shadow: var(--control-active-shadow);
-}
-
-.header-toggle {
-  gap: 8px;
-  padding: 0 14px;
-  background: var(--control-bg);
-}
-
-.header-toggle em,
 .header-sensor-trigger em {
   color: var(--text-subtle);
   font-style: normal;
@@ -1126,18 +834,12 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.header-toggle--active {
-  border-color: rgba(126, 214, 113, 0.3);
-  background: linear-gradient(180deg, rgba(67, 153, 74, 0.14), rgba(36, 88, 43, 0.08));
-  color: var(--control-fg-strong);
-}
-
 .header-sensor-trigger {
   gap: 8px;
   padding: 0 14px;
   min-width: 146px;
   border-color: rgba(255, 207, 87, 0.28);
-  background: linear-gradient(180deg, rgba(58, 44, 18, 0.34), rgba(20, 29, 42, 0.7));
+  background: linear-gradient(180deg, rgba(159, 110, 31, 0.16), var(--control-bg));
   color: var(--control-fg-strong);
 
   strong {
@@ -1164,7 +866,7 @@ onUnmounted(() => {
 
 .header-sensor-trigger--error {
   border-color: rgba(255, 126, 107, 0.38);
-  background: linear-gradient(180deg, rgba(113, 45, 35, 0.26), rgba(42, 28, 31, 0.72));
+  background: linear-gradient(180deg, rgba(151, 54, 45, 0.14), var(--control-bg));
 }
 
 .header-sensor-trigger--error em {
@@ -1185,8 +887,8 @@ onUnmounted(() => {
   padding: 14px;
   border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(20, 29, 42, 0.98), rgba(15, 23, 34, 0.98));
-  box-shadow: 0 18px 42px rgba(2, 8, 18, 0.38);
+  background: var(--surface-menu-background);
+  box-shadow: var(--panel-shadow);
   -webkit-app-region: no-drag;
 
   p {
@@ -1260,14 +962,15 @@ onUnmounted(() => {
 }
 
 .sensor-auth-overlay {
-  grid-row: 1 / -1;
-  grid-column: 1 / -1;
-  z-index: 30;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(5, 10, 18, 0.52);
+  background: var(--modal-overlay-background);
   backdrop-filter: blur(10px);
+  -webkit-app-region: no-drag;
 }
 
 .sensor-auth-dialog {
@@ -1275,8 +978,8 @@ onUnmounted(() => {
   padding: 20px;
   border: 1px solid var(--panel-border);
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(20, 29, 42, 0.98), rgba(15, 23, 34, 0.98));
-  box-shadow: 0 24px 54px rgba(2, 8, 18, 0.46);
+  background: var(--surface-modal-background);
+  box-shadow: var(--panel-shadow);
 
   p {
     margin: 12px 0 0;
@@ -1381,7 +1084,7 @@ onUnmounted(() => {
   padding: 0 16px;
   border: 1px dashed rgba(92, 112, 144, 0.48);
   border-radius: var(--button-radius-lg);
-  background: rgba(20, 29, 42, 0.5);
+  background: var(--control-bg-soft);
   color: var(--text-muted);
   font-size: 14px;
   font-weight: 600;
@@ -1390,7 +1093,7 @@ onUnmounted(() => {
 }
 
 .debug-button:hover {
-  background: rgba(28, 39, 55, 0.76);
+  background: var(--button-hover-bg);
   border-color: rgba(108, 130, 166, 0.58);
   color: var(--text-primary);
 }

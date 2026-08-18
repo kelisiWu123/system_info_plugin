@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
+import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle'
 import {
   activateProcessorHardwareStore,
   deactivateProcessorHardwareStore,
@@ -8,6 +9,7 @@ import {
 } from '../../composables/useProcessorHardwareData'
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
+import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 import {
   getSensorEnhancementControlLabel,
   getSensorEnhancementPlatform,
@@ -141,7 +143,7 @@ function getHistoryMax(values: number[], fallback = 0) {
 function ringStyle(percent: number, accent: string) {
   const bounded = Math.max(0, Math.min(100, percent))
   return {
-    background: `conic-gradient(${accent} 0deg ${(bounded / 100) * 360}deg, rgba(255, 255, 255, 0.08) ${(bounded / 100) * 360}deg 360deg)`,
+    background: `conic-gradient(${accent} 0deg ${(bounded / 100) * 360}deg, var(--gauge-track) ${(bounded / 100) * 360}deg 360deg)`,
   }
 }
 
@@ -182,20 +184,43 @@ function formatFrequency(value: number | null, digits = 2) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(digits)} GHz` : '--'
 }
 
+function sensorMetricFallbackLabel(metric: 'temperature' | 'power' | 'voltage' | 'fan') {
+  const platform = getSensorEnhancementPlatform(osInfo.value)
+  if (platform === 'unsupported') return '当前平台不支持'
+
+  const needsEnhancement = platform === 'windows' || (platform === 'macos' && metric === 'power')
+  if (!needsEnhancement) return '系统未提供'
+  if (!sensorSettings.value.enhancedSensorEnabled) return '需要传感器增强'
+
+  const enhancementReady = platform === 'windows'
+    ? Boolean(openHardwareMonitorStatus.value?.running)
+    : Boolean(macHelperStatus.value?.loaded && macHelperStatus.value?.socketExists)
+
+  return enhancementReady ? '系统未提供' : '增强组件未就绪'
+}
+
 function formatTemperature(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)}°C` : '暂不支持'
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? `${Math.round(value)}°C`
+    : sensorMetricFallbackLabel('temperature')
 }
 
 function formatPower(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} W` : '暂不支持'
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? `${Math.round(value)} W`
+    : sensorMetricFallbackLabel('power')
 }
 
 function formatVoltage(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(2)} V` : '暂不支持'
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? `${value.toFixed(2)} V`
+    : sensorMetricFallbackLabel('voltage')
 }
 
 function formatFanSpeed(value: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${Math.round(value)} RPM` : '暂不支持'
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? `${Math.round(value)} RPM`
+    : sensorMetricFallbackLabel('fan')
 }
 
 function formatSensorReason(reason?: string) {
@@ -400,27 +425,6 @@ function coreTypeLabel(index: number, total: number, performanceCores?: number, 
   return 'Core'
 }
 
-async function writeClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  const copied = document.execCommand('copy')
-  document.body.removeChild(textarea)
-
-  if (!copied) {
-    throw new Error('execCommand copy failed')
-  }
-}
-
 const cpuTemperatureValue = computed(() => {
   if (typeof cpuTemperature.value?.value === 'number') return cpuTemperature.value.value
   if (typeof cpuTemperature.value?.main === 'number') return cpuTemperature.value.main
@@ -430,7 +434,7 @@ const cpuTemperatureIssueLabel = computed(() => {
   const reason = cpuTemperature.value?.reason || cpuTemperature.value?.errorCode || ''
   if (reason === 'MACOS_SMC_PERMISSION_REQUIRED') return '需要管理员权限'
   if (reason.startsWith('MACOS_SMC_')) return 'AppleSMC 读取失败'
-  if (cpuTemperature.value?.source === 'unsupported' && cpuTemperatureValue.value === null) return '暂不支持'
+  if (cpuTemperatureValue.value === null) return sensorMetricFallbackLabel('temperature')
   return '--'
 })
 
@@ -864,18 +868,15 @@ const processorReportText = computed(() => {
 })
 
 function exportReport() {
-  const blob = new Blob([processorReportText.value], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `processor-report-${new Date().toISOString().slice(0, 10)}.txt`
-  anchor.click()
-  URL.revokeObjectURL(url)
+  downloadTextFile(
+    `processor-report-${new Date().toISOString().slice(0, 10)}.txt`,
+    processorReportText.value
+  )
 }
 
 async function copyProcessorInfo() {
   try {
-    await writeClipboard(processorReportText.value)
+    await writeClipboardText(processorReportText.value)
     return true
   } catch (error) {
     console.error('复制处理器信息失败:', error)
@@ -896,7 +897,7 @@ function scheduleCpuSpeedDiagnosticCopyFeedbackReset() {
 
 async function copyCpuSpeedDiagnosticReport() {
   try {
-    await writeClipboard(cpuSpeedDiagnosticReportText.value)
+    await writeClipboardText(cpuSpeedDiagnosticReportText.value)
     cpuSpeedDiagnosticCopyFeedback.value = 'success'
   } catch (error) {
     console.error('复制 CPU 频率诊断失败:', error)
@@ -1065,6 +1066,9 @@ async function startOpenHardwareMonitor() {
       ...latestStatus,
       started: openHardwareMonitorStatus.value?.started || latestStatus.started,
     }
+    if (latestStatus.running) {
+      await refreshProcessorHardwareDynamicMetrics()
+    }
   } catch (error) {
     console.error('启动 OpenHardwareMonitor 失败:', error)
   } finally {
@@ -1131,6 +1135,9 @@ defineExpose({
       refreshHardwareSensorState(),
       refreshMacPowermetricsHelperState(),
     ])
+    if (subscribed.value) {
+      await refreshProcessorHardwareDynamicMetrics()
+    }
   },
 })
 
@@ -1152,17 +1159,10 @@ function releaseStore() {
   subscribed.value = false
 }
 
-watch(
+useActivePageLifecycle(
   () => props.active,
-  async (active) => {
-    if (active === false) {
-      releaseStore()
-      return
-    }
-
-    await ensureStoreActive()
-  },
-  { immediate: true }
+  ensureStoreActive,
+  releaseStore,
 )
 
 onUnmounted(() => {
@@ -1170,7 +1170,6 @@ onUnmounted(() => {
     window.clearTimeout(cpuSpeedDiagnosticCopyFeedbackTimerId)
     cpuSpeedDiagnosticCopyFeedbackTimerId = undefined
   }
-  releaseStore()
 })
 </script>
 
@@ -1431,7 +1430,7 @@ onUnmounted(() => {
               <polyline :points="sparklinePoints(card.trend)" :stroke="card.accent" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <div class="monitor-card__foot" :class="{ 'monitor-card__foot--single': card.unsupported }">
-              <span>{{ card.footerLeft }}</span>
+              <span>{{ card.unsupported ? card.value : card.footerLeft }}</span>
               <span v-if="!card.unsupported">{{ card.footerRight }}</span>
             </div>
           </article>
@@ -1548,7 +1547,7 @@ onUnmounted(() => {
   min-height: 320px;
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background: linear-gradient(180deg, rgba(19, 28, 40, 0.94), rgba(16, 24, 35, 0.96));
+  background: var(--surface-section-background);
   color: var(--text-muted);
   font-size: 15px;
 }
@@ -1565,9 +1564,7 @@ onUnmounted(() => {
 .processor-panel {
   border: 1px solid var(--panel-border);
   border-radius: var(--surface-radius);
-  background:
-    linear-gradient(180deg, rgba(21, 31, 44, 0.98), rgba(17, 25, 35, 0.98)),
-    radial-gradient(circle at top left, rgba(66, 128, 240, 0.08), transparent 28%);
+  background: var(--surface-card-background);
   box-shadow: var(--panel-shadow);
 }
 
@@ -1590,7 +1587,7 @@ onUnmounted(() => {
   padding: 10px;
   border-radius: 14px;
   background: linear-gradient(160deg, rgba(45, 106, 255, 0.96), rgba(34, 63, 164, 0.88));
-  color: #f5f8ff;
+  color: var(--text-on-accent);
   box-shadow: 0 18px 36px rgba(10, 30, 78, 0.34);
   overflow: hidden;
 
@@ -1668,7 +1665,7 @@ onUnmounted(() => {
 
   h2 {
     margin: 0;
-    color: #f5f7fb;
+    color: var(--text-primary);
     font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.03em;
@@ -1820,7 +1817,7 @@ onUnmounted(() => {
   padding: 14px;
   border: 1px solid rgba(66, 128, 240, 0.18);
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(17, 27, 40, 0.88), rgba(14, 21, 31, 0.92));
+  background: var(--surface-detail-background);
 }
 
 .sensor-enhancement-panel__summary {
@@ -1875,7 +1872,7 @@ onUnmounted(() => {
   padding: 12px;
   border: 1px solid rgba(84, 104, 132, 0.2);
   border-radius: 12px;
-  background: rgba(19, 29, 42, 0.72);
+  background: var(--surface-softer-background);
 
   span {
     color: var(--text-subtle);
@@ -1930,7 +1927,7 @@ onUnmounted(() => {
   margin-bottom: 14px;
   border: 1px solid rgba(66, 128, 240, 0.18);
   border-radius: 12px;
-  background: rgba(15, 24, 36, 0.72);
+  background: var(--surface-detail-background);
   overflow: hidden;
 
   summary {
@@ -1984,7 +1981,7 @@ onUnmounted(() => {
   padding: 12px;
   border: 1px solid rgba(84, 104, 132, 0.2);
   border-radius: 10px;
-  background: rgba(20, 31, 45, 0.78);
+  background: var(--surface-soft-background);
 }
 
 .sensor-debug-item__head,
@@ -2026,7 +2023,7 @@ onUnmounted(() => {
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(66, 128, 240, 0.16);
+  background: var(--state-info-bg);
   color: var(--accent-blue);
   font-size: 12px;
   font-weight: 600;
@@ -2075,7 +2072,7 @@ onUnmounted(() => {
   width: 84px;
   height: 84px;
   border-radius: 50%;
-  background: rgba(17, 25, 36, 0.96);
+  background: var(--panel-background-strong);
 
   strong {
     color: var(--text-primary);
@@ -2187,20 +2184,20 @@ onUnmounted(() => {
 }
 
 .core-badge--pcore {
-  border: 1px solid rgba(68, 150, 255, 0.34);
-  background: rgba(31, 60, 105, 0.34);
+  border: 1px solid var(--control-active-border);
+  background: var(--state-info-bg);
   color: var(--accent-blue);
 }
 
 .core-badge--ecore {
-  border: 1px solid rgba(132, 219, 97, 0.3);
-  background: rgba(41, 80, 30, 0.34);
+  border: 1px solid color-mix(in srgb, var(--accent-green) 28%, transparent);
+  background: var(--state-good-bg);
   color: var(--accent-green);
 }
 
 .core-badge--core {
-  border: 1px solid rgba(120, 138, 171, 0.26);
-  background: rgba(32, 44, 61, 0.4);
+  border: 1px solid var(--panel-border);
+  background: var(--state-neutral-bg);
   color: var(--text-secondary);
 }
 
@@ -2237,7 +2234,7 @@ onUnmounted(() => {
   padding: 10px 10px 8px;
   border: 1px solid rgba(84, 104, 132, 0.28);
   border-radius: 10px;
-  background: rgba(18, 29, 44, 0.72);
+  background: var(--surface-soft-background);
 
   strong {
     color: var(--text-primary);

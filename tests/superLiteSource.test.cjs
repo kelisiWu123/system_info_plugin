@@ -43,6 +43,8 @@ test('Watch switches floating modes, resizes the window, and persists mode and p
   assert.match(watch, /const floatingMode = ref<FloatingMonitorMode>/)
   assert.match(watch, /switchFloatingMode/)
   assert.match(watch, /window\.services\.resizeWindow\(200,\s*200\)/)
+  assert.match(watch, /window\.services\.resizeWindow\(432,\s*398\)/)
+  assert.match(watch, /resizeFloatingMode\(mode\)\s*\n\s*floatingMode\.value = mode/)
   assert.match(watch, /updateFloatingMonitorSettings/)
   assert.match(watch, /SuperLiteMonitorView/)
   assert.match(watch, /formatSuperLiteRefreshLabel\(getCurrentPollProfile\(\)\.fast\)/)
