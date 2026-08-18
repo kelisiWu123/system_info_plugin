@@ -342,7 +342,7 @@ declare global {
       minimizeWindow?: () => void
       toggleMaximizeWindow?: () => void
       resizeWindow: (width: number, height: number) => void
-      createWindow: (fileName: string, height?: number, width?: number, backgroundColor?: number) => void
+      createWindow: (fileName: string, height?: number, width?: number, backgroundColor?: number) => Promise<void>
       creatSomething: (fileName: string, height?: number, width?: number, backgroundColor?: number) => void
     }
   }

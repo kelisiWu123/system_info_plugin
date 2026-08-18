@@ -35,18 +35,20 @@ const windowPresets = {
   },
 }
 
-function openPresetWindow(name) {
+async function openPresetWindow(name) {
   const presetGroup = windowPresets[name] || {}
   const preset = runtimeUtools.isDev() ? presetGroup.dev || presetGroup.prod : presetGroup.prod || presetGroup.dev
 
-  if (!preset) {
-    window.services.createWindow(name)
-    runtimeUtools.outPlugin()
-    return
-  }
+  try {
+    if (!preset) {
+      await window.services.createWindow(name)
+      return
+    }
 
-  window.services.createWindow(name, preset.height, preset.width, preset.backgroundColor)
-  runtimeUtools.outPlugin()
+    await window.services.createWindow(name, preset.height, preset.width, preset.backgroundColor)
+  } finally {
+    runtimeUtools.outPlugin()
+  }
 }
 
 window.services = {

@@ -1506,7 +1506,8 @@ function getBundledOpenHardwareMonitorPath() {
 
 function resolveWindowsSensorHelperExecutable(resolvedOpenHardwareMonitor) {
   const resolved = resolvedOpenHardwareMonitor || ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
-  const directoryPath = resolved.runtimeDirectoryPath || resolved.directoryPath || ''
+  const rootDirectoryPath = resolved.runtimeDirectoryPath || resolved.directoryPath || ''
+  const directoryPath = rootDirectoryPath ? path.join(rootDirectoryPath, 'sensor-helper') : ''
   const executablePath = directoryPath ? path.join(directoryPath, WINDOWS_SENSOR_HELPER_PROCESS_NAME) : ''
   return {
     directoryPath,

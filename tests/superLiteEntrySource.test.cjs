@@ -48,7 +48,8 @@ test('fallback child window creation receives watch window options and keeps cur
   const electronMain = readSource('electron/main/index.ts')
 
   assert.match(windowService, /function buildChildWindowConfig/)
-  assert.match(windowService, /ipcRenderer\.invoke\('createChildWindow',\s*buildChildWindowConfig\(/)
+  assert.match(windowService, /singletonKey:\s*getWindowSingletonKey\(fileName\)/)
+  assert.match(windowService, /await ipcRenderer\.invoke\('createChildWindow', childWindowConfig\)/)
   assert.match(electronMain, /function normalizeChildWindowOptions/)
   assert.match(electronMain, /alwaysOnTop:\s*Boolean\(options\.alwaysOnTop\)/)
   assert.match(electronMain, /transparent:\s*Boolean\(options\.transparent\)/)

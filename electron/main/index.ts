@@ -37,6 +37,7 @@ if (!app.requestSingleInstanceLock()) {
 
 let win: BrowserWindow | null = null
 let watchPreviewWin: BrowserWindow | null = null
+const childWindowsBySingletonKey = new Map<string, BrowserWindow>()
 // Here, you can also use other preload
 const preload = join(__dirname, '../preload/preload.js')
 const url = process.env.VITE_DEV_SERVER_URL
@@ -63,6 +64,23 @@ function getChildWindowHash(arg: unknown) {
     }
 
     return 'computer'
+}
+
+function getChildWindowSingletonKey(arg: unknown) {
+    if (arg && typeof arg === 'object' && typeof (arg as { singletonKey?: unknown }).singletonKey === 'string') {
+        const singletonKey = (arg as { singletonKey: string }).singletonKey.trim()
+        if (singletonKey) return singletonKey
+    }
+
+    return getChildWindowHash(arg)
+}
+
+function activateBrowserWindow(targetWindow: BrowserWindow) {
+    if (targetWindow.isDestroyed()) return
+    if (targetWindow.isMinimized()) targetWindow.restore()
+    targetWindow.show()
+    targetWindow.focus()
+    targetWindow.moveTop()
 }
 
 function normalizeChildWindowOptions(arg: unknown) {
@@ -241,6 +259,11 @@ ipcMain.on('window-action', (event, action, payload) => {
         return
     }
 
+    if (action === 'focus') {
+        activateBrowserWindow(targetWindow)
+        return
+    }
+
     if (action === 'toggle-maximize') {
         if (targetWindow.isMaximized()) {
             targetWindow.unmaximize()
@@ -252,9 +275,38 @@ ipcMain.on('window-action', (event, action, payload) => {
 
 // New window example arg: new windows url
 ipcMain.handle('createChildWindow', (_, arg) => {
+    const singletonKey = getChildWindowSingletonKey(arg)
+    const existingWindow = childWindowsBySingletonKey.get(singletonKey)
+
+    if (existingWindow && !existingWindow.isDestroyed()) {
+        activateBrowserWindow(existingWindow)
+        return {
+            created: false,
+            reused: true,
+            webContentsId: existingWindow.webContents.id,
+        }
+    }
+
+    if (existingWindow?.isDestroyed()) {
+        childWindowsBySingletonKey.delete(singletonKey)
+    }
+
     const options = normalizeChildWindowOptions(arg)
     const childWindow = new BrowserWindow(options)
     const hash = getChildWindowHash(arg)
+    childWindowsBySingletonKey.set(singletonKey, childWindow)
+
+    childWindow.on('closed', () => {
+        if (childWindowsBySingletonKey.get(singletonKey) === childWindow) {
+            childWindowsBySingletonKey.delete(singletonKey)
+        }
+    })
+
+    childWindow.webContents.on('did-finish-load', () => {
+        if (!childWindow.isDestroyed()) {
+            childWindow.webContents.send('init', { fromMain: true, singletonKey })
+        }
+    })
 
     if (options.alwaysOnTop) {
         childWindow.setAlwaysOnTop(true)
@@ -264,5 +316,11 @@ ipcMain.handle('createChildWindow', (_, arg) => {
         childWindow.loadURL(`${url}#${hash}`)
     } else {
         childWindow.loadFile(indexHtml, { hash })
+    }
+
+    return {
+        created: true,
+        reused: false,
+        webContentsId: childWindow.webContents.id,
     }
 })

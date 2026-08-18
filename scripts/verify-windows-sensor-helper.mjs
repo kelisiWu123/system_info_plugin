@@ -1,39 +1,90 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 const source = resolve('native/windows-sensor-helper/Program.cs')
-const manifest = resolve('native/windows-sensor-helper/app.manifest')
-const backendAssembly = resolve('vendor/openhardwaremonitor/OpenHardwareMonitor.exe')
-const helperBinary = resolve('vendor/openhardwaremonitor/HWInfoXSensorHelper.exe')
-const fingerprintFile = resolve('vendor/openhardwaremonitor/HWInfoXSensorHelper.source.sha256')
+const appManifest = resolve('native/windows-sensor-helper/app.manifest')
+const runtimeDirectory = resolve('vendor/openhardwaremonitor/sensor-helper')
+const helperBinary = join(runtimeDirectory, 'HWInfoXSensorHelper.exe')
+const runtimeManifestFile = join(runtimeDirectory, 'runtime-manifest.json')
+const fingerprintFile = join(runtimeDirectory, 'HWInfoXSensorHelper.source.sha256')
+const requiredLibraryFile = join(runtimeDirectory, 'OpenHardwareMonitorLib.dll')
 
-function computeFingerprint() {
+function sha256File(filePath) {
+  return createHash('sha256').update(readFileSync(filePath)).digest('hex')
+}
+
+function computeFingerprint(runtimeManifestContent) {
   const hash = createHash('sha256')
-  for (const filePath of [source, manifest, backendAssembly]) {
+  for (const filePath of [source, appManifest]) {
     hash.update(readFileSync(filePath))
   }
+  hash.update(runtimeManifestContent)
   return hash.digest('hex')
 }
 
-for (const requiredPath of [source, manifest, backendAssembly]) {
+for (const requiredPath of [source, appManifest]) {
   if (!existsSync(requiredPath)) {
     console.error(`Windows sensor helper source input missing: ${requiredPath}`)
     process.exit(1)
   }
 }
 
-if (!existsSync(helperBinary) || !existsSync(fingerprintFile)) {
-  console.error('Windows sensor helper prebuilt asset is missing.')
-  console.error('Run `npm run build:windows-helper` once on Windows, then keep HWInfoXSensorHelper.exe and its .source.sha256 file in vendor/openhardwaremonitor/.')
+for (const requiredPath of [helperBinary, runtimeManifestFile, fingerprintFile, requiredLibraryFile]) {
+  if (!existsSync(requiredPath)) {
+    console.error(`Windows sensor helper prebuilt asset is missing: ${requiredPath}`)
+    console.error('Run `npm run build:windows-helper` once on Windows, then keep vendor/openhardwaremonitor/sensor-helper/ in the project.')
+    process.exit(1)
+  }
+}
+
+let runtimeManifest
+let runtimeManifestContent
+try {
+  runtimeManifestContent = readFileSync(runtimeManifestFile, 'utf8')
+  runtimeManifest = JSON.parse(runtimeManifestContent)
+} catch (error) {
+  console.error(`Windows sensor helper runtime manifest is invalid: ${error instanceof Error ? error.message : String(error)}`)
   process.exit(1)
 }
 
-const expected = computeFingerprint()
-const actual = readFileSync(fingerprintFile, 'utf8').trim().toLowerCase()
+if (runtimeManifest?.library?.id !== 'OpenHardwareMonitorLib' || runtimeManifest?.library?.version !== '1.0.9513') {
+  console.error('Windows sensor helper runtime manifest does not reference OpenHardwareMonitorLib 1.0.9513.')
+  process.exit(1)
+}
 
-if (actual !== expected) {
-  console.error('Windows sensor helper prebuilt asset is stale relative to Program.cs/app.manifest/OpenHardwareMonitor.exe.')
+if (runtimeManifest?.helper?.file !== 'HWInfoXSensorHelper.exe' || runtimeManifest.helper.sha256 !== sha256File(helperBinary)) {
+  console.error('Windows sensor helper executable hash does not match runtime-manifest.json.')
+  process.exit(1)
+}
+
+if (!Array.isArray(runtimeManifest.files) || !runtimeManifest.files.some((entry) => entry?.name === 'OpenHardwareMonitorLib.dll')) {
+  console.error('Windows sensor helper runtime manifest does not include OpenHardwareMonitorLib.dll.')
+  process.exit(1)
+}
+
+for (const entry of runtimeManifest.files) {
+  if (!entry || typeof entry.name !== 'string' || typeof entry.sha256 !== 'string') {
+    console.error('Windows sensor helper runtime manifest contains an invalid file entry.')
+    process.exit(1)
+  }
+
+  const filePath = join(runtimeDirectory, entry.name)
+  if (!existsSync(filePath)) {
+    console.error(`Windows sensor helper runtime asset is missing: ${filePath}`)
+    process.exit(1)
+  }
+
+  if (sha256File(filePath) !== entry.sha256) {
+    console.error(`Windows sensor helper runtime asset hash mismatch: ${entry.name}`)
+    process.exit(1)
+  }
+}
+
+const expectedFingerprint = computeFingerprint(runtimeManifestContent)
+const actualFingerprint = readFileSync(fingerprintFile, 'utf8').trim().toLowerCase()
+if (actualFingerprint !== expectedFingerprint) {
+  console.error('Windows sensor helper prebuilt asset is stale relative to Program.cs/app.manifest/runtime-manifest.json.')
   console.error('Regenerate it with `npm run build:windows-helper` on Windows before creating a release build.')
   process.exit(1)
 }
