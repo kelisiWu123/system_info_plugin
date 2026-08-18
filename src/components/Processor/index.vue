@@ -90,8 +90,13 @@ const sensorSettings = ref<HardwareSensorSettingsData>({
   openHardwareMonitorPort: 18085,
 })
 const openHardwareMonitorStatus = ref<WindowsSensorEnhancementStatusData | null>(null)
+const windowsSensorDiagnostics = ref<WindowsSensorEnhancementDiagnosticsData | null>(null)
+const windowsSensorDiagnosticsLoading = ref(false)
+const windowsSensorDiagnosticsError = ref('')
+const windowsSensorDiagnosticCopyFeedback = ref<'idle' | 'success' | 'error'>('idle')
 const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
 let cpuSpeedDiagnosticCopyFeedbackTimerId: number | undefined
+let windowsSensorDiagnosticCopyFeedbackTimerId: number | undefined
 
 const pageStateBlock = computed(() => {
   if (fetchState.cpuInfo.status === 'error' || fetchState.cpuTemperature.status === 'error') {
@@ -128,6 +133,13 @@ function joinParts(parts: Array<string | number | null | undefined>, separator =
 
 function safeNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function formatDiagnosticCountMap(value: Record<string, number>) {
+  const entries = Object.entries(value)
+  return entries.length
+    ? entries.map(([key, count]) => `${key}=${count}`).join(', ')
+    : '--'
 }
 
 function getHistoryMin(values: number[]) {
@@ -508,6 +520,37 @@ const sensorEnhancementSuggestion = computed(() => {
   if (cpuTemperature.value?.suggestion) return cpuTemperature.value.suggestion
   return openHardwareMonitorStatus.value?.suggestion || ''
 })
+const windowsSensorDiagnosticFailureCode = computed(() => {
+  const diagnostics = windowsSensorDiagnostics.value
+  if (!diagnostics) return windowsSensorDiagnosticsError.value ? 'WINDOWS_SENSOR_DIAGNOSTICS_REQUEST_FAILED' : ''
+  if (diagnostics.failureCode) return diagnostics.failureCode
+  if (cpuTemperatureValue.value === null && diagnostics.sensors.cpuTemperatureCount > 0) {
+    return 'WINDOWS_SENSOR_UI_PIPELINE_MISMATCH'
+  }
+  return ''
+})
+const windowsSensorDiagnosticFailureMessage = computed(() => {
+  const diagnostics = windowsSensorDiagnostics.value
+  if (!diagnostics) return windowsSensorDiagnosticsError.value
+  if (diagnostics.failureCode) return diagnostics.failureMessage
+  if (cpuTemperatureValue.value === null && diagnostics.sensors.cpuTemperatureCount > 0) {
+    return 'helper 已返回 CPU 温度传感器，但处理器页面仍未得到温度，问题位于后续归一化或缓存链路。'
+  }
+  return diagnostics.failureMessage
+})
+const shouldShowWindowsSensorDiagnostics = computed(() =>
+  isWindowsPlatform.value
+  && sensorSettings.value.enhancedSensorEnabled
+  && Boolean(
+    windowsSensorDiagnosticsError.value
+    || (windowsSensorDiagnostics.value && (windowsSensorDiagnosticFailureCode.value || cpuTemperatureValue.value === null))
+  )
+)
+const windowsSensorDiagnosticCopyLabel = computed(() => {
+  if (windowsSensorDiagnosticCopyFeedback.value === 'success') return '诊断已复制'
+  if (windowsSensorDiagnosticCopyFeedback.value === 'error') return '复制失败'
+  return '复制完整诊断'
+})
 const macHelperStatusLabel = computed(() => {
   if (!macHelperStatus.value) return '未检测'
   if (macHelperStatus.value.loaded && macHelperStatus.value.socketExists) return '运行中'
@@ -848,6 +891,87 @@ const cpuSpeedDiagnosticDetailLines = computed(() => {
   return lines
 })
 
+const windowsSensorDiagnosticReportText = computed(() => {
+  const diagnostics = windowsSensorDiagnostics.value
+  const lines = [
+    'Windows 传感器增强诊断',
+    `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    `处理器：${cpuData.value?.brand || '--'}`,
+    `操作系统：${joinParts([osInfo.value?.distro || osInfo.value?.platform, osInfo.value?.release, osInfo.value?.arch]) || '--'}`,
+    `当前 CPU 温度：${cpuTemperatureValue.value === null ? '--' : `${cpuTemperatureValue.value} °C`}`,
+    `CPU 温度来源：${cpuTemperatureSourceLabel.value}`,
+    `CPU 温度 reason：${cpuTemperature.value?.reason || cpuTemperature.value?.errorCode || ''}`,
+    `CPU 温度 message：${cpuTemperature.value?.message || ''}`,
+    `CPU 温度 suggestion：${cpuTemperature.value?.suggestion || ''}`,
+  ]
+
+  if (!diagnostics) {
+    lines.push('', `诊断快照：${windowsSensorDiagnosticsError.value || '未读取'}`)
+    return lines.join('\n')
+  }
+
+  lines.push(
+    '',
+    '[判定]',
+    `failureCode：${windowsSensorDiagnosticFailureCode.value || ''}`,
+    `failureMessage：${windowsSensorDiagnosticFailureMessage.value || ''}`,
+    '',
+    '[Backend status]',
+    `running：${diagnostics.status.running}`,
+    `backend：${diagnostics.status.backend}`,
+    `statusReason：${diagnostics.status.reason || ''}`,
+    `statusSuggestion：${diagnostics.status.suggestion || ''}`,
+    `helperAvailable：${diagnostics.status.helperAvailable}`,
+    `helperRunning：${diagnostics.status.helperRunning}`,
+    `legacyFallback：${diagnostics.status.legacyFallback}`,
+    '',
+    '[Helper]',
+    `bundledAvailable：${diagnostics.helper.bundledAvailable}`,
+    `runtimeAvailable：${diagnostics.helper.runtimeAvailable}`,
+    `running：${diagnostics.helper.running}`,
+    `elevated：${diagnostics.helper.elevated}`,
+    `helperVersion：${diagnostics.helper.helperVersion || ''}`,
+    `backend：${diagnostics.helper.backend || ''}`,
+    `processId：${diagnostics.helper.processId ?? ''}`,
+    `executablePath：${diagnostics.helper.executablePath || ''}`,
+    `snapshotReceived：${diagnostics.helper.snapshotReceived}`,
+    `snapshotOk：${diagnostics.helper.snapshotOk}`,
+    `snapshotError：${diagnostics.helper.snapshotError || ''}`,
+    '',
+    '[Sensors]',
+    `total：${diagnostics.sensors.total}`,
+    `rawTemperatureCount：${diagnostics.sensors.rawTemperatureCount}`,
+    `cpuHardwareSensorCount：${diagnostics.sensors.cpuHardwareSensorCount}`,
+    `cpuFilterMatchCount：${diagnostics.sensors.cpuFilterMatchCount}`,
+    `cpuTemperatureCount：${diagnostics.sensors.cpuTemperatureCount}`,
+    `cpuClockCount：${diagnostics.sensors.cpuClockCount}`,
+    `cpuPowerCount：${diagnostics.sensors.cpuPowerCount}`,
+    `cpuVoltageCount：${diagnostics.sensors.cpuVoltageCount}`,
+    `cpuFanCount：${diagnostics.sensors.cpuFanCount}`,
+    `sensorTypeCounts：${formatDiagnosticCountMap(diagnostics.sensors.sensorTypeCounts)}`,
+    `hardwareTypeCounts：${formatDiagnosticCountMap(diagnostics.sensors.hardwareTypeCounts)}`,
+    '',
+    '[Raw sensor samples]'
+  )
+
+  if (diagnostics.sensors.samples.length) {
+    lines.push(...diagnostics.sensors.samples.map((sensor) =>
+      [
+        sensor.hardwareType || 'UnknownHardware',
+        sensor.sensorType || 'UnknownSensor',
+        sensor.parent || '--',
+        sensor.name || '--',
+        sensor.value === null ? '--' : String(sensor.value),
+        sensor.identifier || '--',
+      ].join(' | ')
+    ))
+  } else {
+    lines.push('无')
+  }
+
+  return lines.join('\n')
+})
+
 const cpuSpeedDiagnosticReportText = computed(() => {
   return [
     'CPU 频率诊断',
@@ -928,6 +1052,52 @@ async function copyCpuSpeedDiagnosticReport() {
   }
 }
 
+function scheduleWindowsSensorDiagnosticCopyFeedbackReset() {
+  if (windowsSensorDiagnosticCopyFeedbackTimerId) {
+    window.clearTimeout(windowsSensorDiagnosticCopyFeedbackTimerId)
+  }
+
+  windowsSensorDiagnosticCopyFeedbackTimerId = window.setTimeout(() => {
+    windowsSensorDiagnosticCopyFeedback.value = 'idle'
+    windowsSensorDiagnosticCopyFeedbackTimerId = undefined
+  }, 1800)
+}
+
+async function refreshWindowsSensorDiagnostics() {
+  if (!isWindowsPlatform.value || !sensorSettings.value.enhancedSensorEnabled) {
+    windowsSensorDiagnostics.value = null
+    windowsSensorDiagnosticsError.value = ''
+    return
+  }
+
+  windowsSensorDiagnosticsLoading.value = true
+  windowsSensorDiagnosticsError.value = ''
+  try {
+    const diagnostics = await window.services.getWindowsSensorEnhancementDiagnostics()
+    windowsSensorDiagnostics.value = diagnostics
+    openHardwareMonitorStatus.value = diagnostics.status
+  } catch (error) {
+    windowsSensorDiagnostics.value = null
+    windowsSensorDiagnosticsError.value = error instanceof Error ? error.message : String(error)
+    console.error('读取 Windows 传感器增强诊断失败:', error)
+  } finally {
+    windowsSensorDiagnosticsLoading.value = false
+  }
+}
+
+async function copyWindowsSensorDiagnosticReport() {
+  try {
+    await refreshWindowsSensorDiagnostics()
+    await writeClipboardText(windowsSensorDiagnosticReportText.value)
+    windowsSensorDiagnosticCopyFeedback.value = 'success'
+  } catch (error) {
+    console.error('复制 Windows 传感器增强诊断失败:', error)
+    windowsSensorDiagnosticCopyFeedback.value = 'error'
+  } finally {
+    scheduleWindowsSensorDiagnosticCopyFeedbackReset()
+  }
+}
+
 async function refreshHardwareSensorState() {
   if (sensorEnhancementPlatform.value === 'unsupported') return
 
@@ -944,6 +1114,7 @@ async function refreshHardwareSensorState() {
         suggestion: '正在读取 Windows 传感器增强状态',
       } as WindowsSensorEnhancementStatusData
       openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
+      await refreshWindowsSensorDiagnostics()
     }
   } catch (error) {
     console.error('读取硬件传感器增强状态失败:', error)
@@ -1021,6 +1192,7 @@ async function updateHardwareSensorSetting(patch: Partial<HardwareSensorSettings
     sensorSettings.value = await window.services.updateHardwareSensorSettings(patch)
     if (isWindowsPlatform.value) {
       openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
+      await refreshWindowsSensorDiagnostics()
     } else if (isMacPlatform.value) {
       macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
     }
@@ -1090,6 +1262,7 @@ async function startWindowsSensorEnhancement() {
     if (latestStatus.running) {
       await refreshProcessorHardwareDynamicMetrics()
     }
+    await refreshWindowsSensorDiagnostics()
   } catch (error) {
     console.error('启动 Windows 传感器增强失败:', error)
   } finally {
@@ -1190,6 +1363,10 @@ onUnmounted(() => {
   if (cpuSpeedDiagnosticCopyFeedbackTimerId) {
     window.clearTimeout(cpuSpeedDiagnosticCopyFeedbackTimerId)
     cpuSpeedDiagnosticCopyFeedbackTimerId = undefined
+  }
+  if (windowsSensorDiagnosticCopyFeedbackTimerId) {
+    window.clearTimeout(windowsSensorDiagnosticCopyFeedbackTimerId)
+    windowsSensorDiagnosticCopyFeedbackTimerId = undefined
   }
 })
 </script>
@@ -1315,6 +1492,14 @@ onUnmounted(() => {
             <button type="button" class="sensor-button" @click="openHardwareSensorComponentDirectory">
               打开组件目录
             </button>
+            <button
+              type="button"
+              class="sensor-button"
+              :disabled="windowsSensorDiagnosticsLoading || !sensorSettings.enhancedSensorEnabled"
+              @click="copyWindowsSensorDiagnosticReport"
+            >
+              {{ windowsSensorDiagnosticsLoading ? '读取诊断中...' : windowsSensorDiagnosticCopyLabel }}
+            </button>
           </div>
 
           <div class="sensor-enhancement-meta">
@@ -1322,6 +1507,59 @@ onUnmounted(() => {
             <span>原因：{{ cpuTemperatureReasonLabel }}</span>
           </div>
           <p v-if="sensorEnhancementSuggestion" class="sensor-enhancement-hint">建议：{{ sensorEnhancementSuggestion }}</p>
+
+          <div v-if="windowsSensorDiagnosticsLoading" class="sensor-diagnostic-alert sensor-diagnostic-alert--loading">
+            正在读取 helper 原始 snapshot 与 CPU 传感器分布...
+          </div>
+          <div v-else-if="shouldShowWindowsSensorDiagnostics" class="sensor-diagnostic-alert">
+            <div class="sensor-diagnostic-alert__head">
+              <div>
+                <strong>增强后端诊断</strong>
+                <code>{{ windowsSensorDiagnosticFailureCode || 'WINDOWS_SENSOR_DIAGNOSTIC_INFO' }}</code>
+              </div>
+              <button type="button" class="sensor-button" @click="copyWindowsSensorDiagnosticReport">
+                {{ windowsSensorDiagnosticCopyLabel }}
+              </button>
+            </div>
+            <p>{{ windowsSensorDiagnosticFailureMessage || '已读取 helper 快照，请复制完整诊断继续排查。' }}</p>
+
+            <div v-if="windowsSensorDiagnostics" class="sensor-diagnostic-grid">
+              <div>
+                <span>Snapshot</span>
+                <strong>{{ windowsSensorDiagnostics.helper.snapshotOk ? '成功' : '失败' }}</strong>
+              </div>
+              <div>
+                <span>总传感器</span>
+                <strong>{{ windowsSensorDiagnostics.sensors.total }}</strong>
+              </div>
+              <div>
+                <span>CPU 候选</span>
+                <strong>{{ windowsSensorDiagnostics.sensors.cpuHardwareSensorCount }}</strong>
+              </div>
+              <div>
+                <span>CPU 温度</span>
+                <strong>{{ windowsSensorDiagnostics.sensors.cpuTemperatureCount }}</strong>
+              </div>
+              <div>
+                <span>CPU 时钟</span>
+                <strong>{{ windowsSensorDiagnostics.sensors.cpuClockCount }}</strong>
+              </div>
+              <div>
+                <span>CPU 功耗</span>
+                <strong>{{ windowsSensorDiagnostics.sensors.cpuPowerCount }}</strong>
+              </div>
+            </div>
+
+            <div v-if="windowsSensorDiagnostics" class="sensor-diagnostic-meta">
+              <span>helper：{{ windowsSensorDiagnostics.helper.helperVersion || '--' }}</span>
+              <span>提权：{{ windowsSensorDiagnostics.helper.elevated ? '是' : '否' }}</span>
+              <span>PID：{{ windowsSensorDiagnostics.helper.processId ?? '--' }}</span>
+              <span>类型：{{ formatDiagnosticCountMap(windowsSensorDiagnostics.sensors.sensorTypeCounts) }}</span>
+            </div>
+            <p v-if="windowsSensorDiagnostics?.helper.snapshotError" class="sensor-diagnostic-error">
+              snapshot error：{{ windowsSensorDiagnostics.helper.snapshotError }}
+            </p>
+          </div>
 
         </div>
 
@@ -1942,6 +2180,98 @@ onUnmounted(() => {
   color: var(--accent-cyan);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.sensor-diagnostic-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-orange) 28%, transparent);
+  border-radius: 12px;
+  background: var(--state-danger-bg);
+
+  > p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+}
+
+.sensor-diagnostic-alert--loading {
+  border-color: var(--control-active-border);
+  background: var(--state-info-bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sensor-diagnostic-alert__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  code {
+    color: var(--accent-orange);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+}
+
+.sensor-diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 9px 10px;
+    border: 1px solid var(--panel-border);
+    border-radius: 9px;
+    background: var(--surface-soft-background);
+  }
+
+  span {
+    color: var(--text-subtle);
+    font-size: 11px;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+}
+
+.sensor-diagnostic-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.sensor-diagnostic-error {
+  color: var(--accent-orange) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow-wrap: anywhere;
 }
 
 .sensor-debug-panel {

@@ -8,6 +8,7 @@ import {
   WINDOWS_SENSOR_HELPER_PROCESS_NAME,
   getWindowsSensorHelperSensors,
   getWindowsSensorHelperStatus,
+  readWindowsSensorHelperDiagnosticSnapshot,
   startWindowsSensorHelper,
   stopWindowsSensorHelper,
 } from './windowsSensorHelper'
@@ -1911,6 +1912,178 @@ async function getOpenHardwareMonitorStatus() {
   })
 }
 
+function countWindowsSensorRowsByField(rows, fieldName) {
+  const counts = {}
+  for (const row of rows) {
+    const key = typeof row?.[fieldName] === 'string' && row[fieldName].trim()
+      ? row[fieldName].trim()
+      : 'Unknown'
+    counts[key] = (counts[key] || 0) + 1
+  }
+  return counts
+}
+
+function isWindowsDiagnosticCpuSensor(sensor) {
+  const hardwareType = typeof sensor?.hardwareType === 'string' ? sensor.hardwareType.toLowerCase() : ''
+  return hardwareType.includes('cpu') || isCpuSensor(sensor)
+}
+
+function buildWindowsSensorDiagnosticSamples(rows) {
+  const prioritized = [...rows].sort((left, right) => {
+    const score = (sensor) => {
+      let value = 0
+      if (isWindowsDiagnosticCpuSensor(sensor)) value += 100
+      if (sensor?.sensorType === 'Temperature') value += 40
+      if (sensor?.sensorType === 'Clock') value += 30
+      if (sensor?.sensorType === 'Power') value += 20
+      return value
+    }
+    return score(right) - score(left)
+  })
+
+  return prioritized.slice(0, 30).map((sensor) => ({
+    name: typeof sensor?.name === 'string' ? sensor.name : '',
+    identifier: typeof sensor?.identifier === 'string' ? sensor.identifier : '',
+    parent: typeof sensor?.parent === 'string' ? sensor.parent : '',
+    parentIdentifier: typeof sensor?.parentIdentifier === 'string' ? sensor.parentIdentifier : '',
+    hardwareType: typeof sensor?.hardwareType === 'string' ? sensor.hardwareType : '',
+    sensorType: typeof sensor?.sensorType === 'string' ? sensor.sensorType : '',
+    value: typeof sensor?.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null,
+  }))
+}
+
+function resolveWindowsSensorDiagnosticFailure({ status, snapshot, sensorCount, cpuHardwareSensorCount, cpuFilterMatchCount, cpuTemperatureCount }) {
+  if (!status?.running) {
+    return {
+      code: status?.reason || 'WINDOWS_SENSOR_BACKEND_NOT_RUNNING',
+      message: status?.suggestion || 'Windows 传感器增强后端尚未运行',
+    }
+  }
+
+  if (status.backend !== 'helper') {
+    return {
+      code: 'WINDOWS_SENSOR_LEGACY_BACKEND_ACTIVE',
+      message: '当前仍在使用兼容后端，没有走内置 Named Pipe helper',
+    }
+  }
+
+  if (!snapshot?.received) {
+    return {
+      code: snapshot?.error || 'WINDOWS_SENSOR_HELPER_SNAPSHOT_NO_RESPONSE',
+      message: 'helper 已运行，但 snapshot 请求没有收到响应',
+    }
+  }
+
+  if (!snapshot.ok) {
+    return {
+      code: 'WINDOWS_SENSOR_HELPER_SNAPSHOT_FAILED',
+      message: snapshot.error || 'helper snapshot 执行失败',
+    }
+  }
+
+  if (sensorCount === 0) {
+    return {
+      code: 'WINDOWS_SENSOR_HELPER_SNAPSHOT_EMPTY',
+      message: 'helper snapshot 成功，但 OpenHardwareMonitorLib 没有返回任何有值的传感器',
+    }
+  }
+
+  if (cpuHardwareSensorCount === 0) {
+    return {
+      code: 'WINDOWS_SENSOR_HELPER_CPU_NOT_ENUMERATED',
+      message: 'helper 返回了传感器，但没有识别到 CPU 硬件传感器',
+    }
+  }
+
+  if (cpuFilterMatchCount === 0) {
+    return {
+      code: 'WINDOWS_SENSOR_CPU_FILTER_MISMATCH',
+      message: 'helper 返回了 CPU 类型传感器，但现有 CPU 名称/标识过滤规则没有命中',
+    }
+  }
+
+  if (cpuTemperatureCount === 0) {
+    return {
+      code: 'WINDOWS_SENSOR_HELPER_CPU_TEMPERATURE_MISSING',
+      message: 'helper 已返回 CPU 传感器，但其中没有可用 Temperature 项',
+    }
+  }
+
+  return {
+    code: '',
+    message: 'helper 已返回可用 CPU 温度传感器；如果界面仍为空，问题位于后续归一化或缓存链路',
+  }
+}
+
+async function getWindowsSensorEnhancementDiagnostics() {
+  const status = await getOpenHardwareMonitorStatus()
+  const bundledResolved = resolveOpenHardwareMonitorExecutable()
+  const physicalResolved = ensurePhysicalOpenHardwareMonitor(bundledResolved)
+  const helperResolved = resolveWindowsSensorHelperExecutable(physicalResolved)
+  const helperStatus = isWindows() ? await getWindowsSensorHelperStatus() : null
+  const snapshot = isWindows() && (helperResolved.exists || helperStatus?.running)
+    ? await readWindowsSensorHelperDiagnosticSnapshot()
+    : {
+        received: false,
+        ok: false,
+        sensors: [],
+        error: isWindows() ? 'WINDOWS_SENSOR_HELPER_NOT_AVAILABLE' : 'NOT_WINDOWS',
+      }
+  const sensors = Array.isArray(snapshot?.sensors) ? snapshot.sensors : []
+  const cpuHardwareSensors = sensors.filter(isWindowsDiagnosticCpuSensor)
+  const cpuFilterSensors = sensors.filter(isCpuSensor)
+  const cpuTemperatureSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Temperature')
+  const cpuClockSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Clock')
+  const cpuPowerSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Power')
+  const cpuVoltageSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Voltage')
+  const cpuFanSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Fan')
+  const rawTemperatureSensors = sensors.filter((sensor) => sensor?.sensorType === 'Temperature')
+  const failure = resolveWindowsSensorDiagnosticFailure({
+    status,
+    snapshot,
+    sensorCount: sensors.length,
+    cpuHardwareSensorCount: cpuHardwareSensors.length,
+    cpuFilterMatchCount: cpuFilterSensors.length,
+    cpuTemperatureCount: cpuTemperatureSensors.length,
+  })
+
+  return {
+    generatedAt: Date.now(),
+    status,
+    helper: {
+      bundledAvailable: hasBundledWindowsSensorHelper(bundledResolved),
+      runtimeAvailable: helperResolved.exists,
+      executablePath: helperResolved.executablePath,
+      executableDirectory: helperResolved.directoryPath,
+      running: Boolean(helperStatus?.running),
+      elevated: Boolean(helperStatus?.elevated ?? snapshot?.elevated),
+      helperVersion: helperStatus?.helperVersion || snapshot?.helperVersion || '',
+      backend: helperStatus?.backend || snapshot?.backend || '',
+      processId: helperStatus?.processId ?? null,
+      snapshotReceived: Boolean(snapshot?.received),
+      snapshotOk: Boolean(snapshot?.ok),
+      snapshotGeneratedAt: Number.isFinite(snapshot?.generatedAt) ? snapshot.generatedAt : null,
+      snapshotError: snapshot?.error || '',
+    },
+    sensors: {
+      total: sensors.length,
+      rawTemperatureCount: rawTemperatureSensors.length,
+      cpuHardwareSensorCount: cpuHardwareSensors.length,
+      cpuFilterMatchCount: cpuFilterSensors.length,
+      cpuTemperatureCount: cpuTemperatureSensors.length,
+      cpuClockCount: cpuClockSensors.length,
+      cpuPowerCount: cpuPowerSensors.length,
+      cpuVoltageCount: cpuVoltageSensors.length,
+      cpuFanCount: cpuFanSensors.length,
+      sensorTypeCounts: countWindowsSensorRowsByField(sensors, 'sensorType'),
+      hardwareTypeCounts: countWindowsSensorRowsByField(sensors, 'hardwareType'),
+      samples: buildWindowsSensorDiagnosticSamples(sensors),
+    },
+    failureCode: failure.code,
+    failureMessage: failure.message,
+  }
+}
+
 async function startBundledOpenHardwareMonitor() {
   const resolved = ensurePhysicalOpenHardwareMonitor(resolveOpenHardwareMonitorExecutable())
 
@@ -3302,6 +3475,8 @@ export const systemService = {
   updateAppThemeSettings: async (patch) => updateAppThemeSettings(patch),
 
   getWindowsSensorEnhancementStatus: getOpenHardwareMonitorStatus,
+
+  getWindowsSensorEnhancementDiagnostics,
 
   startWindowsSensorEnhancement: startOpenHardwareMonitorManually,
 

@@ -212,6 +212,50 @@ declare global {
     reason?: string
     suggestion?: string
   }
+  interface WindowsSensorEnhancementDiagnosticSampleData {
+    name: string
+    identifier: string
+    parent: string
+    parentIdentifier: string
+    hardwareType: string
+    sensorType: string
+    value: number | null
+  }
+  interface WindowsSensorEnhancementDiagnosticsData {
+    generatedAt: number
+    status: WindowsSensorEnhancementStatusData
+    helper: {
+      bundledAvailable: boolean
+      runtimeAvailable: boolean
+      executablePath: string
+      executableDirectory: string
+      running: boolean
+      elevated: boolean
+      helperVersion: string
+      backend: string
+      processId: number | null
+      snapshotReceived: boolean
+      snapshotOk: boolean
+      snapshotGeneratedAt: number | null
+      snapshotError: string
+    }
+    sensors: {
+      total: number
+      rawTemperatureCount: number
+      cpuHardwareSensorCount: number
+      cpuFilterMatchCount: number
+      cpuTemperatureCount: number
+      cpuClockCount: number
+      cpuPowerCount: number
+      cpuVoltageCount: number
+      cpuFanCount: number
+      sensorTypeCounts: Record<string, number>
+      hardwareTypeCounts: Record<string, number>
+      samples: WindowsSensorEnhancementDiagnosticSampleData[]
+    }
+    failureCode: string
+    failureMessage: string
+  }
   type OpenHardwareMonitorStatusData = WindowsSensorEnhancementStatusData
   interface OpenHardwareMonitorDirectoryResultData {
     ok: boolean
@@ -301,6 +345,7 @@ declare global {
       getAppThemeSettings: () => Promise<AppThemeSettingsData>
       updateAppThemeSettings: (patch: Partial<AppThemeSettingsData>) => Promise<AppThemeSettingsData>
       getWindowsSensorEnhancementStatus: () => Promise<WindowsSensorEnhancementStatusData>
+      getWindowsSensorEnhancementDiagnostics: () => Promise<WindowsSensorEnhancementDiagnosticsData>
       startWindowsSensorEnhancement: () => Promise<WindowsSensorEnhancementStatusData>
       openWindowsSensorComponentDirectory: () => Promise<OpenHardwareMonitorDirectoryResultData>
       getOpenHardwareMonitorStatus: () => Promise<OpenHardwareMonitorStatusData>

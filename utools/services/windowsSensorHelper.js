@@ -98,9 +98,33 @@ export async function getWindowsSensorHelperStatus() {
   }
 }
 
+export async function readWindowsSensorHelperDiagnosticSnapshot() {
+  const response = await requestWindowsSensorHelper('snapshot', 2500)
+  if (!response) {
+    return {
+      received: false,
+      ok: false,
+      sensors: [],
+      error: 'WINDOWS_SENSOR_HELPER_SNAPSHOT_NO_RESPONSE',
+    }
+  }
+
+  return {
+    received: true,
+    ok: Boolean(response.ok),
+    protocolVersion: response.protocolVersion,
+    helperVersion: typeof response.helperVersion === 'string' ? response.helperVersion : '',
+    backend: typeof response.backend === 'string' ? response.backend : 'OpenHardwareMonitorLib',
+    generatedAt: Number.isFinite(response.generatedAt) ? response.generatedAt : null,
+    elevated: Boolean(response.elevated),
+    sensors: Array.isArray(response.sensors) ? response.sensors : [],
+    error: typeof response.error === 'string' ? response.error : '',
+  }
+}
+
 export async function readWindowsSensorHelperSnapshot() {
-  const response = await requestWindowsSensorHelper('snapshot')
-  if (!response?.ok || !Array.isArray(response.sensors)) return null
+  const response = await readWindowsSensorHelperDiagnosticSnapshot()
+  if (!response.ok) return null
   return response
 }
 

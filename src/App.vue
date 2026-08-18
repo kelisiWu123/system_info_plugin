@@ -425,7 +425,7 @@ onUnmounted(() => {
                   查看详情
                 </button>
                 <button
-                  v-if="sensorEnhancementStatus === 'error'"
+                  v-if="sensorEnhancementStatus === 'error' || (sensorEnhancementPlatform === 'windows' && sensorSettings.enhancedSensorEnabled)"
                   type="button"
                   class="sensor-menu-action"
                   @click="copySensorDiagnostics()"

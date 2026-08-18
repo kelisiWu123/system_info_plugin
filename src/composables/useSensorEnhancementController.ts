@@ -28,6 +28,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
   const sensorAuthorizationPromptVisible = ref(false)
   const sensorActionMessage = ref('')
   const openHardwareMonitorStatus = ref<WindowsSensorEnhancementStatusData | null>(null)
+  const windowsSensorDiagnostics = ref<WindowsSensorEnhancementDiagnosticsData | null>(null)
   const macHelperStatus = ref<MacPowermetricsHelperStatusData | null>(null)
 
   const platform = computed(() => getSensorEnhancementPlatform(options.osInfo.value || resolvedOsInfo.value))
@@ -128,6 +129,38 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
       }
     }
 
+    if (platform.value === 'windows' && windowsSensorDiagnostics.value) {
+      const diagnostics = windowsSensorDiagnostics.value
+      lines.push(
+        '',
+        '[Windows helper snapshot]',
+        `failureCode：${diagnostics.failureCode || ''}`,
+        `failureMessage：${diagnostics.failureMessage || ''}`,
+        `helperVersion：${diagnostics.helper.helperVersion || ''}`,
+        `helperBackend：${diagnostics.helper.backend || ''}`,
+        `helperPid：${diagnostics.helper.processId ?? ''}`,
+        `elevated：${diagnostics.helper.elevated}`,
+        `runtimeAvailable：${diagnostics.helper.runtimeAvailable}`,
+        `helperPath：${diagnostics.helper.executablePath || ''}`,
+        `snapshotReceived：${diagnostics.helper.snapshotReceived}`,
+        `snapshotOk：${diagnostics.helper.snapshotOk}`,
+        `snapshotError：${diagnostics.helper.snapshotError || ''}`,
+        `sensorTotal：${diagnostics.sensors.total}`,
+        `rawTemperatureCount：${diagnostics.sensors.rawTemperatureCount}`,
+        `cpuHardwareSensorCount：${diagnostics.sensors.cpuHardwareSensorCount}`,
+        `cpuFilterMatchCount：${diagnostics.sensors.cpuFilterMatchCount}`,
+        `cpuTemperatureCount：${diagnostics.sensors.cpuTemperatureCount}`,
+        `cpuClockCount：${diagnostics.sensors.cpuClockCount}`,
+        `cpuPowerCount：${diagnostics.sensors.cpuPowerCount}`,
+        `cpuVoltageCount：${diagnostics.sensors.cpuVoltageCount}`,
+        `cpuFanCount：${diagnostics.sensors.cpuFanCount}`,
+        `sensorTypeCounts：${JSON.stringify(diagnostics.sensors.sensorTypeCounts)}`,
+        `hardwareTypeCounts：${JSON.stringify(diagnostics.sensors.hardwareTypeCounts)}`,
+        'samples：',
+        JSON.stringify(diagnostics.sensors.samples, null, 2)
+      )
+    }
+
     if (platform.value === 'macos' && macHelperStatus.value) {
       lines.push(
         '',
@@ -163,6 +196,9 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
       sensorSettings.value = await window.services.getHardwareSensorSettings()
       if (platform.value === 'windows') {
         openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
+        windowsSensorDiagnostics.value = sensorSettings.value.enhancedSensorEnabled
+          ? await window.services.getWindowsSensorEnhancementDiagnostics()
+          : null
       } else if (platform.value === 'macos') {
         macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
       }
@@ -192,6 +228,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
       if (platform.value === 'windows') {
         openHardwareMonitorStatus.value = await window.services.startWindowsSensorEnhancement()
         openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
+        windowsSensorDiagnostics.value = await window.services.getWindowsSensorEnhancementDiagnostics()
       } else if (platform.value === 'macos') {
         if (!macHelperStatus.value?.installed) {
           sensorAuthorizationPromptVisible.value = true
@@ -224,6 +261,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
         macHelperStatus.value = await window.services.uninstallMacPowermetricsHelper()
       } else if (platform.value === 'windows') {
         openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
+        windowsSensorDiagnostics.value = null
       }
 
       await refreshProcessorState()
@@ -270,6 +308,9 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
 
   async function copyDiagnostics() {
     try {
+      if (platform.value === 'windows' && sensorSettings.value.enhancedSensorEnabled) {
+        windowsSensorDiagnostics.value = await window.services.getWindowsSensorEnhancementDiagnostics()
+      }
       await writeClipboardText(diagnosticsText.value)
       sensorActionMessage.value = '诊断信息已复制'
     } catch (error) {
@@ -295,6 +336,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
     sensorAuthorizationPromptVisible,
     sensorActionMessage,
     openHardwareMonitorStatus,
+    windowsSensorDiagnostics,
     macHelperStatus,
     platform,
     ready,
