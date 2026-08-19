@@ -208,7 +208,7 @@ function sensorMetricFallbackLabel(metric: 'temperature' | 'power' | 'voltage' |
     ? Boolean(openHardwareMonitorStatus.value?.running)
     : Boolean(macHelperStatus.value?.loaded && macHelperStatus.value?.socketExists)
 
-  return enhancementReady ? '系统未提供' : '增强组件未就绪'
+  return enhancementReady ? '未检测到可用读数' : '增强组件未就绪'
 }
 
 function formatTemperature(value: number | null) {
@@ -953,6 +953,8 @@ const windowsSensorDiagnosticReportText = computed(() => {
     `cpuClockCount：${diagnostics.sensors.cpuClockCount}`,
     `cpuPowerCount：${diagnostics.sensors.cpuPowerCount}`,
     `cpuVoltageCount：${diagnostics.sensors.cpuVoltageCount}`,
+    `cpuVoltageUsableCount：${diagnostics.sensors.cpuVoltageUsableCount}`,
+    `cpuVoltageSamples：${diagnostics.sensors.cpuVoltageSamples.map((sensor) => `${sensor.name || sensor.identifier || 'unknown'}=${sensor.value ?? '--'}V`).join(', ') || '--'}`,
     `cpuFanCount：${diagnostics.sensors.cpuFanCount}`,
     `sensorTypeCounts：${formatDiagnosticCountMap(diagnostics.sensors.sensorTypeCounts)}`,
     `hardwareTypeCounts：${formatDiagnosticCountMap(diagnostics.sensors.hardwareTypeCounts)}`,

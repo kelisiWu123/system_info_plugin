@@ -40,7 +40,7 @@ test('sensor-heavy pages explain when telemetry needs enhancement instead of say
 
   assert.match(processor, /function sensorMetricFallbackLabel/)
   assert.match(processor, /return '需要传感器增强'/)
-  assert.match(processor, /return enhancementReady \? '系统未提供' : '增强组件未就绪'/)
+  assert.match(processor, /return enhancementReady \? '未检测到可用读数' : '增强组件未就绪'/)
   assert.match(graphics, /sensorEnhancementEnabled\?: boolean/)
   assert.match(graphics, /sensorEnhancementReady\?: boolean/)
   assert.match(graphics, /function graphicsMetricFallbackLabel/)

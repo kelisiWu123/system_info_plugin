@@ -252,6 +252,12 @@ declare global {
       cpuClockCount: number
       cpuPowerCount: number
       cpuVoltageCount: number
+      cpuVoltageUsableCount: number
+      cpuVoltageSamples: Array<{
+        name: string
+        identifier: string
+        value: number | null
+      }>
       cpuFanCount: number
       sensorTypeCounts: Record<string, number>
       hardwareTypeCounts: Record<string, number>

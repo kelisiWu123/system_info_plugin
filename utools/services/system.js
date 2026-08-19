@@ -1933,7 +1933,8 @@ function buildWindowsSensorDiagnosticSamples(rows) {
     const score = (sensor) => {
       let value = 0
       if (isWindowsDiagnosticCpuSensor(sensor)) value += 100
-      if (sensor?.sensorType === 'Temperature') value += 40
+      if (sensor?.sensorType === 'Temperature') value += 50
+      if (sensor?.sensorType === 'Voltage') value += 45
       if (sensor?.sensorType === 'Clock') value += 30
       if (sensor?.sensorType === 'Power') value += 20
       return value
@@ -2072,6 +2073,11 @@ async function getWindowsSensorEnhancementDiagnostics() {
   const cpuClockSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Clock')
   const cpuPowerSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Power')
   const cpuVoltageSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Voltage')
+  const usableCpuVoltageSensors = cpuVoltageSensors.filter((sensor) => (
+    typeof sensor?.value === 'number'
+    && Number.isFinite(sensor.value)
+    && sensor.value > 0
+  ))
   const cpuFanSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Fan')
   const rawTemperatureSensors = sensors.filter((sensor) => sensor?.sensorType === 'Temperature')
   const failure = resolveWindowsSensorDiagnosticFailure({
@@ -2116,6 +2122,12 @@ async function getWindowsSensorEnhancementDiagnostics() {
       cpuClockCount: cpuClockSensors.length,
       cpuPowerCount: cpuPowerSensors.length,
       cpuVoltageCount: cpuVoltageSensors.length,
+      cpuVoltageUsableCount: usableCpuVoltageSensors.length,
+      cpuVoltageSamples: usableCpuVoltageSensors.map((sensor) => ({
+        name: typeof sensor?.name === 'string' ? sensor.name : '',
+        identifier: typeof sensor?.identifier === 'string' ? sensor.identifier : '',
+        value: typeof sensor?.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null,
+      })),
       cpuFanCount: cpuFanSensors.length,
       sensorTypeCounts: countWindowsSensorRowsByField(sensors, 'sensorType'),
       hardwareTypeCounts: countWindowsSensorRowsByField(sensors, 'hardwareType'),
@@ -2651,8 +2663,13 @@ async function getHardwareMonitorCpuPower() {
 
 async function getHardwareMonitorCpuVoltage() {
   const sensors = (await getHardwareMonitorSensors('Voltage')).filter(isCpuSensor)
+  const usableSensors = sensors.filter((sensor) => (
+    typeof sensor.value === 'number'
+    && Number.isFinite(sensor.value)
+    && sensor.value > 0
+  ))
 
-  if (!sensors.length) {
+  if (!usableSensors.length) {
     return {
       value: null,
       source: 'unsupported',
@@ -2661,14 +2678,14 @@ async function getHardwareMonitorCpuVoltage() {
     }
   }
 
-  const mainSensor = [...sensors].sort((a, b) => scoreCpuVoltageSensor(b) - scoreCpuVoltageSensor(a))[0]
+  const mainSensor = [...usableSensors].sort((a, b) => scoreCpuVoltageSensor(b) - scoreCpuVoltageSensor(a))[0]
 
   return {
     value: mainSensor ? Math.round(mainSensor.value * 100) / 100 : null,
     source: 'OpenHardwareMonitor',
     sensorName: mainSensor?.name,
     unit: 'V',
-    max: Math.max(...sensors.map((sensor) => sensor.value)),
+    max: Math.max(...usableSensors.map((sensor) => sensor.value)),
   }
 }
 
