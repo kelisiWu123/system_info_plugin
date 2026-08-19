@@ -160,6 +160,8 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
         `cpuVoltageCount：${diagnostics.sensors.cpuVoltageCount}`,
         `cpuVoltageUsableCount：${diagnostics.sensors.cpuVoltageUsableCount}`,
         `cpuVoltageSamples：${JSON.stringify(diagnostics.sensors.cpuVoltageSamples)}`,
+        `vcoreCandidateSamples：${JSON.stringify(diagnostics.sensors.vcoreCandidateSamples)}`,
+        `allVoltageSamples：${JSON.stringify(diagnostics.sensors.allVoltageSamples)}`,
         `cpuFanCount：${diagnostics.sensors.cpuFanCount}`,
         `sensorTypeCounts：${JSON.stringify(diagnostics.sensors.sensorTypeCounts)}`,
         `hardwareTypeCounts：${JSON.stringify(diagnostics.sensors.hardwareTypeCounts)}`,

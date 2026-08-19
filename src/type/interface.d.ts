@@ -258,6 +258,20 @@ declare global {
         identifier: string
         value: number | null
       }>
+      allVoltageSamples: Array<{
+        name: string
+        identifier: string
+        parent: string
+        hardwareType: string
+        value: number | null
+      }>
+      vcoreCandidateSamples: Array<{
+        name: string
+        identifier: string
+        parent: string
+        hardwareType: string
+        value: number | null
+      }>
       cpuFanCount: number
       sensorTypeCounts: Record<string, number>
       hardwareTypeCounts: Record<string, number>
@@ -310,8 +324,15 @@ declare global {
     value: number | null
     source: 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
+    measurement?: 'vcore' | 'vid'
     unit: 'V'
     max?: number | null
+    sensors?: Array<{
+      name: string
+      identifier?: string
+      hardwareType?: string
+      value: number
+    }>
   }
   interface CpuFanData {
     value: number | null

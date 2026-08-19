@@ -462,6 +462,7 @@ const cpuTemperatureIssueLabel = computed(() => {
 
 const cpuPowerValue = computed(() => safeNumber(cpuPower.value?.value))
 const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? parseVoltageString(cpuData.value?.voltage))
+const cpuVoltageMetricLabel = computed(() => cpuVoltage.value?.measurement === 'vid' ? '核心 VID' : '核心电压')
 const cpuFanSpeedValue = computed(() => safeNumber(cpuFanSpeed.value?.value))
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
 const cpuIdlePercent = computed(() => getProcessorIdlePercent(cpuLoadData.value))
@@ -630,7 +631,7 @@ const primarySpecs = computed(() => [
     value: cleanText(cpuData.value?.socket) || '--',
   },
   {
-    label: processorAuxDisplayMode.value === 'fan' ? '风扇 / 当前功耗' : '电压 / 当前功耗',
+    label: processorAuxDisplayMode.value === 'fan' ? '风扇 / 当前功耗' : `${cpuVoltageMetricLabel.value} / 当前功耗`,
     value: joinParts([
       processorAuxDisplayMode.value === 'fan' ? formatFanSpeed(cpuFanSpeedValue.value) : formatVoltage(cpuVoltageValue.value),
       formatPower(cpuPowerValue.value),
@@ -710,7 +711,7 @@ const monitorCards = computed<MonitorCard[]>(() => [
       }
     : {
         id: 'voltage',
-        label: '核心电压',
+        label: cpuVoltageMetricLabel.value,
         value: formatVoltage(cpuVoltageValue.value),
         unit: cpuVoltageValue.value ? 'V' : '',
         accent: 'var(--accent-purple)',
@@ -955,6 +956,9 @@ const windowsSensorDiagnosticReportText = computed(() => {
     `cpuVoltageCount：${diagnostics.sensors.cpuVoltageCount}`,
     `cpuVoltageUsableCount：${diagnostics.sensors.cpuVoltageUsableCount}`,
     `cpuVoltageSamples：${diagnostics.sensors.cpuVoltageSamples.map((sensor) => `${sensor.name || sensor.identifier || 'unknown'}=${sensor.value ?? '--'}V`).join(', ') || '--'}`,
+    `vcoreCandidateCount：${diagnostics.sensors.vcoreCandidateSamples.length}`,
+    `vcoreCandidateSamples：${diagnostics.sensors.vcoreCandidateSamples.map((sensor) => `${sensor.hardwareType}/${sensor.parent}/${sensor.name}=${sensor.value ?? '--'}V`).join(', ') || '--'}`,
+    `allVoltageSamples：${diagnostics.sensors.allVoltageSamples.map((sensor) => `${sensor.hardwareType}/${sensor.parent}/${sensor.name}=${sensor.value ?? '--'}V`).join(', ') || '--'}`,
     `cpuFanCount：${diagnostics.sensors.cpuFanCount}`,
     `sensorTypeCounts：${formatDiagnosticCountMap(diagnostics.sensors.sensorTypeCounts)}`,
     `hardwareTypeCounts：${formatDiagnosticCountMap(diagnostics.sensors.hardwareTypeCounts)}`,
@@ -1001,7 +1005,7 @@ const processorReportText = computed(() => {
     `核心 / 线程：${joinParts([displayPhysicalCoreCount.value ? `${displayPhysicalCoreCount.value} 核` : '', cpuData.value?.cores ? `${cpuData.value.cores} 线程` : ''], ' / ') || '--'}`,
     `当前温度：${formatTemperature(cpuTemperatureValue.value)}`,
     `当前功耗：${formatPower(cpuPowerValue.value)}`,
-    `${processorAuxDisplayMode.value === 'fan' ? '当前风扇' : '当前电压'}：${processorAuxDisplayMode.value === 'fan' ? formatFanSpeed(cpuFanSpeedValue.value) : formatVoltage(cpuVoltageValue.value)}`,
+    `${processorAuxDisplayMode.value === 'fan' ? '当前风扇' : `当前${cpuVoltageMetricLabel.value}`}：${processorAuxDisplayMode.value === 'fan' ? formatFanSpeed(cpuFanSpeedValue.value) : formatVoltage(cpuVoltageValue.value)}`,
     `当前频率：${formatFrequency(currentSpeedValue.value)}`,
     `当前负载：${Math.round(cpuLoadPercent.value)}%`,
     '',

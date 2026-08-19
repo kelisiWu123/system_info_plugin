@@ -1109,6 +1109,24 @@ function scoreCpuVoltageSensor(sensor) {
   return 50
 }
 
+function isExplicitCpuVcoreSensor(sensor) {
+  const name = String(sensor?.name || '').trim().toLowerCase()
+  const identifier = String(sensor?.identifier || '').trim().toLowerCase()
+  const parent = String(sensor?.parent || '').trim().toLowerCase()
+  const haystack = `${name} ${identifier} ${parent}`
+
+  if (haystack.includes('gpu')) return false
+  return (
+    /(^|\s)cpu\s+vcore($|\s)/.test(name)
+    || /(^|\s)vcore($|\s)/.test(name)
+    || name === 'cpu core voltage'
+  )
+}
+
+function isCpuVidSensor(sensor) {
+  return isCpuSensor(sensor) && /(^|\s)vid($|\s)/i.test(String(sensor?.name || ''))
+}
+
 function scoreCpuFanSensor(sensor) {
   const haystack = `${sensor.name} ${sensor.identifier} ${sensor.parent}`.toLowerCase()
 
@@ -2080,6 +2098,8 @@ async function getWindowsSensorEnhancementDiagnostics() {
   ))
   const cpuFanSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Fan')
   const rawTemperatureSensors = sensors.filter((sensor) => sensor?.sensorType === 'Temperature')
+  const rawVoltageSensors = sensors.filter((sensor) => sensor?.sensorType === 'Voltage')
+  const vcoreCandidateSensors = rawVoltageSensors.filter(isExplicitCpuVcoreSensor)
   const failure = resolveWindowsSensorDiagnosticFailure({
     status,
     snapshot,
@@ -2126,6 +2146,20 @@ async function getWindowsSensorEnhancementDiagnostics() {
       cpuVoltageSamples: usableCpuVoltageSensors.map((sensor) => ({
         name: typeof sensor?.name === 'string' ? sensor.name : '',
         identifier: typeof sensor?.identifier === 'string' ? sensor.identifier : '',
+        value: typeof sensor?.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null,
+      })),
+      allVoltageSamples: rawVoltageSensors.map((sensor) => ({
+        name: typeof sensor?.name === 'string' ? sensor.name : '',
+        identifier: typeof sensor?.identifier === 'string' ? sensor.identifier : '',
+        parent: typeof sensor?.parent === 'string' ? sensor.parent : '',
+        hardwareType: typeof sensor?.hardwareType === 'string' ? sensor.hardwareType : '',
+        value: typeof sensor?.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null,
+      })),
+      vcoreCandidateSamples: vcoreCandidateSensors.map((sensor) => ({
+        name: typeof sensor?.name === 'string' ? sensor.name : '',
+        identifier: typeof sensor?.identifier === 'string' ? sensor.identifier : '',
+        parent: typeof sensor?.parent === 'string' ? sensor.parent : '',
+        hardwareType: typeof sensor?.hardwareType === 'string' ? sensor.hardwareType : '',
         value: typeof sensor?.value === 'number' && Number.isFinite(sensor.value) ? sensor.value : null,
       })),
       cpuFanCount: cpuFanSensors.length,
@@ -2662,14 +2696,17 @@ async function getHardwareMonitorCpuPower() {
 }
 
 async function getHardwareMonitorCpuVoltage() {
-  const sensors = (await getHardwareMonitorSensors('Voltage')).filter(isCpuSensor)
+  const sensors = await getHardwareMonitorSensors('Voltage')
   const usableSensors = sensors.filter((sensor) => (
     typeof sensor.value === 'number'
     && Number.isFinite(sensor.value)
     && sensor.value > 0
   ))
+  const vcoreSensors = usableSensors.filter(isExplicitCpuVcoreSensor)
+  const vidSensors = usableSensors.filter(isCpuVidSensor)
+  const selectedSensors = vcoreSensors.length ? vcoreSensors : vidSensors
 
-  if (!usableSensors.length) {
+  if (!selectedSensors.length) {
     return {
       value: null,
       source: 'unsupported',
@@ -2678,14 +2715,24 @@ async function getHardwareMonitorCpuVoltage() {
     }
   }
 
-  const mainSensor = [...usableSensors].sort((a, b) => scoreCpuVoltageSensor(b) - scoreCpuVoltageSensor(a))[0]
+  const measurement = vcoreSensors.length ? 'vcore' : 'vid'
+  const mainSensor = measurement === 'vcore'
+    ? [...selectedSensors].sort((a, b) => scoreCpuVoltageSensor(b) - scoreCpuVoltageSensor(a))[0]
+    : [...selectedSensors].sort((a, b) => b.value - a.value)[0]
 
   return {
-    value: mainSensor ? Math.round(mainSensor.value * 100) / 100 : null,
+    value: mainSensor ? Math.round(mainSensor.value * 1000) / 1000 : null,
     source: 'OpenHardwareMonitor',
     sensorName: mainSensor?.name,
+    measurement,
     unit: 'V',
-    max: Math.max(...usableSensors.map((sensor) => sensor.value)),
+    max: Math.max(...selectedSensors.map((sensor) => sensor.value)),
+    sensors: selectedSensors.map((sensor) => ({
+      name: sensor.name,
+      identifier: sensor.identifier,
+      hardwareType: sensor.hardwareType,
+      value: Math.round(sensor.value * 1000) / 1000,
+    })),
   }
 }
 
