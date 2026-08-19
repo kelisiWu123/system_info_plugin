@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -49,14 +51,35 @@ namespace HWInfoX.WindowsSensorHelper
     internal static class Program
     {
         private const int ProtocolVersion = 1;
-        private const string HelperVersion = "1.0.0";
+        private const string HelperVersion = "1.0.1";
         private const string DefaultPipeName = "hwinfox-sensor-helper-v1";
+        private const int SeKernelObject = 6;
+        private const uint LabelSecurityInformation = 0x00000010;
         private const int SnapshotCacheMilliseconds = 700;
         private const int IdleExitMilliseconds = 1800000;
         private const int AcceptPollMilliseconds = 5000;
 
         private static readonly JavaScriptSerializer Serializer = new JavaScriptSerializer();
         private static readonly object SnapshotLock = new object();
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern uint SetSecurityInfo(
+            IntPtr handle,
+            int objectType,
+            uint securityInfo,
+            IntPtr owner,
+            IntPtr group,
+            IntPtr dacl,
+            IntPtr sacl);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetSecurityDescriptorSacl(
+            IntPtr securityDescriptor,
+            [MarshalAs(UnmanagedType.Bool)] out bool saclPresent,
+            out IntPtr sacl,
+            [MarshalAs(UnmanagedType.Bool)] out bool saclDefaulted);
+
         private static Computer _computer;
         private static string _cachedSnapshotJson;
         private static long _cachedSnapshotAt;
@@ -73,6 +96,8 @@ namespace HWInfoX.WindowsSensorHelper
                 {
                     return 0;
                 }
+
+                TryDeleteCrashLog();
 
                 try
                 {
@@ -182,11 +207,8 @@ namespace HWInfoX.WindowsSensorHelper
 
         private static NamedPipeServerStream CreatePipeServer(string pipeName)
         {
-            var security = new PipeSecurity();
-            security.SetSecurityDescriptorSddlForm(
-                "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)S:(ML;;NW;;;ME)");
-
-            return new NamedPipeServerStream(
+            var security = BuildPipeSecurity();
+            var server = new NamedPipeServerStream(
                 pipeName,
                 PipeDirection.InOut,
                 4,
@@ -194,7 +216,82 @@ namespace HWInfoX.WindowsSensorHelper
                 PipeOptions.Asynchronous,
                 16384,
                 16384,
-                security);
+                security,
+                HandleInheritability.None,
+                PipeAccessRights.TakeOwnership);
+
+            try
+            {
+                ApplyMediumIntegrityLabel(server);
+                return server;
+            }
+            catch
+            {
+                server.Dispose();
+                throw;
+            }
+        }
+
+        private static PipeSecurity BuildPipeSecurity()
+        {
+            var security = new PipeSecurity();
+            security.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+            security.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+
+            var currentUser = WindowsIdentity.GetCurrent().User;
+            if (currentUser == null)
+            {
+                throw new InvalidOperationException("Unable to resolve the current Windows user SID for the sensor helper pipe.");
+            }
+
+            security.AddAccessRule(new PipeAccessRule(
+                currentUser,
+                PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
+                AccessControlType.Allow));
+            return security;
+        }
+
+        private static void ApplyMediumIntegrityLabel(NamedPipeServerStream server)
+        {
+            var descriptor = new RawSecurityDescriptor("S:(ML;;NW;;;ME)");
+            var binaryDescriptor = new byte[descriptor.BinaryLength];
+            descriptor.GetBinaryForm(binaryDescriptor, 0);
+
+            var pinnedDescriptor = GCHandle.Alloc(binaryDescriptor, GCHandleType.Pinned);
+            try
+            {
+                var descriptorPointer = pinnedDescriptor.AddrOfPinnedObject();
+                bool saclPresent;
+                bool saclDefaulted;
+                IntPtr sacl;
+                if (!GetSecurityDescriptorSacl(descriptorPointer, out saclPresent, out sacl, out saclDefaulted) || !saclPresent || sacl == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Unable to construct the medium-integrity label for the sensor helper pipe.");
+                }
+
+                var result = SetSecurityInfo(
+                    server.SafePipeHandle.DangerousGetHandle(),
+                    SeKernelObject,
+                    LabelSecurityInformation,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    sacl);
+                if (result != 0)
+                {
+                    throw new IOException("Unable to apply the medium-integrity label to the sensor helper pipe. Win32 error: " + result + ".");
+                }
+            }
+            finally
+            {
+                pinnedDescriptor.Free();
+            }
         }
 
         private static void HandleClient(Stream stream)
@@ -337,6 +434,19 @@ namespace HWInfoX.WindowsSensorHelper
         private static long UtcNowMilliseconds()
         {
             return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        }
+
+        private static void TryDeleteCrashLog()
+        {
+            try
+            {
+                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HWInfoXSensorHelper.error.log");
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch
+            {
+                // stale diagnostics are non-fatal
+            }
         }
 
         private static void TryWriteCrashLog(Exception error)
