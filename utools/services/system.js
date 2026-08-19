@@ -1952,8 +1952,38 @@ function buildWindowsSensorDiagnosticSamples(rows) {
   }))
 }
 
-function resolveWindowsSensorDiagnosticFailure({ status, snapshot, sensorCount, cpuHardwareSensorCount, cpuFilterMatchCount, cpuTemperatureCount }) {
+function resolveWindowsSensorDiagnosticFailure({
+  status,
+  snapshot,
+  processPresent,
+  crashLog,
+  sensorCount,
+  cpuHardwareSensorCount,
+  cpuFilterMatchCount,
+  cpuTemperatureCount,
+}) {
   if (!status?.running) {
+    if (processPresent && !snapshot?.received) {
+      return {
+        code: 'WINDOWS_SENSOR_HELPER_PIPE_UNREACHABLE',
+        message: 'helper 进程仍在运行，但 Named Pipe 没有响应；优先检查 Pipe 创建失败、权限/MIC 或 helper 卡在初始化阶段',
+      }
+    }
+
+    if (crashLog) {
+      return {
+        code: 'WINDOWS_SENSOR_HELPER_CRASHED',
+        message: 'helper 启动后已退出，并写入了异常日志；请复制完整诊断中的 crashLog',
+      }
+    }
+
+    if (snapshot?.error === 'WINDOWS_SENSOR_HELPER_SNAPSHOT_NO_RESPONSE') {
+      return {
+        code: 'WINDOWS_SENSOR_HELPER_EXITED_EARLY',
+        message: 'helper 启动后未保持运行，也没有建立 Named Pipe；可能在程序集加载或 Computer 初始化早期退出',
+      }
+    }
+
     return {
       code: status?.reason || 'WINDOWS_SENSOR_BACKEND_NOT_RUNNING',
       message: status?.suggestion || 'Windows 传感器增强后端尚未运行',
@@ -2021,7 +2051,13 @@ async function getWindowsSensorEnhancementDiagnostics() {
   const physicalResolved = ensurePhysicalOpenHardwareMonitor(bundledResolved)
   const helperResolved = resolveWindowsSensorHelperExecutable(physicalResolved)
   const helperStatus = isWindows() ? await getWindowsSensorHelperStatus() : null
-  const snapshot = isWindows() && (helperResolved.exists || helperStatus?.running)
+  const processPresent = isWindows() ? await isProcessRunning(WINDOWS_SENSOR_HELPER_PROCESS_NAME) : false
+  const crashLogPath = helperResolved.directoryPath
+    ? path.join(helperResolved.directoryPath, 'HWInfoXSensorHelper.error.log')
+    : ''
+  const rawCrashLog = crashLogPath ? readTextIfExists(crashLogPath) : ''
+  const crashLog = rawCrashLog.length > 12000 ? rawCrashLog.slice(-12000) : rawCrashLog
+  const snapshot = isWindows() && (helperResolved.exists || helperStatus?.running || processPresent)
     ? await readWindowsSensorHelperDiagnosticSnapshot()
     : {
         received: false,
@@ -2041,6 +2077,8 @@ async function getWindowsSensorEnhancementDiagnostics() {
   const failure = resolveWindowsSensorDiagnosticFailure({
     status,
     snapshot,
+    processPresent,
+    crashLog,
     sensorCount: sensors.length,
     cpuHardwareSensorCount: cpuHardwareSensors.length,
     cpuFilterMatchCount: cpuFilterSensors.length,
@@ -2056,10 +2094,14 @@ async function getWindowsSensorEnhancementDiagnostics() {
       executablePath: helperResolved.executablePath,
       executableDirectory: helperResolved.directoryPath,
       running: Boolean(helperStatus?.running),
+      processPresent,
       elevated: Boolean(helperStatus?.elevated ?? snapshot?.elevated),
       helperVersion: helperStatus?.helperVersion || snapshot?.helperVersion || '',
       backend: helperStatus?.backend || snapshot?.backend || '',
       processId: helperStatus?.processId ?? null,
+      crashLogPath,
+      crashLogExists: Boolean(crashLog),
+      crashLog,
       snapshotReceived: Boolean(snapshot?.received),
       snapshotOk: Boolean(snapshot?.ok),
       snapshotGeneratedAt: Number.isFinite(snapshot?.generatedAt) ? snapshot.generatedAt : null,

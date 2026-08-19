@@ -929,14 +929,20 @@ const windowsSensorDiagnosticReportText = computed(() => {
     `bundledAvailable：${diagnostics.helper.bundledAvailable}`,
     `runtimeAvailable：${diagnostics.helper.runtimeAvailable}`,
     `running：${diagnostics.helper.running}`,
+    `processPresent：${diagnostics.helper.processPresent}`,
     `elevated：${diagnostics.helper.elevated}`,
     `helperVersion：${diagnostics.helper.helperVersion || ''}`,
     `backend：${diagnostics.helper.backend || ''}`,
     `processId：${diagnostics.helper.processId ?? ''}`,
     `executablePath：${diagnostics.helper.executablePath || ''}`,
+    `crashLogPath：${diagnostics.helper.crashLogPath || ''}`,
+    `crashLogExists：${diagnostics.helper.crashLogExists}`,
     `snapshotReceived：${diagnostics.helper.snapshotReceived}`,
     `snapshotOk：${diagnostics.helper.snapshotOk}`,
     `snapshotError：${diagnostics.helper.snapshotError || ''}`,
+    '',
+    '[Helper crash log]',
+    diagnostics.helper.crashLog || '无',
     '',
     '[Sensors]',
     `total：${diagnostics.sensors.total}`,
@@ -1552,6 +1558,7 @@ onUnmounted(() => {
 
             <div v-if="windowsSensorDiagnostics" class="sensor-diagnostic-meta">
               <span>helper：{{ windowsSensorDiagnostics.helper.helperVersion || '--' }}</span>
+              <span>进程：{{ windowsSensorDiagnostics.helper.processPresent ? '仍在运行' : '未运行' }}</span>
               <span>提权：{{ windowsSensorDiagnostics.helper.elevated ? '是' : '否' }}</span>
               <span>PID：{{ windowsSensorDiagnostics.helper.processId ?? '--' }}</span>
               <span>类型：{{ formatDiagnosticCountMap(windowsSensorDiagnostics.sensors.sensorTypeCounts) }}</span>

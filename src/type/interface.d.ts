@@ -230,10 +230,14 @@ declare global {
       executablePath: string
       executableDirectory: string
       running: boolean
+      processPresent: boolean
       elevated: boolean
       helperVersion: string
       backend: string
       processId: number | null
+      crashLogPath: string
+      crashLogExists: boolean
+      crashLog: string
       snapshotReceived: boolean
       snapshotOk: boolean
       snapshotGeneratedAt: number | null
