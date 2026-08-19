@@ -149,6 +149,22 @@ function recordOpenHardwareMonitorRunningState(running) {
   return nextRunning
 }
 
+async function invalidateCachedWindowsCpuSpeedFallbackWhenHelperReady() {
+  if (!isWindows()) return
+
+  const settings = getHardwareSensorSettings()
+  if (!settings.enhancedSensorEnabled) return
+
+  const cachedSpeed = runtimeServiceCache.get('cpuCurrentSpeed')
+  if (!isRuntimeCacheFresh(cachedSpeed, 2000) || cachedSpeed?.value?.source !== 'systeminformation') return
+
+  const helperStatus = await getWindowsSensorHelperStatus()
+  if (!helperStatus?.running) return
+
+  recordOpenHardwareMonitorRunningState(true)
+  invalidateRuntimeServiceCache('cpuCurrentSpeed')
+}
+
 async function readCachedServiceValue(cacheKey, maxAgeMs, reader) {
   const revision = getRuntimeServiceCacheRevision(cacheKey)
   const memoryEntry = runtimeServiceCache.get(cacheKey)
@@ -3645,8 +3661,9 @@ export const systemService = {
       () => readSystemInfo('cpuPower', undefined, getHardwareMonitorCpuPower)
     ),
 
-  getCpuCurrentSpeed: () =>
-    readCachedServiceValue(
+  getCpuCurrentSpeed: async () => {
+    await invalidateCachedWindowsCpuSpeedFallbackWhenHelperReady()
+    return readCachedServiceValue(
       'cpuCurrentSpeed',
       2000,
       async () => {
@@ -3715,7 +3732,8 @@ export const systemService = {
           cpuSpeedMaxGhz: typeof cpuInfo?.speedMax === 'number' && Number.isFinite(cpuInfo.speedMax) ? cpuInfo.speedMax : undefined,
         })
       }
-    ),
+    )
+  },
 
   getCpuLoadData: () =>
     readCachedServiceValue(

@@ -8,7 +8,8 @@ const nodeUtil = require('node:util')
 function loadWindowsSystemServiceWithClockSensors(
   clockSensors,
   cpuInfo = { speedMax: 5.4 },
-  systemCpuCurrentSpeed = { min: 0, max: 0, avg: 0, cores: [] }
+  systemCpuCurrentSpeed = { min: 0, max: 0, avg: 0, cores: [] },
+  helperClockSensors = []
 ) {
   const filePath = path.join(__dirname, '..', 'utools/services/system.js')
   const source = fs.readFileSync(filePath, 'utf8')
@@ -75,9 +76,9 @@ function loadWindowsSystemServiceWithClockSensors(
     if (id === './windowsSensorHelper') {
       return {
         WINDOWS_SENSOR_HELPER_PROCESS_NAME: 'HWInfoXSensorHelper.exe',
-        getWindowsSensorHelperSensors: async () => [],
-        getWindowsSensorHelperStatus: async () => null,
-        startWindowsSensorHelper: async () => ({ started: false, running: false }),
+        getWindowsSensorHelperSensors: async (sensorType) => sensorType === 'Clock' ? helperClockSensors : [],
+        getWindowsSensorHelperStatus: async () => helperClockSensors.length ? { running: true } : null,
+        startWindowsSensorHelper: async () => ({ started: false, running: helperClockSensors.length > 0 }),
         stopWindowsSensorHelper: async () => false,
       }
     }
@@ -90,6 +91,104 @@ function loadWindowsSystemServiceWithClockSensors(
   wrapped(fakeRequire, module, module.exports, filePath, path.dirname(filePath))
   return module.exports.systemService
 }
+
+test('prefers running helper Ryzen core clocks over systeminformation even when reported speedMax is lower', async () => {
+  const helperSensors = [
+    { name: 'Cores (Average)', identifier: '/amdcpu/0/clock/1', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Cores (Average Effective)', identifier: '/amdcpu/0/clock/2', value: 391, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #1', identifier: '/amdcpu/0/clock/3', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #1 (Effective)', identifier: '/amdcpu/0/clock/4', value: 473.5, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #2', identifier: '/amdcpu/0/clock/5', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #2 (Effective)', identifier: '/amdcpu/0/clock/6', value: 222.5, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #3', identifier: '/amdcpu/0/clock/7', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #3 (Effective)', identifier: '/amdcpu/0/clock/8', value: 705, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #4', identifier: '/amdcpu/0/clock/9', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #4 (Effective)', identifier: '/amdcpu/0/clock/10', value: 730, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #5', identifier: '/amdcpu/0/clock/11', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #5 (Effective)', identifier: '/amdcpu/0/clock/12', value: 93, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #6', identifier: '/amdcpu/0/clock/13', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Core #6 (Effective)', identifier: '/amdcpu/0/clock/14', value: 124.5, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+    { name: 'Bus Speed', identifier: '/amdcpu/0/clock/0', value: 99.81258, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+  ]
+
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+
+  try {
+    const systemService = loadWindowsSystemServiceWithClockSensors(
+      [],
+      {
+        speedMax: 3.8,
+        physicalCores: 6,
+        cores: 12,
+      },
+      {
+        min: 3.79,
+        max: 3.79,
+        avg: 3.79,
+        cores: Array.from({ length: 6 }, () => 3.79),
+      },
+      helperSensors
+    )
+    const result = await systemService.getCpuCurrentSpeed()
+
+    assert.equal(result.source, 'OpenHardwareMonitor')
+    assert.deepEqual(result.cores, [4.85, 4.85, 4.85, 4.85, 4.85, 4.85])
+    assert.equal(result.avg, 4.85)
+    assert.equal(result.frequencyDiagnostics?.displayValueGHz, 4.85)
+    assert.equal(result.frequencyDiagnostics?.displayChosenFrom, 'max_core')
+    assert.equal(result.frequencyDiagnostics?.rawSensorCount, 14)
+    assert.equal(result.frequencyDiagnostics?.ignoredSensorCount, 7)
+    assert.equal(result.frequencyDiagnostics?.anomalyDetected, false)
+  } finally {
+    Object.defineProperty(process, 'platform', descriptor)
+  }
+})
+
+test('invalidates a cached systeminformation speed immediately when the helper becomes ready', async () => {
+  const helperSensors = []
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+
+  try {
+    const systemService = loadWindowsSystemServiceWithClockSensors(
+      [],
+      {
+        speedMax: 3.8,
+        physicalCores: 6,
+        cores: 12,
+      },
+      {
+        min: 3.79,
+        max: 3.79,
+        avg: 3.79,
+        cores: Array.from({ length: 6 }, () => 3.79),
+      },
+      helperSensors
+    )
+
+    const beforeHelperReady = await systemService.getCpuCurrentSpeed()
+    assert.equal(beforeHelperReady.source, 'systeminformation')
+    assert.equal(beforeHelperReady.avg, 3.79)
+
+    helperSensors.push(
+      { name: 'Cores (Average)', identifier: '/amdcpu/0/clock/1', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+      { name: 'Core #1', identifier: '/amdcpu/0/clock/3', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+      { name: 'Core #2', identifier: '/amdcpu/0/clock/5', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+      { name: 'Core #3', identifier: '/amdcpu/0/clock/7', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+      { name: 'Core #4', identifier: '/amdcpu/0/clock/9', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+      { name: 'Core #5', identifier: '/amdcpu/0/clock/11', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' },
+      { name: 'Core #6', identifier: '/amdcpu/0/clock/13', value: 4845, parent: 'AMD Ryzen 5 9500F', sensorType: 'Clock', hardwareType: 'Cpu' }
+    )
+
+    const afterHelperReady = await systemService.getCpuCurrentSpeed()
+    assert.equal(afterHelperReady.source, 'OpenHardwareMonitor')
+    assert.equal(afterHelperReady.avg, 4.85)
+    assert.equal(afterHelperReady.frequencyDiagnostics?.displayValueGHz, 4.85)
+  } finally {
+    Object.defineProperty(process, 'platform', descriptor)
+  }
+})
 
 test('filters isolated OHM core clock outliers and keeps numeric core order on Windows', async () => {
   const sensors = [
