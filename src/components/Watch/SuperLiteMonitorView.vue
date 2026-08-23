@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CloseSmall, Pushpin } from '@icon-park/vue-next'
+import { ArrowDown, ArrowUp, CloseSmall, Pushpin } from '@icon-park/vue-next'
 import type { SuperLiteStatus } from '../../utils/superLiteMonitor'
 
 interface MetricRow {
@@ -97,8 +97,8 @@ function progressWidth(label: string) {
       <section class="super-lite-throughput" aria-label="网络与磁盘实时吞吐">
         <div class="super-lite-throughput__row super-lite-throughput__row--network">
           <strong>NET</strong>
-          <span><em>↓</em>{{ throughput.networkDown }}</span>
-          <span><em>↑</em>{{ throughput.networkUp }}</span>
+          <span><em><ArrowDown theme="outline" size="9" fill="currentColor" :strokeWidth="3" /></em>{{ throughput.networkDown }}</span>
+          <span><em><ArrowUp theme="outline" size="9" fill="currentColor" :strokeWidth="3" /></em>{{ throughput.networkUp }}</span>
         </div>
         <div class="super-lite-throughput__row super-lite-throughput__row--disk">
           <strong>DISK</strong>

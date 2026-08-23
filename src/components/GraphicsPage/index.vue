@@ -125,6 +125,17 @@ function getHistoryMax(values: number[], fallback = 0) {
   return Math.max(fallback, ...values)
 }
 
+function buildHistoryFooter(values: number[], current: number | null, format: (value: number) => string) {
+  if (current === null && !values.length) {
+    return { footerLeft: '暂无采样', footerRight: '暂无采样' }
+  }
+
+  return {
+    footerLeft: `最低 ${format(getHistoryMin(values))}`,
+    footerRight: `最高 ${format(getHistoryMax(values, current || 0))}`,
+  }
+}
+
 function ringStyle(percent: number, accent: string) {
   const bounded = Math.max(0, Math.min(100, percent))
   return {
@@ -394,8 +405,7 @@ const monitorCards = computed<MonitorCard[]>(() => {
       accent: 'var(--accent-blue)',
       percent: clampPercent(gpuLoad || 0),
       trend: metricHistory.load,
-      footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.load))}%`,
-      footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.load, gpuLoad || 0))}%`,
+      ...buildHistoryFooter(metricHistory.load, gpuLoad, (value) => `${Math.round(value)}%`),
       unsupported: gpuLoad === null,
     },
     {
@@ -405,8 +415,7 @@ const monitorCards = computed<MonitorCard[]>(() => {
       accent: 'var(--accent-cyan)',
       percent: clampPercent(gpuIdle || 0),
       trend: idleTrend,
-      footerLeft: `最低 ${Math.round(getHistoryMin(idleTrend))}%`,
-      footerRight: `最高 ${Math.round(getHistoryMax(idleTrend, gpuIdle || 0))}%`,
+      ...buildHistoryFooter(idleTrend, gpuIdle, (value) => `${Math.round(value)}%`),
       unsupported: gpuIdle === null,
     },
     {
@@ -416,8 +425,7 @@ const monitorCards = computed<MonitorCard[]>(() => {
       accent: 'var(--accent-green)',
       percent: clampMetricPercent(gpuTemp, 100),
       trend: metricHistory.temp,
-      footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.temp))}°C`,
-      footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.temp, gpuTemp || 0))}°C`,
+      ...buildHistoryFooter(metricHistory.temp, gpuTemp, (value) => `${Math.round(value)}°C`),
       unsupported: gpuTemp === null,
     },
     {
@@ -428,8 +436,7 @@ const monitorCards = computed<MonitorCard[]>(() => {
       accent: 'var(--accent-blue)',
       percent: clampMetricPercent(gpuClock, Math.max(gpuClock || 0, 2800)),
       trend: metricHistory.clock,
-      footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.clock))} MHz`,
-      footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.clock, gpuClock || 0))} MHz`,
+      ...buildHistoryFooter(metricHistory.clock, gpuClock, (value) => `${Math.round(value)} MHz`),
       unsupported: gpuClock === null,
     },
     {
@@ -440,8 +447,11 @@ const monitorCards = computed<MonitorCard[]>(() => {
       accent: 'var(--accent-purple)',
       percent: memoryUsed && memoryTotal ? clampPercent((memoryUsed / memoryTotal) * 100) : 0,
       trend: metricHistory.memory,
-      footerLeft: `最低 ${formatMemoryAmount(getHistoryMin(metricHistory.memory))}`,
-      footerRight: `最高 ${formatMemoryAmount(getHistoryMax(metricHistory.memory, memoryUsed || 0))}`,
+      ...buildHistoryFooter(
+        metricHistory.memory,
+        memoryUsed !== null && memoryTotal !== null ? memoryUsed : null,
+        (value) => formatMemoryAmount(value)
+      ),
       unsupported: memoryUsed === null || memoryTotal === null,
     },
     {
@@ -452,8 +462,7 @@ const monitorCards = computed<MonitorCard[]>(() => {
       accent: 'var(--accent-orange)',
       percent: clampMetricPercent(power, Math.max(power || 0, safeNumber(gpu?.powerLimit) || 450)),
       trend: metricHistory.power,
-      footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.power))} W`,
-      footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.power, power || 0))} W`,
+      ...buildHistoryFooter(metricHistory.power, power, (value) => `${Math.round(value)} W`),
       unsupported: power === null,
     },
   ]
@@ -462,6 +471,8 @@ const monitorCards = computed<MonitorCard[]>(() => {
 const telemetryRows = computed<StatRow[]>(() => {
   const gpu = primaryGpu.value
   const gpuIdle = getGpuIdlePercent(gpu)
+  const gpuTemperature = safeNumber(gpu?.temperatureGpu)
+  const memoryTemperature = safeNumber(gpu?.temperatureMemory)
 
   const rows: StatRow[] = [
     {
@@ -485,14 +496,14 @@ const telemetryRows = computed<StatRow[]>(() => {
     {
       label: 'GPU 温度',
       value: formatTemperature(safeNumber(gpu?.temperatureGpu)),
-      status: typeof gpu?.temperatureGpu === 'number' && gpu.temperatureGpu < 80 ? '安全' : '关注',
-      statusTone: typeof gpu?.temperatureGpu === 'number' && gpu.temperatureGpu < 80 ? 'good' : 'warn',
+      status: gpuTemperature === null ? '暂无' : gpuTemperature < 80 ? '安全' : '关注',
+      statusTone: gpuTemperature === null ? 'normal' : gpuTemperature < 80 ? 'good' : 'warn',
     },
     {
       label: '显存温度',
       value: formatTemperature(safeNumber(gpu?.temperatureMemory)),
-      status: typeof gpu?.temperatureMemory === 'number' && gpu.temperatureMemory < 90 ? '安全' : '关注',
-      statusTone: typeof gpu?.temperatureMemory === 'number' && gpu.temperatureMemory < 90 ? 'good' : 'warn',
+      status: memoryTemperature === null ? '暂无' : memoryTemperature < 90 ? '安全' : '关注',
+      statusTone: memoryTemperature === null ? 'normal' : memoryTemperature < 90 ? 'good' : 'warn',
     },
     {
       label: '功耗',
@@ -515,7 +526,7 @@ const telemetryRows = computed<StatRow[]>(() => {
     {
       label: 'PCIe 链路',
       value: joinParts([gpu?.bus, gpu?.pciBus], ' / ') || '--',
-      status: gpu?.pciBus ? '已连接' : '未知',
+      status: gpu?.pciBus ? '已枚举' : '未知',
       statusTone: 'normal',
     },
   ]
@@ -582,15 +593,18 @@ const detailSpecs = computed(() => {
   const gpu = primaryGpu.value
   return [
     { label: '驱动版本', value: cleanText(gpu?.driverVersion) || '--' },
-    { label: 'DirectX 支持', value: cleanText(osInfo.value?.release) ? '系统支持' : '--' },
-    { label: 'Vulkan 支持', value: cleanText(gpu?.vendor) ? '已检测' : '--' },
-    { label: 'OpenGL 支持', value: cleanText(gpu?.vendor) ? '已检测' : '--' },
-    { label: 'Resizable BAR', value: gpu?.pciBus ? '已连接' : '--' },
-    { label: '光线追踪', value: cleanText(gpu?.model).match(/rtx|rx 7|rx 6/i) ? '支持' : '未知' },
-    { label: '显存动态模式', value: gpu?.vramDynamic ? '是' : '否' },
+    { label: 'DirectX 支持', value: '未提供检测结果' },
+    { label: 'Vulkan 支持', value: '未提供检测结果' },
+    { label: 'OpenGL 支持', value: '未提供检测结果' },
+    { label: 'Resizable BAR', value: '未提供检测结果' },
+    { label: '光线追踪', value: cleanText(gpu?.model).match(/rtx|rx 7|rx 6/i) ? '型号支持' : '未确认' },
+    {
+      label: '显存动态模式',
+      value: typeof gpu?.vramDynamic === 'boolean' ? (gpu.vramDynamic ? '是' : '否') : '未提供检测结果',
+    },
     { label: '板卡厂商', value: cleanText(gpu?.subVendor) || cleanText(gpu?.vendor) || '--' },
     { label: '显卡标识', value: joinParts([gpu?.deviceId, gpu?.vendorId], ' / ') || '--' },
-  ]
+  ].filter((item) => item.value && item.value !== '--')
 })
 
 const platformRows = computed(() => {
@@ -747,7 +761,7 @@ useActivePageLifecycle(
         </article>
 
         <article class="health-card">
-          <div class="health-card__badge" :style="{ color: healthState.accent }">●</div>
+          <span class="health-card__badge" :style="{ backgroundColor: healthState.accent, color: healthState.accent }" aria-hidden="true" />
           <div class="health-card__copy">
             <h3>{{ healthState.title }}</h3>
             <p>{{ healthState.subtitle }}</p>
@@ -1057,8 +1071,11 @@ useActivePageLifecycle(
 }
 
 .health-card__badge {
-  font-size: 22px;
-  line-height: 1;
+  width: 14px;
+  height: 14px;
+  margin: 4px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .health-card__copy {

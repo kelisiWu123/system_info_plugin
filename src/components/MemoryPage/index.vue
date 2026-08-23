@@ -4,6 +4,7 @@ import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import StateBlock from '../common/StateBlock.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
+import { buildMemorySlotLabels, getMemoryChannel } from '../../utils/memory'
 import {
   bytesToGB,
   clampPercent,
@@ -135,15 +136,6 @@ function normalizeKitPart(partNum?: string) {
   return cleanText(partNum).replace(/\s+/g, '') || '--'
 }
 
-function channelKey(bank: string, index: number) {
-  const normalized = cleanText(bank).toUpperCase()
-  const channelMatch = normalized.match(/CHANNEL\s+([A-D])/)
-  if (channelMatch?.[1]) return channelMatch[1]
-  const dimmMatch = normalized.match(/DIMM[_-]?([A-D])/)
-  if (dimmMatch?.[1]) return dimmMatch[1]
-  return index % 2 === 0 ? 'A' : 'B'
-}
-
 const memoryModules = computed(() => memoLayoutData.value.filter((item) => item.size > 0))
 const installedMemoryBytes = computed(() => getInstalledMemoryBytes(memoLayoutData.value))
 const installedMemoryGB = computed(() => bytesToGBNumber(installedMemoryBytes.value))
@@ -223,9 +215,12 @@ const timingRows = computed(() => [
 
 const slotRows = computed<SlotRow[]>(() => {
   const total = slotCount.value || memoLayoutData.value.length
+  const slotLabels = buildMemorySlotLabels(total, memoLayoutData.value)
   return Array.from({ length: total }, (_, index) => {
     const item = memoLayoutData.value[index]
-    const slot = cleanText(item?.bank) || `DIMM_${String.fromCharCode(65 + Math.floor(index / 2))}${(index % 2) + 1}`
+    const slot = slotLabels[index]
+      || cleanText(item?.bank)
+      || `DIMM_${String.fromCharCode(65 + Math.floor(index / 2))}${(index % 2) + 1}`
     const installed = Boolean(item?.size)
     return {
       slot,
@@ -241,7 +236,7 @@ const slotRows = computed<SlotRow[]>(() => {
 const memoryChannels = computed(() => {
   const groups = new Map<string, SlotRow[]>()
   slotRows.value.forEach((row, index) => {
-    const key = channelKey(row.slot, index)
+    const key = getMemoryChannel(row.slot, index)
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key)?.push(row)
   })
@@ -268,10 +263,10 @@ const detailRows = computed(() => [
   { label: '内存类型', value: memoryType.value },
   { label: '内存频率', value: memoryClock.value ? `${memoryActualClock.value} MHz (实际) / ${memoryClock.value} MHz (等效)` : '--' },
   { label: '内存电压', value: formatVoltage(memoryConfiguredVoltage.value) },
-  { label: 'XMP / EXPO', value: memoryClock.value > 4800 ? '已启用高频配置' : '标准配置' },
+  { label: 'XMP / EXPO', value: '系统未提供' },
   { label: '位宽', value: '64-bit' },
   { label: 'ECC', value: eccState.value },
-  { label: 'Registered', value: formFactor.value.includes('DIMM') ? '否' : '--' },
+  { label: 'Registered', value: '系统未提供' },
   { label: '内存颗粒', value: memoryManufacturer.value },
   { label: 'SPD 型号', value: memorySeries.value },
   { label: '插槽占用', value: `${moduleCount.value} / ${slotCount.value || moduleCount.value}` },

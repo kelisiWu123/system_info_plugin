@@ -23,3 +23,13 @@ test('memory-related surfaces avoid ambiguous system total wording and keep inst
   assert.match(watch, /已装|可见/)
   assert.match(specsLite, /getDisplayMemoryCapacityBytes|getInstalledMemoryBytes/)
 })
+
+test('memory channel layout distributes inferred empty slots across detected channels', () => {
+  const memoryPage = readSource('src/components/MemoryPage/index.vue')
+
+  assert.match(memoryPage, /buildMemorySlotLabels\(total, memoLayoutData\.value\)/)
+  assert.match(readSource('src/components/BoardPage/index.vue'), /buildMemorySlotLabels\(slotCount, memoLayoutData\.value\)/)
+  assert.match(memoryPage, /\{ label: 'XMP \/ EXPO', value: '系统未提供' \}/)
+  assert.match(memoryPage, /\{ label: 'Registered', value: '系统未提供' \}/)
+  assert.doesNotMatch(memoryPage, /已启用高频配置/)
+})

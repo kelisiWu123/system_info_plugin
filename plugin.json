@@ -3,8 +3,8 @@
 	"name": "your plugin ID",
 	"version": "1.0.0",
 	"preload": "preload.js",
-	"pluginName": "template",
-	"description": "computer hard ware details",
+	"pluginName": "HWInfoX 硬件信息",
+	"description": "查看处理器、显卡、主板、内存、存储与实时监控数据",
 	"author": "kelisiWu123",
 	"homepage": "https://github.com/kelisiWu123",
 	"pluginSetting": {

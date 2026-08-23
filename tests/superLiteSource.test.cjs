@@ -98,8 +98,26 @@ test('super-lite mode stays as a single overview surface without tab detail page
 test('super-lite memory row emphasizes macOS memory pressure over used capacity', () => {
   const watch = readSource('src/components/Watch/index.vue')
 
-  assert.match(watch, /usageLabel:\s*memoData\.normalizedPlatform === 'darwin'\s*\?\s*memoryPressureLabel\.value\s*:\s*formatPercent\(memoryPercent\.value\)/)
-  assert.match(watch, /progressLabel:\s*formatPercent\(memoryPercent\.value\)/)
-  assert.match(watch, /primaryExtra:\s*memoData\.normalizedPlatform === 'darwin'\s*\?\s*formatPercent\(memoryPercent\.value\)\s*:\s*formatGigabytesFromBytes\(getDisplayMemoryUsedBytes\(memoData\)\)/)
-  assert.match(watch, /secondaryExtra:\s*memoData\.normalizedPlatform === 'darwin'\s*\?\s*`已用 \$\{formatGigabytesFromBytes\(getDisplayMemoryUsedBytes\(memoData\)\)\}`\s*:\s*'正常'/)
+  assert.match(watch, /usageLabel: !memoData\.total[\s\S]*memoryPressureLabel\.value[\s\S]*formatPercent\(memoryPercent\.value\)/)
+  assert.match(watch, /progressLabel: memoData\.total \? formatPercent\(memoryPercent\.value\) : '--'/)
+  assert.match(watch, /primaryExtra: memoData\.total[\s\S]*formatGigabytesFromBytes\(getDisplayMemoryUsedBytes\(memoData\)\)/)
+  assert.match(watch, /secondaryExtra: !memoData\.total[\s\S]*暂未提供内存数据/)
+})
+
+test('super-lite metrics do not render default zero values as real usage when telemetry is missing', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /usageLabel: history\.cpu\.length \? formatPercent\(cpuPercent\.value\) : '--'/)
+  assert.match(watch, /usageLabel: typeof primaryGpu\.value\?\.utilizationGpu === 'number' \? formatPercent\(gpuPercent\.value\) : '--'/)
+  assert.match(watch, /usageLabel: !memoData\.total[\s\S]*'--'/)
+  assert.match(watch, /暂未提供内存数据/)
+})
+
+test('super-lite overall status does not call empty or partial telemetry healthy', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /const hasCpuTelemetry = history\.cpu\.length > 0/)
+  assert.match(watch, /if \(!hasCpuTelemetry && !hasGpuTelemetry && !hasMemoryTelemetry\)/)
+  assert.match(watch, /label: '读取中'/)
+  assert.match(watch, /label: '部分可用'/)
 })

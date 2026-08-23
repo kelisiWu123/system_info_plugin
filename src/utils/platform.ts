@@ -5,6 +5,14 @@ export interface OsPlatformLike {
 
 export type NormalizedOsPlatform = 'win32' | 'darwin' | 'other'
 export type SensorEnhancementPlatform = 'windows' | 'macos' | 'unsupported'
+export type WindowsSensorEnhancementReadiness = 'running' | 'error' | 'pending'
+
+interface WindowsSensorEnhancementStatusLike {
+  running?: boolean
+  started?: boolean
+  reason?: string
+  suggestion?: string
+}
 
 function normalizePlatformText(value?: string | null): string {
   return typeof value === 'string' ? value.trim().toLowerCase().replace(/[_-]+/g, ' ') : ''
@@ -60,4 +68,48 @@ export function shouldAutoPrepareSensorEnhancement(
   ready: boolean
 ): boolean {
   return isSensorEnhancementDefaultEnabled(platform) && enabled && !ready
+}
+
+export function getWindowsSensorEnhancementReadiness(
+  status?: WindowsSensorEnhancementStatusLike | null
+): WindowsSensorEnhancementReadiness {
+  if (status?.running) return 'running'
+
+  const reason = status?.reason || ''
+  if (
+    reason.startsWith('WINDOWS_SENSOR_')
+    || reason === 'OHM_START_FAILED'
+    || reason === 'OHM_EXE_NOT_FOUND'
+    || reason === 'OHM_RUNTIME_COPY_FAILED'
+    || reason === 'OHM_USERDATA_UNAVAILABLE'
+    || reason === 'OHM_AUTOSTART_DISABLED'
+  ) return 'error'
+
+  return 'pending'
+}
+
+export function reconcileWindowsSensorStartStatus<T extends WindowsSensorEnhancementStatusLike>(
+  startStatus: T,
+  observedStatus: T
+): T {
+  if (observedStatus.running) {
+    return {
+      ...observedStatus,
+      started: Boolean(startStatus.started || observedStatus.started),
+    }
+  }
+
+  if (!startStatus.running && startStatus.reason) {
+    return {
+      ...observedStatus,
+      started: Boolean(startStatus.started),
+      reason: startStatus.reason,
+      suggestion: startStatus.suggestion || observedStatus.suggestion,
+    }
+  }
+
+  return {
+    ...observedStatus,
+    started: Boolean(startStatus.started || observedStatus.started),
+  }
 }

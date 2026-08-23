@@ -14,6 +14,8 @@ import {
   getSensorEnhancementControlLabel,
   getSensorEnhancementPlatform,
   getSensorEnhancementPrimaryActionLabel,
+  getWindowsSensorEnhancementReadiness,
+  reconcileWindowsSensorStartStatus,
   shouldAutoPrepareSensorEnhancement,
 } from '../../utils/platform'
 import {
@@ -152,6 +154,17 @@ function getHistoryMax(values: number[], fallback = 0) {
   return Math.max(fallback, ...values)
 }
 
+function buildHistoryFooter(values: number[], current: number | null, format: (value: number) => string) {
+  if (current === null && !values.length) {
+    return { footerLeft: '暂无采样', footerRight: '暂无采样' }
+  }
+
+  return {
+    footerLeft: `最低 ${format(getHistoryMin(values))}`,
+    footerRight: `最高 ${format(getHistoryMax(values, current || 0))}`,
+  }
+}
+
 function ringStyle(percent: number, accent: string) {
   const bounded = Math.max(0, Math.min(100, percent))
   return {
@@ -244,6 +257,8 @@ function formatSensorReason(reason?: string) {
       return '组件不存在'
     case 'WINDOWS_SENSOR_HELPER_NOT_BUILT':
       return '兼容模式待启动'
+    case 'WINDOWS_SENSOR_HELPER_RUNTIME_MISSING':
+      return '增强组件运行时缺失'
     case 'WINDOWS_SENSOR_HELPER_NOT_RUNNING':
       return '增强组件未运行'
     case 'WINDOWS_SENSOR_HELPER_AUTH_CANCELLED':
@@ -251,6 +266,12 @@ function formatSensorReason(reason?: string) {
     case 'WINDOWS_SENSOR_HELPER_START_FAILED':
     case 'WINDOWS_SENSOR_BACKEND_START_FAILED':
       return '增强组件启动失败'
+    case 'WINDOWS_SENSOR_START_PENDING':
+      return '增强组件准备中'
+    case 'WINDOWS_SENSOR_START_IN_PROGRESS':
+      return '上一轮启动未完成'
+    case 'WINDOWS_SENSOR_START_COOLDOWN':
+      return '启动尝试过于频繁'
     case 'OHM_NOT_RUNNING':
       return '未运行'
     case 'OHM_AUTOSTART_DISABLED':
@@ -465,6 +486,7 @@ const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? pa
 const cpuVoltageMetricLabel = computed(() => cpuVoltage.value?.measurement === 'vid' ? '核心 VID' : '核心电压')
 const cpuFanSpeedValue = computed(() => safeNumber(cpuFanSpeed.value?.value))
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
+const cpuLoadTelemetryAvailable = computed(() => Array.isArray(cpuLoadData.value?.cpus) && cpuLoadData.value.cpus.length > 0)
 const cpuIdlePercent = computed(() => getProcessorIdlePercent(cpuLoadData.value))
 const cpuHybridCoreCounts = computed(() => getCpuHybridCoreCounts(cpuData.value))
 const displayPhysicalCoreCount = computed(() => getProcessorDisplayCoreCount(cpuData.value, cpuCurrentSpeed.value, cpuLoadData.value))
@@ -490,9 +512,12 @@ const cpuSpeedDiagnosticCopyLabel = computed(() => {
 const isMacPlatform = computed(() => sensorEnhancementPlatform.value === 'macos')
 const cpuTemperatureSourceLabel = computed(() => formatTemperatureSource(cpuTemperature.value?.source))
 const cpuTemperatureReasonLabel = computed(() => formatSensorReason(cpuTemperature.value?.reason || cpuTemperature.value?.errorCode))
+const windowsSensorReadiness = computed(() => getWindowsSensorEnhancementReadiness(openHardwareMonitorStatus.value))
 const openHardwareMonitorStatusLabel = computed(() => {
   if (!openHardwareMonitorStatus.value) return '未检测'
+  if (sensorActionLoading.value) return '准备中'
   if (openHardwareMonitorStatus.value.running) return '运行中'
+  if (windowsSensorReadiness.value === 'error') return formatSensorReason(openHardwareMonitorStatus.value.reason)
   if (!openHardwareMonitorStatus.value.executableExists) return '组件缺失'
   return formatSensorReason(openHardwareMonitorStatus.value.reason)
 })
@@ -503,10 +528,14 @@ const windowsSensorPrimaryActionLabel = computed(() => getSensorEnhancementPrima
 ))
 const sensorEnhancementSummary = computed(() => {
   if (!sensorSettings.value.enhancedSensorEnabled) return '增强模式已关闭'
+  if (sensorActionLoading.value) return '增强组件正在准备，请稍候'
   if (openHardwareMonitorStatus.value?.running) {
     return openHardwareMonitorStatus.value.backend === 'legacy-ohm'
       ? '增强模式运行中 · 兼容后端'
       : '增强模式运行中'
+  }
+  if (windowsSensorReadiness.value === 'error') {
+    return `增强组件未能就绪：${formatSensorReason(openHardwareMonitorStatus.value?.reason)}`
   }
   return '增强模式已启用，组件会按需自动启动'
 })
@@ -574,6 +603,13 @@ const sensorEnhancementReady = computed(() => {
 const healthState = computed(() => {
   const temperature = cpuTemperatureValue.value
   const load = cpuLoadPercent.value
+  if (temperature === null && !cpuLoadTelemetryAvailable.value) {
+    return {
+      title: '实时数据待补齐',
+      subtitle: '当前尚未拿到 CPU 温度或负载遥测',
+      accent: 'var(--text-subtle)',
+    }
+  }
 
   if (typeof temperature === 'number' && temperature >= 90) {
     return {
@@ -609,21 +645,21 @@ const primarySpecs = computed(() => [
     ], ' / ') || '--',
   },
   {
-    label: 'P-Core / E-Core',
+    label: '核心类型',
     value:
       cpuHybridCoreCounts.value.total
         ? joinParts([
             cpuHybridCoreCounts.value.performance ? `${cpuHybridCoreCounts.value.performance}P` : '',
             cpuHybridCoreCounts.value.efficiency ? `${cpuHybridCoreCounts.value.efficiency}E` : '',
           ], ' + ')
-        : '--',
+        : '统一核心',
   },
   {
     label: '基础频率',
     value: formatFrequency(safeNumber(cpuData.value?.speed)),
   },
   {
-    label: '最大频率',
+    label: '系统报告频率',
     value: formatFrequency(safeNumber(cpuData.value?.speedMax)),
   },
   {
@@ -667,12 +703,11 @@ const monitorCards = computed<MonitorCard[]>(() => [
   {
     id: 'load',
     label: 'CPU 使用率',
-    value: `${Math.round(cpuLoadPercent.value)}%`,
+    value: cpuLoadTelemetryAvailable.value ? `${Math.round(cpuLoadPercent.value)}%` : '--',
     accent: 'var(--accent-blue)',
-    percent: cpuLoadPercent.value,
+    percent: cpuLoadTelemetryAvailable.value ? cpuLoadPercent.value : 0,
     trend: metricHistory.load,
-    footerLeft: `最低 ${Math.round(getHistoryMin(metricHistory.load))}%`,
-    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.load, cpuLoadPercent.value))}%`,
+    ...buildHistoryFooter(metricHistory.load, cpuLoadTelemetryAvailable.value ? cpuLoadPercent.value : null, (value) => `${Math.round(value)}%`),
   },
   {
     id: 'temp',
@@ -681,8 +716,7 @@ const monitorCards = computed<MonitorCard[]>(() => [
     accent: 'var(--accent-green)',
     percent: clampPercent(((cpuTemperatureValue.value || 0) / 100) * 100),
     trend: metricHistory.temp,
-    footerLeft: cpuTemperatureValue.value === null ? cpuTemperatureReasonLabel.value : `最低 ${Math.round(getHistoryMin(metricHistory.temp))}°C`,
-    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.temp, cpuTemperatureValue.value || 0))}°C`,
+    ...buildHistoryFooter(metricHistory.temp, cpuTemperatureValue.value, (value) => `${Math.round(value)}°C`),
     unsupported: cpuTemperature.value?.source === 'unsupported' && cpuTemperatureValue.value === null,
   },
   {
@@ -694,7 +728,9 @@ const monitorCards = computed<MonitorCard[]>(() => [
     percent: currentSpeedMax.value > 0 ? clampPercent(((currentSpeedValue.value || 0) / currentSpeedMax.value) * 100) : 0,
     trend: metricHistory.speed,
     footerLeft: `来源 ${currentSpeedSourceLabel.value}`,
-    footerRight: `峰值 ${formatFrequency(getHistoryMax(metricHistory.speed, currentSpeedValue.value || 0))}`,
+    footerRight: currentSpeedValue.value === null && !metricHistory.speed.length
+      ? '暂无采样'
+      : `峰值 ${formatFrequency(getHistoryMax(metricHistory.speed, currentSpeedValue.value || 0))}`,
   },
   processorAuxDisplayMode.value === 'fan'
     ? {
@@ -717,8 +753,7 @@ const monitorCards = computed<MonitorCard[]>(() => [
         accent: 'var(--accent-purple)',
         percent: cpuVoltageValue.value ? clampPercent((cpuVoltageValue.value / Math.max(cpuVoltageValue.value, safeNumber(cpuVoltage.value?.max) || 1.6)) * 100) : 0,
         trend: metricHistory.voltage,
-        footerLeft: `最低 ${getHistoryMin(metricHistory.voltage).toFixed(2)} V`,
-        footerRight: `最高 ${getHistoryMax(metricHistory.voltage, cpuVoltageValue.value || 0).toFixed(2)} V`,
+        ...buildHistoryFooter(metricHistory.voltage, cpuVoltageValue.value, (value) => `${value.toFixed(2)} V`),
         unsupported: cpuVoltageValue.value === null,
       },
   {
@@ -730,7 +765,9 @@ const monitorCards = computed<MonitorCard[]>(() => [
     percent: cpuPowerValue.value ? clampPercent((cpuPowerValue.value / Math.max(cpuPowerValue.value, 125)) * 100) : 0,
     trend: metricHistory.power,
     footerLeft: `来源 ${formatCpuPowerSource(cpuPower.value)}`,
-    footerRight: `最高 ${Math.round(getHistoryMax(metricHistory.power, cpuPowerValue.value || 0))} W`,
+    footerRight: cpuPowerValue.value === null && !metricHistory.power.length
+      ? '暂无采样'
+      : `最高 ${Math.round(getHistoryMax(metricHistory.power, cpuPowerValue.value || 0))} W`,
     unsupported: cpuPowerValue.value === null,
   },
 ])
@@ -1265,12 +1302,9 @@ async function startWindowsSensorEnhancement() {
       reason: 'WINDOWS_SENSOR_START_PENDING',
       suggestion: '正在准备 Windows 传感器增强组件',
     } as WindowsSensorEnhancementStatusData
-    openHardwareMonitorStatus.value = await window.services.startWindowsSensorEnhancement()
+    const startStatus = await window.services.startWindowsSensorEnhancement()
     const latestStatus = await window.services.getWindowsSensorEnhancementStatus()
-    openHardwareMonitorStatus.value = {
-      ...latestStatus,
-      started: openHardwareMonitorStatus.value?.started || latestStatus.started,
-    }
+    openHardwareMonitorStatus.value = reconcileWindowsSensorStartStatus(startStatus, latestStatus)
     if (latestStatus.running) {
       await refreshProcessorHardwareDynamicMetrics()
     }
@@ -1428,7 +1462,7 @@ onUnmounted(() => {
         </article>
 
         <article class="health-card">
-          <div class="health-card__badge" :style="{ color: healthState.accent }">●</div>
+          <span class="health-card__badge" :style="{ backgroundColor: healthState.accent, color: healthState.accent }" aria-hidden="true" />
           <div class="health-card__copy">
             <h3>{{ healthState.title }}</h3>
             <p>{{ healthState.subtitle }}</p>
@@ -1809,7 +1843,8 @@ onUnmounted(() => {
   gap: 14px;
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-right: 6px;
 }
 
@@ -1987,8 +2022,11 @@ onUnmounted(() => {
 }
 
 .health-card__badge {
-  font-size: 22px;
-  line-height: 1;
+  width: 14px;
+  height: 14px;
+  margin: 4px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .health-card__copy {
@@ -2098,6 +2136,11 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 16px;
 
+  > div {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   h4 {
     margin: 0;
     color: var(--text-primary);
@@ -2110,11 +2153,14 @@ onUnmounted(() => {
     color: var(--text-muted);
     font-size: 13px;
     line-height: 1.55;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 
 .sensor-enhancement-panel__status {
   flex-shrink: 0;
+  max-width: 42%;
   min-height: var(--pill-height);
   padding: 0 10px;
   border-radius: var(--pill-radius);
@@ -2124,6 +2170,9 @@ onUnmounted(() => {
   font-weight: 700;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
 }
 
 .sensor-enhancement-panel__status--active {
@@ -2691,7 +2740,12 @@ onUnmounted(() => {
     flex-direction: column;
   }
 
-    .core-table__head,
+  .sensor-enhancement-panel__status {
+    max-width: 100%;
+    align-self: flex-start;
+  }
+
+  .core-table__head,
     .core-table__row,
     .detail-spec {
       grid-template-columns: repeat(2, minmax(0, 1fr));

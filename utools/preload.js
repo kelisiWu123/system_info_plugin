@@ -60,33 +60,25 @@ window.exports = {
   hardwareWatch: {
     mode: 'none',
     args: {
-      enter: () => {
-        openPresetWindow('a_monitor')
-      },
+      enter: () => openPresetWindow('a_monitor'),
     },
   },
   hardwareWatchSuperLite: {
     mode: 'none',
     args: {
-      enter: () => {
-        openPresetWindow('a_watch_super_lite')
-      },
+      enter: () => openPresetWindow('a_watch_super_lite'),
     },
   },
   hardware: {
     mode: 'none',
     args: {
-      enter: () => {
-        openPresetWindow('a_computer')
-      },
+      enter: () => openPresetWindow('a_computer'),
     },
   },
   hardwareSpecsLite: {
     mode: 'none',
     args: {
-      enter: () => {
-        openPresetWindow('a_specs_lite')
-      },
+      enter: () => openPresetWindow('a_specs_lite'),
     },
   },
 }

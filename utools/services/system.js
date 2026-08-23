@@ -61,6 +61,14 @@ const OPEN_HARDWARE_MONITOR_START_COOLDOWN_MS = 15000
 const OPEN_HARDWARE_MONITOR_START_LOCK_STALE_MS = 30000
 const OPEN_HARDWARE_MONITOR_START_WAIT_MS = 7000
 const OPEN_HARDWARE_MONITOR_START_POLL_MS = 350
+const WINDOWS_STORAGE_IO_COUNTERS = [
+  '\\PhysicalDisk(_Total)\\Disk Read Bytes/sec',
+  '\\PhysicalDisk(_Total)\\Disk Write Bytes/sec',
+  '\\PhysicalDisk(_Total)\\Disk Reads/sec',
+  '\\PhysicalDisk(_Total)\\Disk Writes/sec',
+  '\\PhysicalDisk(_Total)\\% Disk Time',
+  '\\PhysicalDisk(_Total)\\Avg. Disk Queue Length',
+]
 const CPU_CLOCK_ANOMALY_MAX_GHZ = 7.5
 const CPU_CLOCK_SPEEDMAX_TOLERANCE_GHZ = 0.5
 const CPU_CLOCK_OUTLIER_DELTA_GHZ = 1.0
@@ -1064,8 +1072,10 @@ const CPU_SENSOR_EXCLUSION_TERMS = [
 
 function isCpuSensor(sensor) {
   const haystack = normalizeSensorText(sensor)
+  const hardwareType = String(sensor?.hardwareType || '').trim().toLowerCase()
   if (CPU_SENSOR_EXCLUSION_TERMS.some((term) => haystack.includes(term))) return false
   return (
+    hardwareType === 'cpu' ||
     haystack.includes('cpu') ||
     haystack.includes('intelcpu') ||
     haystack.includes('amdcpu') ||
@@ -1116,9 +1126,12 @@ function scoreCpuPowerSensor(sensor) {
 }
 
 function scoreCpuVoltageSensor(sensor) {
-  const haystack = `${sensor.name} ${sensor.identifier}`.toLowerCase()
+  const name = String(sensor?.name || '').trim().toLowerCase()
+  const haystack = `${name} ${sensor.identifier}`.toLowerCase()
 
   if (haystack.includes('cpu vcore') || haystack.includes('vcore')) return 120
+  if (name === 'cpu core' || name === 'cpu core voltage') return 115
+  if (isLikelySuperIoCpuVcoreSensor(sensor)) return 110
   if (haystack.includes('vid')) return 110
   if (haystack.includes('package')) return 100
   if (haystack.includes('core')) return 90
@@ -1135,12 +1148,50 @@ function isExplicitCpuVcoreSensor(sensor) {
   return (
     /(^|\s)cpu\s+vcore($|\s)/.test(name)
     || /(^|\s)vcore($|\s)/.test(name)
+    // OpenHardwareMonitorLib exposes the primary Intel core rail as
+    // "CPU Core". Individual "CPU Core #n" / P-Core / E-Core entries are
+    // VID values and are handled by isCpuVidSensor below.
+    || name === 'cpu core'
     || name === 'cpu core voltage'
   )
 }
 
+function isLikelySuperIoCpuVcoreSensor(sensor) {
+  const name = String(sensor?.name || '').trim().toLowerCase()
+  const identifier = String(sensor?.identifier || '').trim().toLowerCase()
+  const hardwareType = String(sensor?.hardwareType || '').trim().toLowerCase()
+  const value = Number(sensor?.value)
+  const isSuperIoVoltage = hardwareType === 'superio'
+    || hardwareType === 'lpc'
+    || identifier.includes('/lpc/')
+  const isFirstGenericVoltage = /^(?:voltage|vout)\s*#?\s*1$/.test(name)
+    && /\/voltage\/0(?:$|\/)/.test(identifier)
+
+  // OpenHardwareMonitorLib commonly exposes the motherboard CPU rail from an
+  // ITE/Nuvoton SuperIO chip as "Voltage #1" instead of "CPU Vcore". Only
+  // accept the first LPC voltage channel in a plausible CPU-core range so
+  // generic 3.3/5/12 V motherboard rails are not mistaken for Vcore.
+  return isSuperIoVoltage
+    && isFirstGenericVoltage
+    && Number.isFinite(value)
+    && value > 0.15
+    && value < 2
+}
+
+function isCpuVcoreSensor(sensor) {
+  return isExplicitCpuVcoreSensor(sensor) || isLikelySuperIoCpuVcoreSensor(sensor)
+}
+
 function isCpuVidSensor(sensor) {
-  return isCpuSensor(sensor) && /(^|\s)vid($|\s)/i.test(String(sensor?.name || ''))
+  if (!isCpuSensor(sensor)) return false
+
+  const name = String(sensor?.name || '').trim().toLowerCase()
+  return (
+    /(^|\s)vid($|\s)/.test(name)
+    // OpenHardwareMonitorLib labels per-core Intel VID sensors with the core
+    // name alone (for example "CPU Core #1" or "P-Core #1").
+    || /^(?:(?:cpu|ia)\s+)?(?:[pe][\s-]*)?core\s*#?\s*\d+(?:\s+vid)?$/.test(name)
+  )
 }
 
 function scoreCpuFanSensor(sensor) {
@@ -1703,6 +1754,27 @@ async function isProcessRunning(processName) {
   }
 }
 
+async function getWindowsProcessId(processName) {
+  if (!isWindows()) return null
+
+  try {
+    const { stdout } = await execFileAsync('tasklist.exe', [
+      '/FI', `IMAGENAME eq ${processName}`,
+      '/FO', 'CSV',
+      '/NH',
+    ], {
+      windowsHide: true,
+      timeout: 2000,
+    })
+
+    const match = String(stdout || '').match(/"[^"]+","(\d+)"/)
+    const processId = match ? Number.parseInt(match[1], 10) : NaN
+    return Number.isFinite(processId) && processId > 0 ? processId : null
+  } catch {
+    return null
+  }
+}
+
 async function isOpenHardwareMonitorHttpReachable(port) {
   if (!isWindows() || typeof fetch !== 'function') return false
 
@@ -2100,6 +2172,14 @@ async function getWindowsSensorEnhancementDiagnostics() {
         sensors: [],
         error: isWindows() ? 'WINDOWS_SENSOR_HELPER_NOT_AVAILABLE' : 'NOT_WINDOWS',
       }
+  const fallbackProcessId = processPresent && !helperStatus?.processId
+    ? await getWindowsProcessId(WINDOWS_SENSOR_HELPER_PROCESS_NAME)
+    : null
+  const diagnosticHelperRunning = Boolean(
+    helperStatus?.running
+    || (status?.helperRunning && (processPresent || snapshot?.received))
+    || (processPresent && snapshot?.received && snapshot?.ok)
+  )
   const sensors = Array.isArray(snapshot?.sensors) ? snapshot.sensors : []
   const cpuHardwareSensors = sensors.filter(isWindowsDiagnosticCpuSensor)
   const cpuFilterSensors = sensors.filter(isCpuSensor)
@@ -2115,7 +2195,7 @@ async function getWindowsSensorEnhancementDiagnostics() {
   const cpuFanSensors = cpuFilterSensors.filter((sensor) => sensor?.sensorType === 'Fan')
   const rawTemperatureSensors = sensors.filter((sensor) => sensor?.sensorType === 'Temperature')
   const rawVoltageSensors = sensors.filter((sensor) => sensor?.sensorType === 'Voltage')
-  const vcoreCandidateSensors = rawVoltageSensors.filter(isExplicitCpuVcoreSensor)
+  const vcoreCandidateSensors = rawVoltageSensors.filter(isCpuVcoreSensor)
   const failure = resolveWindowsSensorDiagnosticFailure({
     status,
     snapshot,
@@ -2135,12 +2215,12 @@ async function getWindowsSensorEnhancementDiagnostics() {
       runtimeAvailable: helperResolved.exists,
       executablePath: helperResolved.executablePath,
       executableDirectory: helperResolved.directoryPath,
-      running: Boolean(helperStatus?.running),
+      running: diagnosticHelperRunning,
       processPresent,
       elevated: Boolean(helperStatus?.elevated ?? snapshot?.elevated),
       helperVersion: helperStatus?.helperVersion || snapshot?.helperVersion || '',
       backend: helperStatus?.backend || snapshot?.backend || '',
-      processId: helperStatus?.processId ?? null,
+      processId: helperStatus?.processId ?? fallbackProcessId ?? null,
       crashLogPath,
       crashLogExists: Boolean(crashLog),
       crashLog,
@@ -2718,7 +2798,7 @@ async function getHardwareMonitorCpuVoltage() {
     && Number.isFinite(sensor.value)
     && sensor.value > 0
   ))
-  const vcoreSensors = usableSensors.filter(isExplicitCpuVcoreSensor)
+  const vcoreSensors = usableSensors.filter(isCpuVcoreSensor)
   const vidSensors = usableSensors.filter(isCpuVidSensor)
   const selectedSensors = vcoreSensors.length ? vcoreSensors : vidSensors
 
@@ -2893,6 +2973,24 @@ async function getCpuTemperature() {
     const sensorSettings = getHardwareSensorSettings()
     const enhancedSensorEnabled = isWindows() && sensorSettings.enhancedSensorEnabled
     let macTemperature
+    const openTemperature = enhancedSensorEnabled
+      ? await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
+      : undefined
+
+    // Once Windows sensor enhancement is enabled, keep the source stable and
+    // prefer the helper whenever it has a valid reading. Falling back to
+    // systeminformation first made the displayed source oscillate whenever
+    // both providers happened to return a value in the same refresh window.
+    if (openTemperature && openTemperature.value !== null) {
+      return openTemperature
+    }
+
+    if (enhancedSensorEnabled && (await getWindowsSensorHelperStatus())?.running) {
+      const retriedOpenTemperature = await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
+      if (retriedOpenTemperature && retriedOpenTemperature.value !== null) {
+        return retriedOpenTemperature
+      }
+    }
 
     if (systemInfoValue.value !== null) {
       return buildCpuTemperatureResult(temperature, 'systeminformation', systemInfoValue.sensorName, systemInfoValue.value)
@@ -2910,9 +3008,6 @@ async function getCpuTemperature() {
       }
     }
 
-    const openTemperature = enhancedSensorEnabled
-      ? await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
-      : undefined
     if (openTemperature && openTemperature.value !== null) {
       return openTemperature
     }
@@ -3373,8 +3468,56 @@ function normalizeRateValue(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
+function parseWindowsTypeperfValues(stdout) {
+  const lines = String(stdout || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('"'))
+  const sampleLine = lines[lines.length - 1]
+  if (!sampleLine || lines.length < 2) return null
+
+  const fields = sampleLine.match(/"([^"]*)"/g)?.map((field) => field.slice(1, -1)) || []
+  const values = fields.slice(1).map(Number)
+  if (values.length < WINDOWS_STORAGE_IO_COUNTERS.length || values.some((value) => !Number.isFinite(value))) {
+    return null
+  }
+
+  const [readBytesPerSec, writeBytesPerSec, readIops, writeIops, waitPercent] = values
+  return {
+    readBytesPerSec: normalizeRateValue(readBytesPerSec),
+    writeBytesPerSec: normalizeRateValue(writeBytesPerSec),
+    totalBytesPerSec: normalizeRateValue(readBytesPerSec + writeBytesPerSec),
+    readIops: normalizeRateValue(readIops),
+    writeIops: normalizeRateValue(writeIops),
+    totalIops: normalizeRateValue(readIops + writeIops),
+    waitPercent: normalizeRateValue(waitPercent),
+  }
+}
+
+async function readWindowsStorageIo() {
+  if (!isWindows()) return undefined
+
+  try {
+    const { stdout } = await execFileAsync('typeperf.exe', [
+      ...WINDOWS_STORAGE_IO_COUNTERS,
+      '-sc', '1',
+      '-y',
+    ], {
+      windowsHide: true,
+      timeout: 3000,
+      maxBuffer: 256 * 1024,
+    })
+    return parseWindowsTypeperfValues(stdout)
+  } catch {
+    return undefined
+  }
+}
+
 async function getStorageIo() {
   return readCachedServiceValue('storageIo', 1500, async () => {
+    const windowsStorageIo = await readWindowsStorageIo()
+    if (windowsStorageIo) return windowsStorageIo
+
     const [fsStatsResult, disksIoResult] = await Promise.allSettled([
       si.fsStats(),
       si.disksIO(),
@@ -3654,12 +3797,19 @@ export const systemService = {
       )
     ),
 
-  getCpuPower: () =>
-    readCachedServiceValue(
+  getCpuPower: async () => {
+    const value = await readCachedServiceValue(
       'cpuPower',
       8000,
       () => readSystemInfo('cpuPower', undefined, getHardwareMonitorCpuPower)
-    ),
+    )
+
+    if (isWindows() && getHardwareSensorSettings().enhancedSensorEnabled && !value) {
+      invalidateRuntimeServiceCache('cpuPower')
+    }
+
+    return value
+  },
 
   getCpuCurrentSpeed: async () => {
     await invalidateCachedWindowsCpuSpeedFallbackWhenHelperReady()
@@ -3708,19 +3858,30 @@ export const systemService = {
         let cpuClockDiagnostics
 
         if (isWindows() && sensorSettings.enhancedSensorEnabled) {
-          const hardwareMonitorSpeed = await readSystemInfo(
-            'cpuClockSensors',
-            undefined,
-            () => getHardwareMonitorCpuCurrentSpeed(cpuInfo)
-          )
+            const hardwareMonitorSpeed = await readSystemInfo(
+              'cpuClockSensors',
+              undefined,
+              () => getHardwareMonitorCpuCurrentSpeed(cpuInfo)
+            )
           cpuClockDiagnostics = Array.isArray(hardwareMonitorSpeed?.allCpuClockSensors)
             && hardwareMonitorSpeed.allCpuClockSensors.length
             ? hardwareMonitorSpeed.allCpuClockSensors
             : undefined
-          if (hasValidCpuClockCoreValues(hardwareMonitorSpeed?.cores) || hardwareMonitorSpeed?.avg) {
-            return hardwareMonitorSpeed
+            if (hasValidCpuClockCoreValues(hardwareMonitorSpeed?.cores) || hardwareMonitorSpeed?.avg) {
+              return hardwareMonitorSpeed
+            }
+
+            if ((await getWindowsSensorHelperStatus())?.running) {
+              const retriedHardwareMonitorSpeed = await readSystemInfo(
+                'cpuClockSensorsRetry',
+                undefined,
+                () => getHardwareMonitorCpuCurrentSpeed(cpuInfo)
+              )
+              if (hasValidCpuClockCoreValues(retriedHardwareMonitorSpeed?.cores) || retriedHardwareMonitorSpeed?.avg) {
+                return retriedHardwareMonitorSpeed
+              }
+            }
           }
-        }
 
         const systemInfoSpeed = await readSystemInfo('cpuCurrentSpeed', fallback, () => si.cpuCurrentSpeed())
         return attachCpuCurrentSpeedDiagnostics({
@@ -3745,12 +3906,25 @@ export const systemService = {
       }
     ),
 
-  getCpuVoltage: () =>
-    readCachedServiceValue(
+  getCpuVoltage: async () => {
+    const value = await readCachedServiceValue(
       'cpuVoltage',
       8000,
       () => readSystemInfo('cpuVoltage', { value: null, source: 'unsupported', unit: 'V', max: null }, getHardwareMonitorCpuVoltage)
-    ),
+    )
+
+    if (
+      isWindows()
+      && getHardwareSensorSettings().enhancedSensorEnabled
+      && (value?.source === 'unsupported' || value?.value === null || value?.value === undefined)
+    ) {
+      // A helper can become ready after the first page refresh. Do not keep
+      // the initial unsupported result cached until the normal 8s TTL expires.
+      invalidateRuntimeServiceCache('cpuVoltage')
+    }
+
+    return value
+  },
 
   getCpuFanSpeed: () => readSystemInfo('cpuFanSpeed', { value: null, source: 'unsupported', unit: 'RPM', max: null }, getHardwareMonitorCpuFanSpeed),
 

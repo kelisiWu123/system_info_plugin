@@ -20,6 +20,13 @@ test('uTools child windows use a cross-preload singleton record with an atomic p
   assert.match(source, /async function reuseOrWaitForWindowSingleton\(singletonKey\)/)
   assert.match(source, /if \(await reuseOrWaitForWindowSingleton\(singletonKey\)\) return/)
   assert.match(source, /let singletonClaim = claimWindowSingleton\(singletonKey\)/)
+  assert.match(source, /await new Promise\(\(resolve, reject\) =>/)
+  assert.match(source, /const callbackTimeoutId = setTimeout\(/)
+  assert.match(source, /let callbackSettled = false/)
+  assert.match(source, /WINDOW_CREATE_CALLBACK_TIMEOUT_MS = 10000/)
+  assert.match(source, /uTools 窗口创建回调超时/)
+  assert.match(source, /childWindow\?\.close\?\.\(\)/)
+  assert.match(source, /reject\(new Error\(`uTools 窗口创建后未返回有效 webContents:/)
 })
 
 test('an existing uTools singleton asks its owning parent to restore and focus instead of opening another window', () => {
@@ -38,12 +45,14 @@ test('an existing uTools singleton asks its owning parent to restore and focus i
 
 test('uTools command exits only after the singleton open-or-focus request has been dispatched', () => {
   const preload = readSource('utools/preload.js')
+  const source = readSource('utools/services/window.js')
   const types = readSource('src/type/interface.d.ts')
 
   assert.match(preload, /async function openPresetWindow\(name\)/)
   assert.match(preload, /await window\.services\.createWindow\(name, preset\.height, preset\.width, preset\.backgroundColor\)/)
   assert.match(preload, /finally\s*{\s*runtimeUtools\.outPlugin\(\)/)
   assert.match(types, /createWindow: \(fileName: string, height\?: number, width\?: number, backgroundColor\?: number\) => Promise<void>/)
+  assert.match(source, /creatSomething: \(fileName, height, width, backgroundColor\) => \{\s*return windowService\.createWindow\(/)
 })
 
 test('Electron fallback keeps one BrowserWindow per singleton key and focuses the existing instance', () => {
@@ -57,6 +66,11 @@ test('Electron fallback keeps one BrowserWindow per singleton key and focuses th
   assert.match(source, /childWindowsBySingletonKey\.delete\(singletonKey\)/)
   assert.match(source, /childWindow\.webContents\.send\('init', \{ fromMain: true, singletonKey \}\)/)
   assert.match(source, /if \(action === 'focus'\)[\s\S]*activateBrowserWindow\(targetWindow\)/)
+  assert.match(source, /ipcMain\.handle\('createChildWindow', async/)
+  assert.match(source, /did-finish-load/)
+  assert.match(source, /did-fail-load/)
+  assert.match(source, /childWindowLoadTimeoutMs = 12000/)
+  assert.match(source, /Electron 子窗口加载失败/)
 })
 
 test('hardware, monitor, specs, standard watch, and super-lite watch retain distinct singleton keys', () => {

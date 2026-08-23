@@ -12,7 +12,16 @@ export const WINDOWS_SENSOR_HELPER_PROTOCOL_VERSION = 1
 const HELPER_REQUEST_TIMEOUT_MS = 1200
 const HELPER_START_WAIT_MS = 9000
 const HELPER_START_POLL_MS = 300
+const HELPER_SNAPSHOT_CACHE_MS = 500
+const HELPER_STATUS_GRACE_MS = 5000
+const HELPER_STATUS_RETRY_DELAY_MS = 80
 const VALID_SENSOR_TYPES = new Set(['Temperature', 'Load', 'Power', 'Voltage', 'Fan', 'Clock'])
+
+let helperSnapshotCache
+let helperSnapshotCachedAt = 0
+let helperSnapshotPromise
+let lastHelperStatus
+let lastHelperStatusAt = 0
 
 function isWindows() {
   return typeof process !== 'undefined' && process.platform === 'win32'
@@ -38,15 +47,21 @@ export function requestWindowsSensorHelper(command, timeoutMs = HELPER_REQUEST_T
     const socket = net.connect(WINDOWS_SENSOR_HELPER_PIPE_PATH)
     socket.setEncoding('utf8')
 
-    const finish = (value) => {
+    const finish = (value, options = {}) => {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
-      socket.destroy()
+      if (options.abort) {
+        socket.destroy()
+      } else if (!socket.destroyed && socket.writable) {
+        // Let the server close its end of the pipe after a normal response.
+        // Destroying immediately can make StreamWriter.Dispose throw a broken-pipe error.
+        socket.end()
+      }
       resolve(value)
     }
 
-    timer = setTimeout(() => finish(null), timeoutMs)
+    timer = setTimeout(() => finish(null, { abort: true }), timeoutMs)
 
     socket.on('connect', () => {
       socket.write(`${command}\n`)
@@ -59,18 +74,18 @@ export function requestWindowsSensorHelper(command, timeoutMs = HELPER_REQUEST_T
 
       const line = buffer.slice(0, newlineIndex).trim()
       if (!line) {
-        finish(null)
+        finish(null, { abort: true })
         return
       }
 
       try {
         finish(normalizeHelperResponse(JSON.parse(line)))
       } catch {
-        finish(null)
+        finish(null, { abort: true })
       }
     })
 
-    socket.on('error', () => finish(null))
+    socket.on('error', () => finish(null, { abort: true }))
     socket.on('end', () => {
       if (!settled && buffer.trim()) {
         try {
@@ -80,46 +95,77 @@ export function requestWindowsSensorHelper(command, timeoutMs = HELPER_REQUEST_T
           // fall through to null
         }
       }
-      finish(null)
+      finish(null, { abort: true })
     })
   })
 }
 
-export async function getWindowsSensorHelperStatus() {
-  const response = await requestWindowsSensorHelper('ping', 700)
-  if (!response?.ok) return null
+export async function getWindowsSensorHelperStatus({ allowStale = true } = {}) {
+  let response = await requestWindowsSensorHelper('ping', 700)
+  if (!response?.ok) {
+    await new Promise((resolve) => setTimeout(resolve, HELPER_STATUS_RETRY_DELAY_MS))
+    response = await requestWindowsSensorHelper('ping', 900)
+  }
 
-  return {
+  if (!response?.ok) {
+    if (allowStale && lastHelperStatus && Date.now() - lastHelperStatusAt < HELPER_STATUS_GRACE_MS) {
+      return { ...lastHelperStatus, stale: true }
+    }
+    return null
+  }
+
+  const status = {
     running: true,
     elevated: Boolean(response.elevated),
     helperVersion: typeof response.helperVersion === 'string' ? response.helperVersion : '',
     backend: typeof response.backend === 'string' ? response.backend : 'OpenHardwareMonitorLib',
     processId: Number.isFinite(response.processId) ? response.processId : null,
   }
+  lastHelperStatus = status
+  lastHelperStatusAt = Date.now()
+  return status
 }
 
 export async function readWindowsSensorHelperDiagnosticSnapshot() {
-  const response = await requestWindowsSensorHelper('snapshot', 2500)
-  if (!response) {
-    return {
-      received: false,
-      ok: false,
-      sensors: [],
-      error: 'WINDOWS_SENSOR_HELPER_SNAPSHOT_NO_RESPONSE',
-    }
+  const now = Date.now()
+  if (helperSnapshotCache && now - helperSnapshotCachedAt < HELPER_SNAPSHOT_CACHE_MS) {
+    return helperSnapshotCache
   }
 
-  return {
-    received: true,
-    ok: Boolean(response.ok),
-    protocolVersion: response.protocolVersion,
-    helperVersion: typeof response.helperVersion === 'string' ? response.helperVersion : '',
-    backend: typeof response.backend === 'string' ? response.backend : 'OpenHardwareMonitorLib',
-    generatedAt: Number.isFinite(response.generatedAt) ? response.generatedAt : null,
-    elevated: Boolean(response.elevated),
-    sensors: Array.isArray(response.sensors) ? response.sensors : [],
-    error: typeof response.error === 'string' ? response.error : '',
-  }
+  if (helperSnapshotPromise) return helperSnapshotPromise
+
+  helperSnapshotPromise = (async () => {
+    const response = await requestWindowsSensorHelper('snapshot', 2500)
+    const snapshot = !response
+      ? {
+          received: false,
+          ok: false,
+          sensors: [],
+          error: 'WINDOWS_SENSOR_HELPER_SNAPSHOT_NO_RESPONSE',
+        }
+      : {
+          received: true,
+          ok: Boolean(response.ok),
+          protocolVersion: response.protocolVersion,
+          helperVersion: typeof response.helperVersion === 'string' ? response.helperVersion : '',
+          backend: typeof response.backend === 'string' ? response.backend : 'OpenHardwareMonitorLib',
+          generatedAt: Number.isFinite(response.generatedAt) ? response.generatedAt : null,
+          elevated: Boolean(response.elevated),
+          sensors: Array.isArray(response.sensors) ? response.sensors : [],
+          error: typeof response.error === 'string' ? response.error : '',
+        }
+
+    if (snapshot.received) {
+      helperSnapshotCache = snapshot
+      helperSnapshotCachedAt = Date.now()
+    }
+
+    return snapshot
+  })().finally(() => {
+    helperSnapshotPromise = undefined
+  })
+
+  return helperSnapshotPromise
 }
 
 export async function readWindowsSensorHelperSnapshot() {
@@ -153,7 +199,7 @@ export async function waitForWindowsSensorHelper(timeoutMs = HELPER_START_WAIT_M
   const deadline = Date.now() + timeoutMs
 
   do {
-    const status = await getWindowsSensorHelperStatus()
+    const status = await getWindowsSensorHelperStatus({ allowStale: false })
     if (status?.running) return status
     await new Promise((resolve) => setTimeout(resolve, HELPER_START_POLL_MS))
   } while (Date.now() < deadline)
@@ -170,7 +216,7 @@ export async function startWindowsSensorHelper({ executablePath, workingDirector
     }
   }
 
-  const alreadyRunning = await getWindowsSensorHelperStatus()
+  const alreadyRunning = await getWindowsSensorHelperStatus({ allowStale: false })
   if (alreadyRunning?.running) {
     return {
       started: false,
@@ -188,9 +234,10 @@ export async function startWindowsSensorHelper({ executablePath, workingDirector
   }
 
   const script = [
+    '$clientSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;',
     `$p = Start-Process -FilePath ${quotePowerShellLiteral(executablePath)}`,
     `-WorkingDirectory ${quotePowerShellLiteral(workingDirectory || '')}`,
-    `-ArgumentList @('--pipe-name', '${WINDOWS_SENSOR_HELPER_PIPE_NAME}')`,
+    `-ArgumentList @('--pipe-name', '${WINDOWS_SENSOR_HELPER_PIPE_NAME}', '--client-sid', $clientSid)`,
     '-WindowStyle Hidden -Verb RunAs -PassThru',
     '; $p.Id',
   ].join(' ')

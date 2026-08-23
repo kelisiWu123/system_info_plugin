@@ -175,11 +175,12 @@ function formatHealthText(disk: DiskLayoutData) {
 
 function normalizeSmartStatus(row: { when_failed?: string; raw?: { value?: number | string } }) {
   const failedText = cleanText(row.when_failed)
+  if (!failedText) return '未提供'
   if (failedText && failedText !== '-' && failedText.toLowerCase() !== 'never') return '关注'
   const rawValue = row.raw?.value
   const numericRaw = typeof rawValue === 'number' ? rawValue : Number(rawValue)
   if (Number.isFinite(numericRaw) && numericRaw > 0 && cleanText(failedText).toLowerCase() === 'in_the_past') return '关注'
-  return '正常'
+  return failedText === '-' || failedText.toLowerCase() === 'never' ? '正常' : '未提供'
 }
 
 function buildFeatures(disk: DiskLayoutData) {
@@ -312,8 +313,8 @@ const overviewCards = computed<OverviewCard[]>(() => {
     },
     {
       label: '实时 I/O',
-      value: `↓ ${formatSpeed(storageIoData.value.readBytesPerSec)}`,
-      subvalue: `↑ ${formatSpeed(storageIoData.value.writeBytesPerSec)} · ${formatIops(storageIoData.value.totalIops)}`,
+      value: `读取 ${formatSpeed(storageIoData.value.readBytesPerSec)}`,
+      subvalue: `写入 ${formatSpeed(storageIoData.value.writeBytesPerSec)} · ${formatIops(storageIoData.value.totalIops)}`,
       tone: 'blue',
     },
   ]
@@ -592,7 +593,7 @@ useActivePageLifecycle(
               <span>可用</span>
             </div>
 
-            <div v-for="volume in volumeRows" :key="volume.mount" class="storage-volume-row">
+            <div v-for="(volume, volumeIndex) in volumeRows" :key="`volume-${volumeIndex}-${volume.mount}`" class="storage-volume-row">
               <div class="storage-volume-row__name" :title="volume.subtitle || volume.label">
                 <strong>{{ volume.label }}</strong>
                 <span v-if="volume.subtitle">{{ volume.subtitle }}</span>
@@ -629,7 +630,7 @@ useActivePageLifecycle(
               <span>{{ row.value }}</span>
               <span>{{ row.thresh }}</span>
               <span>{{ row.raw }}</span>
-              <span :class="['smart-status', { 'smart-status--warn': row.status !== '正常' }]">{{ row.status }}</span>
+            <span :class="['smart-status', { 'smart-status--warn': row.status === '关注', 'smart-status--muted': row.status === '未提供' }]">{{ row.status }}</span>
             </div>
           </div>
         </section>
@@ -1094,6 +1095,10 @@ useActivePageLifecycle(
 
 .smart-status--warn {
   color: var(--state-warn-fg);
+}
+
+.smart-status--muted {
+  color: var(--text-subtle);
 }
 
 .storage-feature-list {

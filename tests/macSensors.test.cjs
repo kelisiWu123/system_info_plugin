@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict')
+const path = require('node:path')
 const test = require('node:test')
 
 const {
@@ -163,7 +164,7 @@ test('loads macos-temperature-sensor from provided bundled entry path', () => {
     marker
   )
 
-  assert.deepEqual(requests, [bundledEntryPath])
+  assert.deepEqual(requests, [path.resolve(bundledEntryPath)])
 })
 
 test('falls back to hottest GPU die when aggregate GPU temperature is missing', () => {
@@ -366,7 +367,7 @@ test('reads AppleSMC GPU temperature only on darwin and parses JSON output', () 
 test('resolves AppleSMC CLI path from plugin root when provided', () => {
   const result = resolveMacSmcBinaryPath('/Applications/HWInfoX/dist')
 
-  assert.equal(result, '/Applications/HWInfoX/dist/vendor/macos/mac-smc-sensors')
+  assert.equal(result, path.resolve('/Applications/HWInfoX/dist', 'vendor/macos/mac-smc-sensors'))
 })
 
 test('does not execute AppleSMC CLI outside darwin', () => {

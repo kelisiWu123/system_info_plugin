@@ -4,6 +4,8 @@ import {
   getSensorEnhancementMenuAriaLabel,
   getSensorEnhancementPlatform,
   getSensorEnhancementPrimaryActionLabel,
+  getWindowsSensorEnhancementReadiness,
+  reconcileWindowsSensorStartStatus,
   shouldAutoPrepareSensorEnhancement,
 } from '../utils/platform'
 import { writeClipboardText } from '../utils/presentation'
@@ -56,14 +58,8 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
     }
 
     if (platform.value === 'windows') {
-      const reason = openHardwareMonitorStatus.value?.reason || ''
-      if (
-        reason === 'WINDOWS_SENSOR_HELPER_START_FAILED'
-        || reason === 'WINDOWS_SENSOR_BACKEND_START_FAILED'
-        || reason === 'OHM_START_FAILED'
-        || reason === 'OHM_EXE_NOT_FOUND'
-        || reason === 'OHM_RUNTIME_COPY_FAILED'
-      ) return 'error'
+      const windowsReadiness = getWindowsSensorEnhancementReadiness(openHardwareMonitorStatus.value)
+      if (windowsReadiness === 'error') return 'error'
     }
 
     return 'pending'
@@ -75,7 +71,7 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
       case 'preparing': return '准备中'
       case 'needs-auth': return '需授权'
       case 'error': return '异常'
-      default: return '待启用'
+      default: return '等待就绪'
     }
   })
   const controlTitle = computed(() => `${controlLabel.value}：${statusLabel.value}`)
@@ -235,8 +231,9 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
     sensorActionLoading.value = true
     try {
       if (platform.value === 'windows') {
-        openHardwareMonitorStatus.value = await window.services.startWindowsSensorEnhancement()
-        openHardwareMonitorStatus.value = await window.services.getWindowsSensorEnhancementStatus()
+        const startStatus = await window.services.startWindowsSensorEnhancement()
+        const observedStatus = await window.services.getWindowsSensorEnhancementStatus()
+        openHardwareMonitorStatus.value = reconcileWindowsSensorStartStatus(startStatus, observedStatus)
         windowsSensorDiagnostics.value = await window.services.getWindowsSensorEnhancementDiagnostics()
       } else if (platform.value === 'macos') {
         if (!macHelperStatus.value?.installed) {

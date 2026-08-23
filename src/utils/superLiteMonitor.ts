@@ -72,7 +72,7 @@ export function resolveSuperLiteOverallStatus(input: SuperLiteStatusInput): Supe
 }
 
 export function formatSuperLiteRefreshLabel(intervalMs: number) {
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return '↻--'
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return '更新 --'
   const seconds = intervalMs / 1000
-  return `↻${Number.isInteger(seconds) ? seconds.toFixed(0) : seconds.toFixed(1)}s`
+  return `更新 ${Number.isInteger(seconds) ? seconds.toFixed(0) : seconds.toFixed(1)}s`
 }

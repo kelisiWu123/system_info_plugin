@@ -15,6 +15,16 @@ test('standard watch header uses symmetric side tracks so monitor tabs stay visu
   assert.match(watch, /\.monitor-shell__actions\s*{[\s\S]*justify-self:\s*end/)
 })
 
+test('standard watch icon controls expose explicit labels and pin state', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /:title="pinned \? '取消固定窗口' : '固定窗口'"/)
+  assert.match(watch, /:aria-label="pinned \? '取消固定窗口' : '固定窗口'"/)
+  assert.match(watch, /:aria-pressed="pinned"/)
+  assert.match(watch, /title="最小化窗口" aria-label="最小化窗口"/)
+  assert.match(watch, /title="关闭窗口" aria-label="关闭窗口"/)
+})
+
 test('super-lite watch exposes the standard-mode switch in the header actions instead of the footer', () => {
   const superLite = readSource('src/components/Watch/SuperLiteMonitorView.vue')
 

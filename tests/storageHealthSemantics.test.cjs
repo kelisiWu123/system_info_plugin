@@ -63,4 +63,8 @@ test('storage UI never exposes raw unknown health and omits unavailable health o
   assert.match(source, /typeof disk\.temperature === 'number' && disk\.temperature > 0 \? \[`温度：/)
   assert.match(source, /const hasDiskHealthStatus = computed/)
   assert.match(source, /<section v-if="selectedDisk\?\.smartRows\.length" class="storage-section">/)
+  assert.match(source, /if \(!failedText\) return '未提供'/)
+  assert.match(source, /'smart-status--warn': row\.status === '关注'/)
+  assert.match(source, /'smart-status--muted': row\.status === '未提供'/)
+  assert.doesNotMatch(source, /if \(!failedText\)[\s\S]*return '正常'/)
 })

@@ -53,14 +53,38 @@ namespace HWInfoX.WindowsSensorHelper
         private const int ProtocolVersion = 1;
         private const string HelperVersion = "1.0.1";
         private const string DefaultPipeName = "hwinfox-sensor-helper-v1";
+        private const string SecurityPrivilegeName = "SeSecurityPrivilege";
         private const int SeKernelObject = 6;
         private const uint LabelSecurityInformation = 0x00000010;
+        private const uint SePrivilegeEnabled = 0x00000002;
+        private const int ErrorNotAllAssigned = 1300;
         private const int SnapshotCacheMilliseconds = 700;
         private const int IdleExitMilliseconds = 1800000;
         private const int AcceptPollMilliseconds = 5000;
 
         private static readonly JavaScriptSerializer Serializer = new JavaScriptSerializer();
         private static readonly object SnapshotLock = new object();
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Luid
+        {
+            public uint lowPart;
+            public int highPart;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct LuidAndAttributes
+        {
+            public Luid luid;
+            public uint attributes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct TokenPrivileges
+        {
+            public uint privilegeCount;
+            public LuidAndAttributes privileges;
+        }
 
         [DllImport("advapi32.dll", SetLastError = true)]
         private static extern uint SetSecurityInfo(
@@ -79,6 +103,33 @@ namespace HWInfoX.WindowsSensorHelper
             [MarshalAs(UnmanagedType.Bool)] out bool saclPresent,
             out IntPtr sacl,
             [MarshalAs(UnmanagedType.Bool)] out bool saclDefaulted);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool LookupPrivilegeValue(
+            string systemName,
+            string name,
+            out Luid luid);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool AdjustTokenPrivileges(
+            IntPtr tokenHandle,
+            [MarshalAs(UnmanagedType.Bool)] bool disableAllPrivileges,
+            ref TokenPrivileges newState,
+            uint bufferLength,
+            out TokenPrivileges previousState,
+            out uint returnLength);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool AdjustTokenPrivileges(
+            IntPtr tokenHandle,
+            [MarshalAs(UnmanagedType.Bool)] bool disableAllPrivileges,
+            ref TokenPrivileges newState,
+            uint bufferLength,
+            IntPtr previousState,
+            IntPtr returnLength);
 
         private static Computer _computer;
         private static string _cachedSnapshotJson;
@@ -101,9 +152,10 @@ namespace HWInfoX.WindowsSensorHelper
 
                 try
                 {
+                    var clientSid = ParseClientSid(args);
                     InitializeComputer();
                     _lastClientAt = UtcNowMilliseconds();
-                    RunServer(pipeName);
+                    RunServer(pipeName, clientSid);
                     return 0;
                 }
                 catch (Exception error)
@@ -130,6 +182,138 @@ namespace HWInfoX.WindowsSensorHelper
             }
 
             return DefaultPipeName;
+        }
+
+        private static SecurityIdentifier ParseClientSid(string[] args)
+        {
+            for (var i = 0; i < args.Length; i++)
+            {
+                if (!string.Equals(args[i], "--client-sid", StringComparison.OrdinalIgnoreCase)) continue;
+                if (i + 1 >= args.Length)
+                {
+                    throw new ArgumentException("The --client-sid option requires a Windows account SID value.");
+                }
+
+                var value = (args[i + 1] ?? string.Empty).Trim();
+                if (value.Length == 0)
+                {
+                    throw new ArgumentException("The --client-sid option requires a Windows account SID value.");
+                }
+
+                try
+                {
+                    var sid = new SecurityIdentifier(value);
+                    if (!sid.IsAccountSid())
+                    {
+                        throw new ArgumentException("The --client-sid option must identify a Windows account SID.");
+                    }
+                    return sid;
+                }
+                catch (ArgumentException error)
+                {
+                    throw new ArgumentException("The --client-sid option contains an invalid Windows account SID.", error);
+                }
+            }
+
+            return null;
+        }
+
+        private sealed class TokenPrivilegeScope : IDisposable
+        {
+            private WindowsIdentity _identity;
+            private readonly TokenPrivileges _previousState;
+            private readonly bool _restorePreviousState;
+
+            public TokenPrivilegeScope(WindowsIdentity identity, TokenPrivileges previousState, bool restorePreviousState)
+            {
+                _identity = identity;
+                _previousState = previousState;
+                _restorePreviousState = restorePreviousState;
+            }
+
+            public void Dispose()
+            {
+                var identity = _identity;
+                if (identity == null) return;
+                _identity = null;
+
+                try
+                {
+                    if (_restorePreviousState)
+                    {
+                        var previousState = _previousState;
+                        AdjustTokenPrivileges(
+                            identity.Token,
+                            false,
+                            ref previousState,
+                            0,
+                            IntPtr.Zero,
+                            IntPtr.Zero);
+                    }
+                }
+                finally
+                {
+                    identity.Dispose();
+                }
+            }
+        }
+
+        private static TokenPrivilegeScope EnableTokenPrivilege(string privilegeName)
+        {
+            var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.AdjustPrivileges | TokenAccessLevels.Query);
+            if (identity == null)
+            {
+                throw new InvalidOperationException("Unable to open the current process token for " + privilegeName + ".");
+            }
+
+            try
+            {
+                Luid luid;
+                if (!LookupPrivilegeValue(null, privilegeName, out luid))
+                {
+                    throw CreateWin32Exception("Unable to resolve " + privilegeName + ".");
+                }
+
+                var requestedState = new TokenPrivileges
+                {
+                    privilegeCount = 1,
+                    privileges = new LuidAndAttributes
+                    {
+                        luid = luid,
+                        attributes = SePrivilegeEnabled
+                    }
+                };
+                TokenPrivileges previousState;
+                uint previousStateLength;
+                if (!AdjustTokenPrivileges(
+                    identity.Token,
+                    false,
+                    ref requestedState,
+                    (uint)Marshal.SizeOf(typeof(TokenPrivileges)),
+                    out previousState,
+                    out previousStateLength))
+                {
+                    throw CreateWin32Exception("Unable to enable " + privilegeName + ".");
+                }
+
+                if (Marshal.GetLastWin32Error() == ErrorNotAllAssigned)
+                {
+                    throw new UnauthorizedAccessException(
+                        "The elevated sensor helper does not hold " + privilegeName + ".");
+                }
+
+                return new TokenPrivilegeScope(identity, previousState, previousStateLength > 0);
+            }
+            catch
+            {
+                identity.Dispose();
+                throw;
+            }
+        }
+
+        private static InvalidOperationException CreateWin32Exception(string message)
+        {
+            return new InvalidOperationException(message + " Win32 error: " + Marshal.GetLastWin32Error() + ".");
         }
 
         private static void InitializeComputer()
@@ -180,59 +364,81 @@ namespace HWInfoX.WindowsSensorHelper
             }
         }
 
-        private static void RunServer(string pipeName)
+        private static void RunServer(string pipeName, SecurityIdentifier clientSid)
         {
             while (!_shutdownRequested)
             {
-                using (var server = CreatePipeServer(pipeName))
+                using (var server = CreatePipeServer(pipeName, clientSid))
                 {
-                    var wait = server.BeginWaitForConnection(null, null);
-                    var connected = wait.AsyncWaitHandle.WaitOne(AcceptPollMilliseconds);
-
-                    if (!connected)
+                    try
                     {
-                        if (UtcNowMilliseconds() - _lastClientAt >= IdleExitMilliseconds)
-                        {
-                            return;
-                        }
-                        continue;
-                    }
+                        var wait = server.BeginWaitForConnection(null, null);
+                        var connected = wait.AsyncWaitHandle.WaitOne(AcceptPollMilliseconds);
 
-                    server.EndWaitForConnection(wait);
-                    _lastClientAt = UtcNowMilliseconds();
-                    HandleClient(server);
+                        if (!connected)
+                        {
+                            if (UtcNowMilliseconds() - _lastClientAt >= IdleExitMilliseconds)
+                            {
+                                return;
+                            }
+                            continue;
+                        }
+
+                        server.EndWaitForConnection(wait);
+                        _lastClientAt = UtcNowMilliseconds();
+                        HandleClient(server);
+                    }
+                    catch (IOException)
+                    {
+                        // A client can close its pipe immediately after connecting. Recreate the
+                        // server instance instead of taking down the shared sensor process.
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // Treat an aborted connection like a disconnected client.
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // Begin/EndWaitForConnection can report an aborted pipe this way.
+                    }
                 }
             }
         }
 
-        private static NamedPipeServerStream CreatePipeServer(string pipeName)
+        private static NamedPipeServerStream CreatePipeServer(string pipeName, SecurityIdentifier clientSid)
         {
-            var security = BuildPipeSecurity();
-            var server = new NamedPipeServerStream(
-                pipeName,
-                PipeDirection.InOut,
-                4,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous,
-                16384,
-                16384,
-                security,
-                HandleInheritability.None,
-                PipeAccessRights.TakeOwnership);
+            var security = BuildPipeSecurity(clientSid);
+            // LABEL_SECURITY_INFORMATION needs WRITE_OWNER on the server handle, while
+            // ACCESS_SYSTEM_SECURITY is required to write the pipe SACL. Enable the
+            // latter's privilege only while the mandatory label is being installed.
+            using (EnableTokenPrivilege(SecurityPrivilegeName))
+            {
+                var server = new NamedPipeServerStream(
+                    pipeName,
+                    PipeDirection.InOut,
+                    4,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous,
+                    16384,
+                    16384,
+                    security,
+                    HandleInheritability.None,
+                    PipeAccessRights.TakeOwnership | PipeAccessRights.AccessSystemSecurity);
 
-            try
-            {
-                ApplyMediumIntegrityLabel(server);
-                return server;
-            }
-            catch
-            {
-                server.Dispose();
-                throw;
+                try
+                {
+                    ApplyMediumIntegrityLabel(server);
+                    return server;
+                }
+                catch
+                {
+                    server.Dispose();
+                    throw;
+                }
             }
         }
 
-        private static PipeSecurity BuildPipeSecurity()
+        private static PipeSecurity BuildPipeSecurity(SecurityIdentifier clientSid)
         {
             var security = new PipeSecurity();
             security.AddAccessRule(new PipeAccessRule(
@@ -252,8 +458,19 @@ namespace HWInfoX.WindowsSensorHelper
 
             security.AddAccessRule(new PipeAccessRule(
                 currentUser,
-                PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
+                PipeAccessRights.ReadWrite,
                 AccessControlType.Allow));
+
+            // When UAC credentials belong to a different administrator account, the
+            // elevated helper's current SID is not the Electron client's SID. Grant the
+            // caller supplied account only the read/write access needed to use the pipe.
+            if (clientSid != null && !clientSid.Equals(currentUser))
+            {
+                security.AddAccessRule(new PipeAccessRule(
+                    clientSid,
+                    PipeAccessRights.ReadWrite,
+                    AccessControlType.Allow));
+            }
             return security;
         }
 

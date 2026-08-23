@@ -46,9 +46,25 @@ test('Windows sensor readiness prefers the named-pipe helper while preserving th
   assert.match(helper, /'-WindowStyle Hidden -Verb RunAs -PassThru'/)
 })
 
+test('Windows startup failures remain visible instead of being downgraded to a pending state', () => {
+  const controller = readProjectFile('src/composables/useSensorEnhancementController.ts')
+  const processor = readProjectFile('src/components/Processor/index.vue')
+  const platform = readProjectFile('src/utils/platform.ts')
+
+  assert.match(controller, /getWindowsSensorEnhancementReadiness\(openHardwareMonitorStatus\.value\)/)
+  assert.match(controller, /if \(sensorActionLoading\.value\) return 'preparing'/)
+  assert.match(controller, /const startStatus = await window\.services\.startWindowsSensorEnhancement\(\)/)
+  assert.match(controller, /reconcileWindowsSensorStartStatus\(startStatus, observedStatus\)/)
+  assert.match(processor, /const windowsSensorReadiness = computed\(\(\) => getWindowsSensorEnhancementReadiness\(openHardwareMonitorStatus\.value\)\)/)
+  assert.match(processor, /if \(sensorActionLoading\.value\) return '增强组件正在准备，请稍候'/)
+  assert.match(processor, /reconcileWindowsSensorStartStatus\(startStatus, latestStatus\)/)
+  assert.match(platform, /reason\.startsWith\('WINDOWS_SENSOR_'\)/)
+})
+
 test('OpenHardwareMonitor readiness invalidates stale telemetry caches and active CPU surfaces refresh immediately', () => {
   const service = readProjectFile('utools/services/system.js')
   const processor = readProjectFile('src/components/Processor/index.vue')
+  const processorStore = readProjectFile('src/composables/useProcessorHardwareData.ts')
   const watch = readProjectFile('src/components/Watch/index.vue')
 
   assert.match(service, /const OPEN_HARDWARE_MONITOR_TELEMETRY_CACHE_KEYS = \[[\s\S]*'cpuTemperature'[\s\S]*'cpuPower'[\s\S]*'cpuCurrentSpeed'[\s\S]*'cpuVoltage'/)
@@ -57,6 +73,9 @@ test('OpenHardwareMonitor readiness invalidates stale telemetry caches and activ
   assert.match(service, /async function isOpenHardwareMonitorRunning[\s\S]*recordOpenHardwareMonitorRunningState\(true\)/)
   assert.match(processor, /if \(latestStatus\.running\)\s*{\s*await refreshProcessorHardwareDynamicMetrics\(\)/)
   assert.match(processor, /if \(subscribed\.value\)\s*{\s*await refreshProcessorHardwareDynamicMetrics\(\)/)
+  assert.match(processorStore, /const needsCpuAux = force \|\| \(intervals\.cpuAux > 0 && now - lastCpuAuxRefreshAt >= intervals\.cpuAux\)/)
+  assert.match(service, /getCpuPower: async \(\) =>[\s\S]*invalidateRuntimeServiceCache\('cpuPower'\)/)
+  assert.match(service, /getCpuVoltage: async \(\) =>[\s\S]*invalidateRuntimeServiceCache\('cpuVoltage'\)/)
   assert.match(watch, /async function refreshOpenHardwareMonitorReadiness\(force = false\)/)
   assert.match(watch, /const becameReady = running && lastOpenHardwareMonitorRunning !== true/)
   assert.match(watch, /const effectiveForce = force \|\| ohmBecameReady/)

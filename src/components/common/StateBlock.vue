@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Attention, Info, Plus } from '@icon-park/vue-next'
+
 withDefaults(defineProps<{
   variant: 'loading' | 'empty' | 'error' | 'soon'
   title: string
@@ -15,12 +17,17 @@ defineEmits<{
 </script>
 
 <template>
-  <section :class="['state-block', `state-block--${variant}`]" role="status" aria-live="polite">
+  <section
+    :class="['state-block', `state-block--${variant}`]"
+    :role="variant === 'error' ? 'alert' : 'status'"
+    :aria-live="variant === 'error' ? 'assertive' : 'polite'"
+    :aria-busy="variant === 'loading'"
+  >
     <div class="state-block__mark" aria-hidden="true">
       <span v-if="variant === 'loading'" class="state-block__spinner"></span>
-      <span v-else-if="variant === 'error'">!</span>
-      <span v-else-if="variant === 'soon'">+</span>
-      <span v-else>i</span>
+      <Attention v-else-if="variant === 'error'" theme="outline" size="18" fill="currentColor" :strokeWidth="3" />
+      <Plus v-else-if="variant === 'soon'" theme="outline" size="18" fill="currentColor" :strokeWidth="3" />
+      <Info v-else theme="outline" size="18" fill="currentColor" :strokeWidth="3" />
     </div>
 
     <div class="state-block__copy">
@@ -32,9 +39,10 @@ defineEmits<{
       v-if="actionLabel"
       type="button"
       class="state-block__action"
+      :disabled="variant === 'loading'"
       @click="$emit('retry')"
     >
-      {{ actionLabel }}
+      {{ variant === 'loading' ? '读取中…' : actionLabel }}
     </button>
   </section>
 </template>
@@ -79,7 +87,7 @@ defineEmits<{
 .state-block__spinner {
   width: 18px;
   height: 18px;
-  border: 2px solid rgba(255, 255, 255, 0.16);
+  border: 2px solid color-mix(in srgb, currentColor 18%, transparent);
   border-top-color: currentColor;
   border-radius: 50%;
   animation: state-block-spin 0.8s linear infinite;
@@ -112,6 +120,11 @@ defineEmits<{
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
+}
+
+.state-block__action:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 @keyframes state-block-spin {

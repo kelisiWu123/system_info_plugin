@@ -3,6 +3,7 @@ import {
   Chip,
   Computer as ComputerIcon,
   Cpu,
+  DownOne,
   GraphicDesign,
   HardDisk,
   Memory,
@@ -122,8 +123,25 @@ function syncBodyMode() {
   document.body.classList.toggle('watch-window-body', isWatchPage.value)
 }
 
+function syncDocumentTitle() {
+  document.title = isWatchPage.value
+    ? initialFloatingEntry.value === 'hardwareWatchSuperLite'
+      ? '超轻量监控浮窗'
+      : initialFloatingEntry.value === 'hardwareWatch'
+        ? '标准监控浮窗'
+        : '监控浮窗预览'
+    : isMonitorPage.value
+      ? '硬件监控'
+      : isDeviceSpecsPage.value
+        ? '设备规格'
+        : '硬件信息'
+}
+
 function selectSection(id: SidebarItem['id']) {
   selectedSection.value = id
+  sensorMenuOpen.value = false
+  sensorActionMessage.value = ''
+  clearCopyFeedback()
 
   if (currentPage.value !== 'computer' || !window.location.hash) {
     window.location.hash = 'computer'
@@ -139,6 +157,14 @@ function resetCopyFeedbackLater() {
     copyFeedback.value = 'idle'
     copyFeedbackTimerId = undefined
   }, 1800)
+}
+
+function clearCopyFeedback() {
+  copyFeedback.value = 'idle'
+  if (copyFeedbackTimerId) {
+    window.clearTimeout(copyFeedbackTimerId)
+    copyFeedbackTimerId = undefined
+  }
 }
 
 function getCurrentCopyHandle() {
@@ -260,6 +286,7 @@ const headerMeta = computed(() => {
 
 watch(currentPage, () => {
   syncBodyMode()
+  syncDocumentTitle()
 })
 
 watch(
@@ -278,6 +305,7 @@ watch(
 onMounted(() => {
   window.addEventListener('hashchange', syncHash)
   syncBodyMode()
+  syncDocumentTitle()
 })
 
 onUnmounted(() => {
@@ -354,13 +382,23 @@ onUnmounted(() => {
               :class="[
                 'header-sensor-trigger',
                 `header-sensor-trigger--${sensorEnhancementStatus}`,
-                { 'header-sensor-trigger--active': processorSensorControlActive },
+                {
+                  'header-sensor-trigger--active': processorSensorControlActive,
+                  'header-sensor-trigger--open': sensorMenuOpen,
+                },
               ]"
               @click="toggleSensorMenu()"
             >
               <span>{{ processorSensorControlLabel }}</span>
               <em>{{ processorSensorControlStatus }}</em>
-              <strong aria-hidden="true">⌄</strong>
+              <DownOne
+                class="header-sensor-trigger__chevron"
+                theme="outline"
+                size="12"
+                fill="currentColor"
+                :strokeWidth="3"
+                aria-hidden="true"
+              />
             </button>
 
             <div v-if="sensorMenuOpen" class="sensor-menu-popover">
@@ -454,6 +492,7 @@ onUnmounted(() => {
           :key="item.id"
           type="button"
           :class="['nav-item', { 'nav-item--active': selectedSection === item.id }]"
+          :aria-current="selectedSection === item.id ? 'page' : undefined"
           @click="selectSection(item.id)"
         >
           <component :is="item.icon" theme="outline" size="18" fill="currentColor" :strokeWidth="3" />
@@ -842,11 +881,24 @@ onUnmounted(() => {
   background: linear-gradient(180deg, rgba(159, 110, 31, 0.16), var(--control-bg));
   color: var(--control-fg-strong);
 
-  strong {
-    color: var(--text-subtle);
-    font-size: 13px;
-    line-height: 1;
-  }
+}
+
+.header-sensor-trigger__chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  margin-left: 2px;
+  color: var(--text-subtle);
+  transform: translateY(-1px);
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
+.header-sensor-trigger:hover .header-sensor-trigger__chevron,
+.header-sensor-trigger--open .header-sensor-trigger__chevron {
+  color: var(--control-fg-strong);
+}
+
+.header-sensor-trigger--open .header-sensor-trigger__chevron {
+  transform: translateY(1px) rotate(180deg);
 }
 
 .header-sensor-trigger--active,

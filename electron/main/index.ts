@@ -19,6 +19,11 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
     ? join(process.env.DIST_ELECTRON, '../public')
     : process.env.DIST
 
+const electronDebugPort = Number(process.env.VITE_ELECTRON_DEBUG_PORT)
+if (Number.isInteger(electronDebugPort) && electronDebugPort > 0 && electronDebugPort < 65536) {
+    app.commandLine.appendSwitch('remote-debugging-port', String(electronDebugPort))
+}
+
 // Disable GPU Acceleration for Windows 7
 if (release().startsWith('6.1')) app.disableHardwareAcceleration()
 
@@ -41,7 +46,9 @@ const childWindowsBySingletonKey = new Map<string, BrowserWindow>()
 // Here, you can also use other preload
 const preload = join(__dirname, '../preload/preload.js')
 const url = process.env.VITE_DEV_SERVER_URL
+const watchPreviewEnabled = process.env.VITE_ELECTRON_WATCH_PREVIEW === '1'
 const indexHtml = join(process.env.DIST, 'index.html')
+const childWindowLoadTimeoutMs = 12000
 
 function loadWindow(window: BrowserWindow, hash: string) {
     if (url) {
@@ -201,7 +208,7 @@ function createWatchPreviewWindow() {
 async function createWindow() {
     createMainWindow()
 
-    if (url) {
+    if (url && watchPreviewEnabled) {
         createWatchPreviewWindow()
     }
 }
@@ -244,7 +251,17 @@ ipcMain.on('window-action', (event, action, payload) => {
         const width = Number(payload?.width)
         const height = Number(payload?.height)
         if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
-            targetWindow.setContentSize(Math.round(width), Math.round(height))
+            const nextWidth = Math.round(width)
+            const nextHeight = Math.round(height)
+            targetWindow.setContentSize(nextWidth, nextHeight)
+
+            // Transparent frameless windows can ignore setContentSize on some
+            // Electron/Windows combinations. Apply the outer bounds as a
+            // fallback so the lightweight monitor is actually 200x200.
+            const [contentWidth, contentHeight] = targetWindow.getContentSize()
+            if (contentWidth !== nextWidth || contentHeight !== nextHeight) {
+                targetWindow.setSize(nextWidth, nextHeight)
+            }
         }
         return
     }
@@ -274,7 +291,7 @@ ipcMain.on('window-action', (event, action, payload) => {
 })
 
 // New window example arg: new windows url
-ipcMain.handle('createChildWindow', (_, arg) => {
+ipcMain.handle('createChildWindow', async (_, arg) => {
     const singletonKey = getChildWindowSingletonKey(arg)
     const existingWindow = childWindowsBySingletonKey.get(singletonKey)
 
@@ -302,20 +319,54 @@ ipcMain.handle('createChildWindow', (_, arg) => {
         }
     })
 
-    childWindow.webContents.on('did-finish-load', () => {
-        if (!childWindow.isDestroyed()) {
-            childWindow.webContents.send('init', { fromMain: true, singletonKey })
+    let loadSettled = false
+    let settleLoad: (error?: Error) => void = () => undefined
+    const loadPromise = new Promise<void>((resolve, reject) => {
+        settleLoad = (error) => {
+            if (loadSettled) return
+            loadSettled = true
+            if (error) reject(error)
+            else resolve()
         }
+
+        const timeoutId = setTimeout(() => {
+            settleLoad(new Error(`Electron 子窗口加载超时: ${singletonKey}`))
+        }, childWindowLoadTimeoutMs)
+
+        childWindow.webContents.once('did-finish-load', () => {
+            clearTimeout(timeoutId)
+            if (!childWindow.isDestroyed()) {
+                childWindow.webContents.send('init', { fromMain: true, singletonKey })
+            }
+            settleLoad()
+        })
+
+        childWindow.webContents.once('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+            if (!isMainFrame) return
+            clearTimeout(timeoutId)
+            settleLoad(new Error(`Electron 子窗口加载失败 (${errorCode}): ${errorDescription || validatedURL}`))
+        })
+
+        childWindow.once('closed', () => {
+            clearTimeout(timeoutId)
+            settleLoad(new Error(`Electron 子窗口在加载完成前关闭: ${singletonKey}`))
+        })
     })
 
     if (options.alwaysOnTop) {
         childWindow.setAlwaysOnTop(true)
     }
 
-    if (process.env.VITE_DEV_SERVER_URL) {
-        childWindow.loadURL(`${url}#${hash}`)
-    } else {
-        childWindow.loadFile(indexHtml, { hash })
+    try {
+        if (process.env.VITE_DEV_SERVER_URL) {
+            await childWindow.loadURL(`${url}#${hash}`)
+        } else {
+            await childWindow.loadFile(indexHtml, { hash })
+        }
+        await loadPromise
+    } catch (error) {
+        if (!childWindow.isDestroyed()) childWindow.close()
+        throw error
     }
 
     return {

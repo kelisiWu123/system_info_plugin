@@ -18,6 +18,8 @@ test('standard and super-lite watch surfaces both expose compact network and dis
   assert.match(watch, /formatSpeed\(networkStatus\.txSec\)/)
   assert.match(watch, /formatSpeed\(storageIoData\.readBytesPerSec\)/)
   assert.match(watch, /formatSpeed\(storageIoData\.writeBytesPerSec\)/)
+  assert.match(watch, /ArrowDown[\s\S]*ArrowUp/)
+  assert.doesNotMatch(watch, /<em>↓<\/em>|<em>↑<\/em>/)
   assert.match(watch, /:throughput="superLiteThroughput"/)
   assert.match(superLite, /class="super-lite-throughput"/)
   assert.match(superLite, />NET</)
@@ -26,6 +28,17 @@ test('standard and super-lite watch surfaces both expose compact network and dis
   assert.match(superLite, /throughput\.networkUp/)
   assert.match(superLite, /throughput\.diskRead/)
   assert.match(superLite, /throughput\.diskWrite/)
+  assert.match(superLite, /ArrowDown[\s\S]*ArrowUp/)
+  assert.doesNotMatch(superLite, /<em>↓<\/em>|<em>↑<\/em>/)
+})
+
+test('watch footer does not report healthy while core telemetry or storage throughput is missing', () => {
+  const watch = readProjectFile('src/components/Watch/index.vue')
+
+  assert.match(watch, /const hasCpuTelemetry = cpuTempValue\.value !== null \|\| cpuPowerValue\.value !== null/)
+  assert.match(watch, /const hasStorageTelemetry = storageIoData\.value\.readBytesPerSec !== null/)
+  assert.match(watch, /if \(!hasCpuTelemetry && memoData\.total <= 0 && !primaryGpu\.value\) return '正在读取数据'/)
+  assert.match(watch, /if \(!hasCpuTelemetry \|\| !hasGpuTelemetry \|\| !hasStorageTelemetry\) return '部分指标暂不可用'/)
 })
 
 test('watch polls throughput for overview or super-lite but not standard CPU and GPU detail tabs', () => {

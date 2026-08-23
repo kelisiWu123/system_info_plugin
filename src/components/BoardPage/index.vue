@@ -12,6 +12,7 @@ import {
 } from '../../utils/board'
 import { selectPrimaryGpu } from '../../utils/gpu'
 import { bytesToGB, formatBytes, getPhysicalDiskLayout } from '../../utils'
+import { buildMemorySlotLabels } from '../../utils/memory'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 
 const props = defineProps<{
@@ -89,14 +90,15 @@ function formatMemorySlot(item?: MemoLayoutData) {
 function buildMemorySlots() {
   const actualSlots = memoLayoutData.value.length
   const slotCount = boardData.value?.memSlots && boardData.value.memSlots > 0 ? boardData.value.memSlots : actualSlots
+  const normalizedSlotLabels = isDarwinPlatform.value ? [] : buildMemorySlotLabels(slotCount, memoLayoutData.value)
   return Array.from({ length: slotCount }, (_, index) => {
     const item = memoLayoutData.value[index]
-    const bank = getBoardMemorySlotLabel({
-      platform: osInfo.value?.platform,
-      bank: item?.bank,
-      index,
-      totalSlots: slotCount,
-    })
+    const bank = normalizedSlotLabels[index] || getBoardMemorySlotLabel({
+        platform: osInfo.value?.platform,
+        bank: item?.bank,
+        index,
+        totalSlots: slotCount,
+      })
     return {
       bank,
       type: cleanText(item?.type) || cleanText(memoLayoutData.value[0]?.type) || '--',
@@ -148,7 +150,7 @@ const heroSpecs = computed(() =>
     { label: 'BIOS 版本', value: cleanText(biosData.value?.version) || '--' },
     { label: '内存上限', value: boardData.value?.memMax ? formatBytes(boardData.value.memMax) : '--' },
     { label: '插槽数量', value: `${memorySlotTotal.value || 0} 个` },
-    { label: '固件模式', value: cleanText(biosData.value?.vendor) ? (isDarwinPlatform.value ? 'Apple 平台固件' : 'UEFI / Legacy 兼容') : '--' },
+    { label: '固件模式', value: isDarwinPlatform.value ? 'Apple 平台固件' : '系统未提供' },
   ])
 )
 
@@ -250,11 +252,10 @@ const chipsetRows = computed(() =>
 
 const featureRows = computed(() => {
   const features = [
-    cleanText(biosData.value?.vendor) ? 'UEFI 固件支持' : '',
     boardData.value?.memSlots ? `${boardData.value.memSlots} 个内存插槽` : '',
     boardData.value?.memMax ? `最大内存 ${formatBytes(boardData.value.memMax)}` : '',
-    audioDevices.value.length ? '板载音频已识别' : '',
-    networkInterfaces.value.some((item) => !item.internal) ? '板载网络已识别' : '',
+    audioDevices.value.length ? '音频设备已识别' : '',
+    networkInterfaces.value.some((item) => !item.internal) ? '网络接口已识别' : '',
     biosData.value?.features?.[0] || '',
   ].filter(Boolean)
 
@@ -382,11 +383,13 @@ useActivePageLifecycle(
 
       <section class="board-middle">
         <article class="board-panel board-panel--wide">
-          <div class="board-panel__tabs">
+          <div class="board-panel__tabs" role="tablist" aria-label="主板信息分类">
             <button
               v-for="tab in boardTabs"
               :key="tab.id"
               type="button"
+              role="tab"
+              :aria-selected="activeTab === tab.id"
               :class="['board-tab', { 'board-tab--active': activeTab === tab.id }]"
               @click="activeTab = tab.id"
             >
@@ -432,7 +435,7 @@ useActivePageLifecycle(
           </div>
 
           <div class="memory-slot-list">
-            <div v-for="slot in memorySlots" :key="slot.bank" :class="['memory-slot', { 'memory-slot--filled': slot.installed }]">
+            <div v-for="(slot, slotIndex) in memorySlots" :key="`memory-slot-${slotIndex}-${slot.bank}`" :class="['memory-slot', { 'memory-slot--filled': slot.installed }]">
               <span>{{ slot.bank }}</span>
               <strong>{{ slot.type }}</strong>
               <em>{{ slot.status }}</em>
@@ -489,7 +492,7 @@ useActivePageLifecycle(
           </div>
 
           <div class="feature-list">
-            <div v-for="item in featureRows" :key="item" class="feature-item">
+            <div v-for="(item, itemIndex) in featureRows" :key="`feature-${itemIndex}-${item}`" class="feature-item">
               <span class="feature-item__dot"></span>
               <strong>{{ item }}</strong>
             </div>

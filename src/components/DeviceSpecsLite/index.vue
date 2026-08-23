@@ -114,9 +114,7 @@ function formatCapacity(bytes?: number | null, digits = 0) {
 
 function formatDiskCapacity(bytes?: number | null) {
   if (!Number.isFinite(bytes || 0) || !bytes) return ''
-  const gb = bytes / 1_000_000_000
-  if (gb >= 1000) return `${Number((gb / 1000).toFixed(2))} TB`
-  return `${Math.round(gb)} GB`
+  return formatBytes(bytes)
 }
 
 function formatNetworkSpeed(speed?: number | null) {
@@ -326,7 +324,7 @@ const coreSpecCards = computed<CoreSpecCard[]>(() => [
         cpuData.value?.physicalCores ? `${cpuData.value.physicalCores} 核` : '',
         cpuData.value?.cores ? `${cpuData.value.cores} 线程` : '',
       ], ' · '),
-      cpuData.value?.speed ? `${cpuData.value.speed} GHz` : '',
+      cpuData.value?.speed ? `标称 ${cpuData.value.speed} GHz` : '',
     ]),
     icon: Cpu,
     tone: 'blue',
@@ -601,7 +599,7 @@ onUnmounted(() => {
                 </div>
                 <h2>{{ card.value }}</h2>
                 <div class="core-spec-card__facts">
-                  <span v-for="fact in card.facts" :key="fact">{{ fact }}</span>
+                  <span v-for="(fact, factIndex) in card.facts" :key="`${card.id}-fact-${factIndex}`">{{ fact }}</span>
                   <span v-if="!card.facts.length" class="core-spec-card__fact-muted">
                     {{ card.availability === 'ready' ? '暂无更多规格' : card.statusLabel }}
                   </span>
@@ -628,7 +626,7 @@ onUnmounted(() => {
             >
               <span class="secondary-spec-row__label">{{ row.label }}</span>
               <div>
-                <p v-for="line in row.lines" :key="line">{{ line }}</p>
+                <p v-for="(line, lineIndex) in row.lines" :key="`${row.id}-line-${lineIndex}`">{{ line }}</p>
               </div>
             </div>
           </div>

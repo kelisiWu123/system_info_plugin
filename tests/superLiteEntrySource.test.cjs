@@ -21,6 +21,7 @@ test('preload maps hardwareWatchSuperLite to a 200x200 watch preset', () => {
 
   assert.match(source, /a_watch_super_lite:\s*{[\s\S]*prod:\s*{\s*height:\s*200,\s*width:\s*200,\s*backgroundColor:\s*0\s*}/)
   assert.match(source, /hardwareWatchSuperLite:\s*{[\s\S]*openPresetWindow\('a_watch_super_lite'\)/)
+  assert.match(source, /enter: \(\) => openPresetWindow\('a_watch_super_lite'\)/)
 })
 
 test('window service treats a_watch_super_lite as a watch window and passes launch query', () => {

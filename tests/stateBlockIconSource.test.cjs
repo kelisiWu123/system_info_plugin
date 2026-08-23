@@ -1,0 +1,20 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const test = require('node:test')
+
+test('shared loading and error state block uses the unified icon library', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src/components/common/StateBlock.vue'), 'utf8')
+
+  assert.match(source, /import \{ Attention, Info, Plus \} from '@icon-park\/vue-next'/)
+  assert.match(source, /<Attention v-else-if="variant === 'error'/)
+  assert.match(source, /<Plus v-else-if="variant === 'soon'/)
+  assert.match(source, /<Info v-else theme="outline"/)
+  assert.match(source, /border: 2px solid color-mix\(in srgb, currentColor 18%, transparent\)/)
+  assert.match(source, /:role="variant === 'error' \? 'alert' : 'status'"/)
+  assert.match(source, /:aria-live="variant === 'error' \? 'assertive' : 'polite'"/)
+  assert.match(source, /:aria-busy="variant === 'loading'"/)
+  assert.match(source, /:disabled="variant === 'loading'"/)
+  assert.match(source, /variant === 'loading' \? '读取中…' : actionLabel/)
+  assert.doesNotMatch(source, /<span v-else-if="variant === 'error'">!<\/span>/)
+})

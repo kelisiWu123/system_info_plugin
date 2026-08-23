@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {
+  ArrowDown,
+  ArrowUp,
   CloseSmall,
   Cpu,
   DashboardOne,
@@ -250,10 +252,13 @@ const primaryGpu = computed(() => {
 })
 
 const cpuPercent = computed(() => clampPercent(cpuLoad.value))
+const hasCpuLoadSample = computed(() => history.cpu.length > 0)
 const memoryPercent = computed(() => {
   return getDisplayMemoryUsagePercent(memoData)
 })
 const gpuPercent = computed(() => clampPercent(primaryGpu.value?.utilizationGpu || 0))
+const hasGpuLoadSample = computed(() => typeof primaryGpu.value?.utilizationGpu === 'number')
+const hasMemorySample = computed(() => memoData.total > 0)
 const memoryPressureLabel = computed(() => getMemoryPressureLabel(memoData.pressure?.level))
 const cpuWatchPalette = computed(() => getWatchCpuPalette())
 const gpuWatchPalette = computed(() => getWatchGpuPalette())
@@ -308,21 +313,46 @@ const gpuMemoryUsedValue = computed(() => (
 ))
 
 const footerStatus = computed(() => {
-  if (cpuPercent.value || memoryPercent.value || gpuPercent.value) return '状态良好'
-  if (!primaryGpu.value) return '未检测到显卡信息'
-  return '部分指标未提供'
+  const hasCpuTelemetry = cpuTempValue.value !== null || cpuPowerValue.value !== null
+  const hasGpuTelemetry = !primaryGpu.value || gpuTempValue.value !== null || gpuPowerValue.value !== null
+  const hasStorageTelemetry = storageIoData.value.readBytesPerSec !== null
+    || storageIoData.value.writeBytesPerSec !== null
+
+  if (!hasCpuTelemetry && memoData.total <= 0 && !primaryGpu.value) return '正在读取数据'
+  if (cpuTempValue.value !== null && cpuTempValue.value >= 95) return 'CPU 温度偏高'
+  if (gpuTempValue.value !== null && gpuTempValue.value >= 95) return 'GPU 温度偏高'
+  if (cpuPercent.value >= 95 || gpuPercent.value >= 95) return '当前负载较高'
+  if (!hasCpuTelemetry || !hasGpuTelemetry || !hasStorageTelemetry) return '部分指标暂不可用'
+  return '状态良好'
 })
 
-const superLiteStatus = computed(() => resolveSuperLiteOverallStatus({
-  cpuUsage: cpuPercent.value,
-  gpuUsage: gpuPercent.value,
-  memoryUsage: memoryPercent.value,
-  cpuTemperature: cpuTempValue.value,
-  gpuTemperature: gpuTempValue.value,
-  memoryPressure: memoData.pressure?.level,
-}))
+const superLiteStatus = computed(() => {
+  const hasCpuTelemetry = history.cpu.length > 0 || cpuTempValue.value !== null || cpuPowerValue.value !== null
+  const hasGpuTelemetry = !primaryGpu.value
+    || typeof primaryGpu.value.utilizationGpu === 'number'
+    || gpuTempValue.value !== null
+    || gpuPowerValue.value !== null
+  const hasMemoryTelemetry = memoData.total > 0
+
+  if (!hasCpuTelemetry && !hasGpuTelemetry && !hasMemoryTelemetry) {
+    return { level: 'normal' as const, label: '读取中' }
+  }
+
+  if (!hasCpuTelemetry || !hasGpuTelemetry || !hasMemoryTelemetry) {
+    return { level: 'normal' as const, label: '部分可用' }
+  }
+
+  return resolveSuperLiteOverallStatus({
+    cpuUsage: cpuPercent.value,
+    gpuUsage: gpuPercent.value,
+    memoryUsage: memoryPercent.value,
+    cpuTemperature: cpuTempValue.value,
+    gpuTemperature: gpuTempValue.value,
+    memoryPressure: memoData.pressure?.level,
+  })
+})
 const superLiteFooterLeft = computed(() => formatSuperLiteRefreshLabel(getCurrentPollProfile().fast))
-const superLiteFooterRight = computed(() => `⏱${formatWatchRuntime(timeInfo.value?.uptime)}`)
+const superLiteFooterRight = computed(() => `运行 ${formatWatchRuntime(timeInfo.value?.uptime)}`)
 const superLiteThroughput = computed(() => ({
   networkDown: formatSpeed(networkStatus.value.rxSec),
   networkUp: formatSpeed(networkStatus.value.txSec),
@@ -337,8 +367,8 @@ const superLiteMetrics = computed(() => [
   {
     key: 'cpu' as const,
     label: 'CPU',
-    usageLabel: formatPercent(cpuPercent.value),
-    progressLabel: formatPercent(cpuPercent.value),
+    usageLabel: history.cpu.length ? formatPercent(cpuPercent.value) : '--',
+    progressLabel: history.cpu.length ? formatPercent(cpuPercent.value) : '--',
     primaryExtra: cpuTemperatureDisplay.value,
     secondaryExtra: formatPower(cpuPowerValue.value),
     trend: history.cpu,
@@ -351,8 +381,8 @@ const superLiteMetrics = computed(() => [
   {
     key: 'gpu' as const,
     label: 'GPU',
-    usageLabel: formatPercent(gpuPercent.value),
-    progressLabel: formatPercent(gpuPercent.value),
+    usageLabel: typeof primaryGpu.value?.utilizationGpu === 'number' ? formatPercent(gpuPercent.value) : '--',
+    progressLabel: typeof primaryGpu.value?.utilizationGpu === 'number' ? formatPercent(gpuPercent.value) : '--',
     primaryExtra: formatTemperature(gpuTempValue.value),
     secondaryExtra: formatPower(gpuPowerValue.value),
     trend: history.gpu,
@@ -365,10 +395,16 @@ const superLiteMetrics = computed(() => [
   {
     key: 'memory' as const,
     label: 'MEM',
-    usageLabel: memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel.value : formatPercent(memoryPercent.value),
-    progressLabel: formatPercent(memoryPercent.value),
-    primaryExtra: memoData.normalizedPlatform === 'darwin' ? formatPercent(memoryPercent.value) : formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData)),
-    secondaryExtra: memoData.normalizedPlatform === 'darwin' ? `已用 ${formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData))}` : '正常',
+    usageLabel: !memoData.total
+      ? '--'
+      : memoData.normalizedPlatform === 'darwin' ? memoryPressureLabel.value : formatPercent(memoryPercent.value),
+    progressLabel: memoData.total ? formatPercent(memoryPercent.value) : '--',
+    primaryExtra: memoData.total
+      ? memoData.normalizedPlatform === 'darwin' ? formatPercent(memoryPercent.value) : formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData))
+      : '--',
+    secondaryExtra: !memoData.total
+      ? '暂未提供内存数据'
+      : memoData.normalizedPlatform === 'darwin' ? `已用 ${formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData))}` : `已用 ${formatGigabytesFromBytes(getDisplayMemoryUsedBytes(memoData))}`,
     trend: history.memory,
     tone: 'memory' as const,
     status: resolveSuperLiteMetricStatus('memory', {
@@ -383,7 +419,7 @@ const cpuDetailStats = computed(() => {
     {
     id: 'load',
     label: 'CPU 使用率',
-    value: formatPercent(cpuPercent.value),
+    value: hasCpuLoadSample.value ? formatPercent(cpuPercent.value) : '--',
     accent: cpuWatchPalette.value.stroke,
     tone: 'cpu',
     history: history.cpu,
@@ -450,7 +486,7 @@ const gpuDetailStats = computed(() => [
   {
     id: 'load',
     label: 'GPU 使用率',
-    value: formatPercent(gpuPercent.value),
+    value: hasGpuLoadSample.value ? formatPercent(gpuPercent.value) : '--',
     accent: gpuWatchPalette.value.stroke,
     tone: 'gpu',
     history: history.gpu,
@@ -854,10 +890,11 @@ onUnmounted(() => {
           <div class="monitor-shell__brand-mark">H</div>
         </div>
 
-        <div class="monitor-shell__modes">
+        <div class="monitor-shell__modes" role="group" aria-label="监控视图">
           <button
             type="button"
             :class="['monitor-mode', { 'monitor-mode--active': monitorMode === 'overview' }]"
+            :aria-pressed="monitorMode === 'overview'"
             @click="setMonitorMode('overview')"
           >
             概览
@@ -865,6 +902,7 @@ onUnmounted(() => {
           <button
             type="button"
             :class="['monitor-mode', { 'monitor-mode--active': monitorMode === 'cpu' }]"
+            :aria-pressed="monitorMode === 'cpu'"
             @click="setMonitorMode('cpu')"
           >
             CPU
@@ -872,6 +910,7 @@ onUnmounted(() => {
           <button
             type="button"
             :class="['monitor-mode', { 'monitor-mode--active': monitorMode === 'gpu' }]"
+            :aria-pressed="monitorMode === 'gpu'"
             @click="setMonitorMode('gpu')"
           >
             GPU
@@ -882,13 +921,20 @@ onUnmounted(() => {
           <button type="button" class="monitor-action monitor-action--text" title="进入超级轻量模式" @click="switchFloatingMode('super-lite')">
             轻
           </button>
-          <button type="button" :class="['monitor-action', { 'monitor-action--active': pinned }]" @click="togglePin">
+          <button
+            type="button"
+            :class="['monitor-action', { 'monitor-action--active': pinned }]"
+            :title="pinned ? '取消固定窗口' : '固定窗口'"
+            :aria-label="pinned ? '取消固定窗口' : '固定窗口'"
+            :aria-pressed="pinned"
+            @click="togglePin"
+          >
             <Pushpin theme="outline" size="16" fill="currentColor" :strokeWidth="3" />
           </button>
-          <button type="button" class="monitor-action" @click="minimizeWindow">
+          <button type="button" class="monitor-action" title="最小化窗口" aria-label="最小化窗口" @click="minimizeWindow">
             <Minus theme="outline" size="16" fill="currentColor" :strokeWidth="3" />
           </button>
-          <button type="button" class="monitor-action monitor-action--close" @click="closeWindow">
+          <button type="button" class="monitor-action monitor-action--close" title="关闭窗口" aria-label="关闭窗口" @click="closeWindow">
             <CloseSmall theme="outline" size="18" fill="currentColor" :strokeWidth="3" />
           </button>
         </div>
@@ -906,7 +952,7 @@ onUnmounted(() => {
           </template>
           <template #title>CPU</template>
           <template #subtitle>使用率</template>
-          <template #value>{{ formatPercent(cpuPercent) }}</template>
+          <template #value>{{ hasCpuLoadSample ? formatPercent(cpuPercent) : '--' }}</template>
           <template #chart>
             <svg
               class="metric-sparkline metric-sparkline--cpu"
@@ -952,7 +998,7 @@ onUnmounted(() => {
           </template>
           <template #title>GPU</template>
           <template #subtitle>使用率</template>
-          <template #value>{{ formatPercent(gpuPercent) }}</template>
+          <template #value>{{ hasGpuLoadSample ? formatPercent(gpuPercent) : '--' }}</template>
           <template #chart>
             <svg
               class="metric-sparkline metric-sparkline--gpu"
@@ -997,7 +1043,7 @@ onUnmounted(() => {
           </template>
           <template #title>内存</template>
           <template #subtitle>使用率</template>
-          <template #value>{{ formatPercent(memoryPercent) }}</template>
+          <template #value>{{ hasMemorySample ? formatPercent(memoryPercent) : '--' }}</template>
           <template #chart>
             <svg
               class="metric-sparkline metric-sparkline--memory"
@@ -1041,8 +1087,8 @@ onUnmounted(() => {
               <strong>网络</strong>
             </div>
             <div class="overview-throughput-card__values">
-              <span title="下载速度"><em>↓</em><strong>{{ formatSpeed(networkStatus.rxSec) }}</strong></span>
-              <span title="上传速度"><em>↑</em><strong>{{ formatSpeed(networkStatus.txSec) }}</strong></span>
+              <span title="下载速度"><em><ArrowDown theme="outline" size="10" fill="currentColor" :strokeWidth="3" /></em><strong>{{ formatSpeed(networkStatus.rxSec) }}</strong></span>
+              <span title="上传速度"><em><ArrowUp theme="outline" size="10" fill="currentColor" :strokeWidth="3" /></em><strong>{{ formatSpeed(networkStatus.txSec) }}</strong></span>
             </div>
           </section>
 

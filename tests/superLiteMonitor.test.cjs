@@ -114,7 +114,7 @@ test('resolveSuperLiteMetricStatus colors only the metric that crosses its thres
 test('formatSuperLiteRefreshLabel uses the active poll interval', async () => {
   const { formatSuperLiteRefreshLabel } = await loadSuperLiteMonitor()
 
-  assert.equal(formatSuperLiteRefreshLabel(2500), '↻2.5s')
-  assert.equal(formatSuperLiteRefreshLabel(1000), '↻1s')
-  assert.equal(formatSuperLiteRefreshLabel(0), '↻--')
+  assert.equal(formatSuperLiteRefreshLabel(2500), '更新 2.5s')
+  assert.equal(formatSuperLiteRefreshLabel(1000), '更新 1s')
+  assert.equal(formatSuperLiteRefreshLabel(0), '更新 --')
 })

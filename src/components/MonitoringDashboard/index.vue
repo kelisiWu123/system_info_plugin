@@ -46,6 +46,7 @@ interface MonitorMetricCard {
 
 const {
   loading,
+  initialized,
   lastSyncedAt,
   lastError,
   monitoringRefreshSettings,
@@ -65,6 +66,8 @@ const {
 } = monitorDashboardStore
 
 const subscribed = ref(false)
+const floatingLaunchMode = ref<'standard' | 'super-lite' | null>(null)
+const floatingLaunchError = ref('')
 const refreshing = ref(false)
 const settingsPending = ref(false)
 
@@ -169,8 +172,10 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'cpu-load',
     label: 'CPU 使用率',
-    value: formatPercent(cpuLoad.value),
-    secondary: cpuData.value?.brand || '处理器负载',
+    value: initialized.value && metricHistory.cpuLoad.length ? formatPercent(cpuLoad.value) : '--',
+    secondary: !initialized.value
+      ? '正在读取处理器负载'
+      : metricHistory.cpuLoad.length ? (cpuData.value?.brand || '处理器负载') : '暂未提供处理器负载',
     percent: clampPercent(cpuLoad.value),
     kind: 'load',
     icon: Cpu,
@@ -179,8 +184,10 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'cpu-temp',
     label: 'CPU 温度',
-    value: formatTemperature(cpuTemperatureValue.value),
-    secondary: cpuTemperature.value?.source === 'unsupported' ? '当前传感器暂不可用' : '处理器温度',
+    value: initialized.value ? formatTemperature(cpuTemperatureValue.value) : '--',
+    secondary: !initialized.value
+      ? '正在读取处理器温度'
+      : cpuTemperature.value?.source === 'unsupported' ? '当前传感器暂不可用' : '处理器温度',
     percent: clampPercent(cpuTemperatureValue.value || 0),
     kind: 'temperature',
     icon: Thermometer,
@@ -189,8 +196,12 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'gpu-load',
     label: 'GPU 使用率',
-    value: formatPercent(gpuLoadPercent.value),
-    secondary: primaryGpu.value?.model || primaryGpu.value?.name || '图形处理器',
+    value: initialized.value && typeof primaryGpu.value?.utilizationGpu === 'number' ? formatPercent(gpuLoadPercent.value) : '--',
+    secondary: !initialized.value
+      ? '正在读取图形处理器'
+      : primaryGpu.value && typeof primaryGpu.value.utilizationGpu === 'number'
+        ? (primaryGpu.value.model || primaryGpu.value.name || '图形处理器')
+        : '暂未提供图形处理器负载',
     percent: gpuLoadPercent.value,
     kind: 'load',
     icon: GraphicDesign,
@@ -199,8 +210,8 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'gpu-temp',
     label: 'GPU 温度',
-    value: formatTemperature(gpuTemperatureValue.value),
-    secondary: '图形处理器温度',
+    value: initialized.value && primaryGpu.value ? formatTemperature(gpuTemperatureValue.value) : '--',
+    secondary: initialized.value ? '图形处理器温度' : '正在读取图形处理器温度',
     percent: clampPercent(gpuTemperatureValue.value || 0),
     kind: 'temperature',
     icon: Speed,
@@ -209,10 +220,10 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'memory',
     label: memoData.value.normalizedPlatform === 'darwin' ? '内存压力' : '内存使用率',
-    value: memoryDisplayValue.value,
+    value: initialized.value ? memoryDisplayValue.value : '--',
     secondary: memoData.value.total
       ? `${formatBytes(memoryUsedBytes.value)} / ${formatBytes(memoData.value.total)}`
-      : '等待内存数据',
+      : initialized.value ? '暂未提供内存数据' : '正在读取内存数据',
     percent: clampPercent(usedMemoPercent.value),
     kind: 'memory',
     icon: Memory,
@@ -221,10 +232,10 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'storage',
     label: '存储使用率',
-    value: storageUsage.value.total ? formatPercent(storageUsage.value.percent) : '--',
+    value: initialized.value && storageUsage.value.total ? formatPercent(storageUsage.value.percent) : '--',
     secondary: storageUsage.value.total
       ? `${formatBytes(storageUsage.value.used)} / ${formatBytes(storageUsage.value.total)}`
-      : '等待磁盘数据',
+      : initialized.value ? '暂未提供磁盘数据' : '正在读取磁盘数据',
     percent: clampPercent(storageUsage.value.percent),
     kind: 'storage',
     icon: HardDisk,
@@ -281,12 +292,31 @@ async function refreshNow() {
   }
 }
 
+async function openFloatingMonitor(mode: 'standard' | 'super-lite') {
+  if (floatingLaunchMode.value) return
+  floatingLaunchMode.value = mode
+  floatingLaunchError.value = ''
+
+  try {
+    if (mode === 'standard') {
+      await window.services.createWindow('a_watch', 398, 432, 0)
+    } else {
+      await window.services.createWindow('a_watch_super_lite', 200, 200, 0)
+    }
+  } catch (error) {
+    console.error('打开悬浮监控失败:', error)
+    floatingLaunchError.value = '悬浮监控打开失败，请重试'
+  } finally {
+    floatingLaunchMode.value = null
+  }
+}
+
 function openStandardFloatingMonitor() {
-  window.services.createWindow('a_watch', 398, 432, 0)
+  void openFloatingMonitor('standard')
 }
 
 function openSuperLiteMonitor() {
-  window.services.createWindow('a_watch_super_lite', 200, 200, 0)
+  void openFloatingMonitor('super-lite')
 }
 
 async function ensureActive() {
@@ -319,7 +349,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="monitor-dashboard-page">
+  <div class="monitor-dashboard-page" :aria-busy="loading">
     <div class="monitor-dashboard-scroll">
       <div class="monitor-dashboard-shell">
         <header class="monitor-dashboard-hero">
@@ -335,14 +365,15 @@ onUnmounted(() => {
           </div>
 
           <div class="monitor-dashboard-hero__actions">
-            <button type="button" class="monitor-launch-button monitor-launch-button--primary" @click="openStandardFloatingMonitor">
+            <button type="button" class="monitor-launch-button monitor-launch-button--primary" :disabled="Boolean(floatingLaunchMode)" @click="openStandardFloatingMonitor">
               <DashboardOne theme="outline" size="17" fill="currentColor" :strokeWidth="3" />
-              标准悬浮监控
+              {{ floatingLaunchMode === 'standard' ? '打开中…' : '标准悬浮监控' }}
             </button>
-            <button type="button" class="monitor-launch-button" @click="openSuperLiteMonitor">
+            <button type="button" class="monitor-launch-button" :disabled="Boolean(floatingLaunchMode)" @click="openSuperLiteMonitor">
               <DataSheet theme="outline" size="17" fill="currentColor" :strokeWidth="3" />
-              超轻量悬浮
+              {{ floatingLaunchMode === 'super-lite' ? '打开中…' : '超轻量悬浮' }}
             </button>
+            <span v-if="floatingLaunchError" class="monitor-launch-feedback" role="alert">{{ floatingLaunchError }}</span>
           </div>
         </header>
 
@@ -354,6 +385,7 @@ onUnmounted(() => {
               :key="profile.id"
               type="button"
               :disabled="settingsPending"
+              :aria-pressed="monitoringRefreshSettings.profile === profile.id"
               :class="['monitor-profile-button', { 'monitor-profile-button--active': monitoringRefreshSettings.profile === profile.id }]"
               @click="applyRefreshProfile(profile.id)"
             >
@@ -553,8 +585,17 @@ onUnmounted(() => {
 .monitor-dashboard-hero__actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding-top: 14px;
+}
+
+.monitor-launch-feedback {
+  flex-basis: 100%;
+  color: var(--accent-danger);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
 }
 
 .monitor-launch-button,
@@ -587,6 +628,11 @@ onUnmounted(() => {
 .monitor-profile-button:hover {
   border-color: var(--control-border-strong);
   color: var(--control-fg-strong);
+}
+
+.monitor-launch-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .monitor-launch-button--primary {

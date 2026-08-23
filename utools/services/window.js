@@ -13,6 +13,7 @@ const WINDOW_SINGLETON_DIRECTORY = path.join(os.tmpdir(), 'hwinfox-utools-window
 const WINDOW_SINGLETON_PENDING_TTL_MS = 8000
 const WINDOW_SINGLETON_PENDING_WAIT_MS = 3000
 const WINDOW_SINGLETON_ACTIVATION_TIMEOUT_MS = 240
+const WINDOW_CREATE_CALLBACK_TIMEOUT_MS = 10000
 
 function isDevMode() {
   return typeof process !== 'undefined' && process.env.NODE_ENV === 'development'
@@ -239,6 +240,14 @@ function getProductionWindowUrl(fileName) {
   return 'computer.html'
 }
 
+function getDevServerUrl() {
+  const configuredUrl = typeof process !== 'undefined' && typeof process.env?.VITE_DEV_SERVER_URL === 'string'
+    ? process.env.VITE_DEV_SERVER_URL.trim()
+    : ''
+
+  return (configuredUrl || 'http://localhost:9000').replace(/\/+$/, '')
+}
+
 function buildChildWindowOptions(fileName, height, width, backgroundColor) {
   const isWatchWindow = isWatchWindowName(fileName)
 
@@ -421,7 +430,7 @@ export const windowService = {
     const singletonKey = childWindowConfig.singletonKey
     const windowHash = childWindowConfig.hash
     const windowUrl = runtimeUtools.isDev()
-      ? `http://localhost:9000/index.html#${windowHash}`
+      ? `${getDevServerUrl()}/index.html#${windowHash}`
       : getProductionWindowUrl(fileName)
 
     if (typeof runtimeUtools.createBrowserWindow !== 'function') {
@@ -440,37 +449,76 @@ export const windowService = {
 
     let childWindow
     try {
-      childWindow = runtimeUtools.createBrowserWindow(
-        windowUrl,
-        {
-          ...childWindowConfig.options,
-          webPreferences: {
-            preload: 'preload.js',
-            devTools: true,
-          },
-        },
-        () => {
-          const childWindowId = Number(childWindow?.webContents?.id)
-          if (!Number.isFinite(childWindowId) || childWindowId <= 0) {
-            removeWindowSingletonRecord(singletonKey, singletonClaim.token)
-            return
+      await new Promise((resolve, reject) => {
+        let callbackSettled = false
+        const callbackTimeoutId = setTimeout(() => {
+          if (callbackSettled) return
+          callbackSettled = true
+          try {
+            childWindow?.close?.()
+          } catch {
+            // The host may already have disposed the half-created window.
           }
+          removeWindowSingletonRecord(singletonKey, singletonClaim.token)
+          reject(new Error(`uTools 窗口创建回调超时: ${singletonKey}`))
+        }, WINDOW_CREATE_CALLBACK_TIMEOUT_MS)
 
-          bindChildWindowEvents(childWindow, singletonKey, singletonClaim.token)
-          ipcRenderer.sendTo(childWindowId, 'init', { singletonKey })
-          publishWindowSingleton(singletonKey, singletonClaim.token, childWindowId)
+        try {
+          childWindow = runtimeUtools.createBrowserWindow(
+            windowUrl,
+            {
+              ...childWindowConfig.options,
+              webPreferences: {
+                preload: 'preload.js',
+                devTools: true,
+              },
+            },
+            () => {
+              try {
+                if (callbackSettled) return
+                callbackSettled = true
+                clearTimeout(callbackTimeoutId)
+                const childWindowId = Number(childWindow?.webContents?.id)
+                if (!Number.isFinite(childWindowId) || childWindowId <= 0) {
+                  try {
+                    childWindow?.close?.()
+                  } catch {
+                    // Ignore cleanup failures while reporting the invalid window.
+                  }
+                  removeWindowSingletonRecord(singletonKey, singletonClaim.token)
+                  reject(new Error(`uTools 窗口创建后未返回有效 webContents: ${singletonKey}`))
+                  return
+                }
 
-          if (isWatchWindow) {
-            childWindow.setAlwaysOnTop?.(true)
-          }
+                bindChildWindowEvents(childWindow, singletonKey, singletonClaim.token)
+                ipcRenderer.sendTo(childWindowId, 'init', { singletonKey })
+                publishWindowSingleton(singletonKey, singletonClaim.token, childWindowId)
 
-          activateChildWindow(childWindow)
+                if (isWatchWindow) {
+                  childWindow.setAlwaysOnTop?.(true)
+                }
 
-          if (isDevMode()) {
-            childWindow.webContents.openDevTools()
-          }
+                activateChildWindow(childWindow)
+
+                if (isDevMode()) {
+                  childWindow.webContents.openDevTools()
+                }
+                resolve()
+              } catch (error) {
+                callbackSettled = true
+                clearTimeout(callbackTimeoutId)
+                removeWindowSingletonRecord(singletonKey, singletonClaim.token)
+                reject(error)
+              }
+            }
+          )
+        } catch (error) {
+          callbackSettled = true
+          clearTimeout(callbackTimeoutId)
+          removeWindowSingletonRecord(singletonKey, singletonClaim.token)
+          reject(error)
         }
-      )
+      })
     } catch (error) {
       removeWindowSingletonRecord(singletonKey, singletonClaim.token)
       throw error
@@ -478,6 +526,6 @@ export const windowService = {
   },
 
   creatSomething: (fileName, height, width, backgroundColor) => {
-    windowService.createWindow(fileName, height, width, backgroundColor)
+    return windowService.createWindow(fileName, height, width, backgroundColor)
   },
 }

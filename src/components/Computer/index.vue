@@ -319,8 +319,8 @@ const networkSummaryLines = computed(() => {
     typeof networkStatus.value.latencyMs === 'number' ? `延迟 ${formatNetworkLatency(networkStatus.value.latencyMs)}` : '',
   ], ' · ')
   const trafficLine = joinParts([
-    typeof networkStatus.value.rxSec === 'number' ? `↓ ${formatNetworkRate(networkStatus.value.rxSec)}` : '',
-    typeof networkStatus.value.txSec === 'number' ? `↑ ${formatNetworkRate(networkStatus.value.txSec)}` : '',
+    typeof networkStatus.value.rxSec === 'number' ? `下行 ${formatNetworkRate(networkStatus.value.rxSec)}` : '',
+    typeof networkStatus.value.txSec === 'number' ? `上行 ${formatNetworkRate(networkStatus.value.txSec)}` : '',
   ], ' · ')
   const lines = [addressLine, trafficLine, gatewayLine].filter(Boolean)
 
@@ -339,8 +339,8 @@ const overviewNetworkStatusLines = computed(() => {
     ], ' · '),
     joinParts([
       `网关延迟 ${formatNetworkLatency(networkStatus.value.latencyMs)}`,
-      `↓ ${formatNetworkRate(networkStatus.value.rxSec)}`,
-      `↑ ${formatNetworkRate(networkStatus.value.txSec)}`,
+      `下行 ${formatNetworkRate(networkStatus.value.rxSec)}`,
+      `上行 ${formatNetworkRate(networkStatus.value.txSec)}`,
     ], ' · '),
   ].filter(Boolean)
 
@@ -364,7 +364,7 @@ const summaryCards = computed(() => [
     title: cpuData.value?.brand || '读取中',
     lines: [
       joinParts([cpuData.value?.physicalCores ? `${cpuData.value.physicalCores} 核` : '', cpuData.value?.cores ? `${cpuData.value.cores} 线程` : '']),
-      cpuData.value?.speed ? `${cpuData.value.speed} GHz` : '',
+      cpuData.value?.speed ? `标称 ${cpuData.value.speed} GHz` : '',
     ].filter(Boolean),
   },
   {
@@ -522,7 +522,7 @@ const missingDebugSections = computed<DebugSection[]>(() => {
   const fieldItems: string[] = []
 
   if (!cpuData.value?.brand) fieldItems.push('CPU 型号')
-  if (!cpuData.value?.speed) fieldItems.push('CPU 当前频率')
+  if (!cpuData.value?.speed) fieldItems.push('CPU 标称频率')
   if (!primaryGpu.value) fieldItems.push('主显卡')
   if (primaryGpu.value && !primaryGpu.value.bus) fieldItems.push('GPU 总线信息')
   if (!memoData.value.total) fieldItems.push('内存总容量')
@@ -718,7 +718,7 @@ useActivePageLifecycle(
             </div>
             <div class="summary-card__label">{{ card.label }}</div>
             <h2 class="summary-card__title">{{ card.title }}</h2>
-            <p v-for="line in card.lines" :key="line" class="summary-card__line">{{ line }}</p>
+            <p v-for="(line, lineIndex) in card.lines" :key="`${card.id}-line-${lineIndex}`" class="summary-card__line">{{ line }}</p>
           </article>
         </section>
 
@@ -775,7 +775,7 @@ useActivePageLifecycle(
               <div v-for="row in column" :id="`section-${row.id}`" :key="row.label" class="detail-row">
                 <div class="detail-row__label">{{ row.label }}</div>
                 <div class="detail-row__value">
-                  <div v-for="line in row.lines" :key="line" class="detail-row__line">{{ line }}</div>
+                  <div v-for="(line, lineIndex) in row.lines" :key="`${row.id}-line-${lineIndex}`" class="detail-row__line">{{ line }}</div>
                 </div>
               </div>
             </div>

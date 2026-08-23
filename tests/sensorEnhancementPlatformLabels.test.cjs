@@ -38,3 +38,41 @@ test('uses one user-facing sensor enhancement vocabulary on Windows and macOS', 
     assert.equal(getSensorEnhancementPrimaryActionLabel(platform, true), '关闭增强模式')
   }
 })
+
+test('keeps preparing scoped to an in-flight action and preserves a concrete Windows start failure', () => {
+  const {
+    getWindowsSensorEnhancementReadiness,
+    reconcileWindowsSensorStartStatus,
+  } = loadTsModule('src/utils/platform.ts')
+
+  assert.equal(getWindowsSensorEnhancementReadiness({ running: true }), 'running')
+  assert.equal(getWindowsSensorEnhancementReadiness({ reason: 'WINDOWS_SENSOR_START_PENDING' }), 'error')
+  assert.equal(getWindowsSensorEnhancementReadiness({ reason: 'WINDOWS_SENSOR_START_IN_PROGRESS' }), 'error')
+  assert.equal(getWindowsSensorEnhancementReadiness({ reason: 'WINDOWS_SENSOR_START_COOLDOWN' }), 'error')
+  assert.equal(getWindowsSensorEnhancementReadiness({ reason: 'WINDOWS_SENSOR_HELPER_START_FAILED' }), 'error')
+  assert.equal(getWindowsSensorEnhancementReadiness({ reason: 'WINDOWS_SENSOR_HELPER_NOT_RUNNING' }), 'error')
+  assert.equal(getWindowsSensorEnhancementReadiness({ reason: 'OHM_RUNTIME_COPY_FAILED' }), 'error')
+  assert.equal(getWindowsSensorEnhancementReadiness({}), 'pending')
+
+  const reconciled = reconcileWindowsSensorStartStatus(
+    {
+      running: false,
+      started: true,
+      reason: 'WINDOWS_SENSOR_HELPER_START_FAILED',
+      suggestion: '本地通信未建立',
+    },
+    {
+      running: false,
+      started: false,
+      reason: 'WINDOWS_SENSOR_HELPER_NOT_RUNNING',
+      suggestion: '传感器增强组件尚未运行',
+    }
+  )
+
+  assert.deepEqual(reconciled, {
+    running: false,
+    started: true,
+    reason: 'WINDOWS_SENSOR_HELPER_START_FAILED',
+    suggestion: '本地通信未建立',
+  })
+})

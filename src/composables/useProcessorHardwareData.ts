@@ -107,6 +107,51 @@ function setFetchState(key: ProcessorServiceKey, status: FetchStatus, note = '')
   fetchState[key].note = note
 }
 
+async function retryMissingCpuTemperature(initial?: CpuTemperatureData) {
+  const hasValue = typeof initial?.value === 'number' || typeof initial?.main === 'number'
+  if (hasValue) return initial
+
+  try {
+    const retry = await readService(() => window.services.getCpuTemperature(), 3000)
+    return retry && (typeof retry.value === 'number' || typeof retry.main === 'number') ? retry : initial
+  } catch {
+    return initial
+  }
+}
+
+async function retrySystemInformationCpuSpeed(initial?: CpuCurrentSpeedData) {
+  if (initial?.source !== 'systeminformation') return initial
+
+  try {
+    const retry = await readService(() => window.services.getCpuCurrentSpeed(), 3000)
+    return retry?.source === 'OpenHardwareMonitor' ? retry : initial
+  } catch {
+    return initial
+  }
+}
+
+async function retryMissingCpuPower(initial?: CpuPowerData) {
+  if (typeof initial?.value === 'number' && initial.value > 0) return initial
+
+  try {
+    const retry = await readService(() => window.services.getCpuPower(), 3000)
+    return retry && typeof retry.value === 'number' && retry.value > 0 ? retry : initial
+  } catch {
+    return initial
+  }
+}
+
+async function retryMissingCpuVoltage(initial?: CpuVoltageData) {
+  if (typeof initial?.value === 'number' && initial.value > 0) return initial
+
+  try {
+    const retry = await readService(() => window.services.getCpuVoltage(), 3000)
+    return retry && typeof retry.value === 'number' && retry.value > 0 ? retry : initial
+  } catch {
+    return initial
+  }
+}
+
 function getCurrentRefreshIntervals() {
   return getMonitoringRefreshIntervals('balanced', backgroundThrottled.value)
 }
@@ -178,7 +223,11 @@ async function refreshProcessorDynamicMetrics(force = false) {
       const needsCpuTemp = intervals.cpuTemp > 0 && (force || now - lastCpuTempRefreshAt >= intervals.cpuTemp)
       const needsCpuLoad = intervals.cpuLoadDetail > 0 && (force || now - lastCpuLoadRefreshAt >= intervals.cpuLoadDetail)
       const needsCpuSpeed = intervals.cpuSpeed > 0 && (force || now - lastCpuSpeedRefreshAt >= intervals.cpuSpeed)
-      const needsCpuAux = intervals.cpuAux > 0 && (force || now - lastCpuAuxRefreshAt >= intervals.cpuAux)
+      // A forced refresh is used when a sensor helper becomes ready or the
+      // user explicitly retries. It must still fetch voltage/power while the
+      // page is temporarily background-throttled; otherwise these cards can
+      // remain permanently pending until the next foreground transition.
+      const needsCpuAux = force || (intervals.cpuAux > 0 && now - lastCpuAuxRefreshAt >= intervals.cpuAux)
       const needsTime = intervals.time > 0 && (force || now - lastTimeRefreshAt >= intervals.time)
 
       if (!force && !needsCpuTemp && !needsCpuLoad && !needsCpuSpeed && !needsCpuAux && !needsTime) {
@@ -199,17 +248,18 @@ async function refreshProcessorDynamicMetrics(force = false) {
       let hasUpdatedDynamicMetric = false
 
       if (needsCpuTemp && temperatureRes.status === 'fulfilled') {
-        cpuTemperature.value = temperatureRes.value
+        const nextCpuTemperature = await retryMissingCpuTemperature(temperatureRes.value)
+        cpuTemperature.value = nextCpuTemperature
         const nextCpuTemperatureValue =
-          typeof temperatureRes.value?.value === 'number'
-            ? temperatureRes.value.value
-            : typeof temperatureRes.value?.main === 'number'
-              ? temperatureRes.value.main
+          typeof nextCpuTemperature?.value === 'number'
+            ? nextCpuTemperature.value
+            : typeof nextCpuTemperature?.main === 'number'
+              ? nextCpuTemperature.main
               : 0
         setFetchState(
           'cpuTemperature',
-          nextCpuTemperatureValue > 0 || temperatureRes.value?.source === 'unsupported' ? 'ok' : 'missing',
-          nextCpuTemperatureValue > 0 ? '' : temperatureRes.value?.message || temperatureRes.value?.errorCode || 'main 为空'
+          nextCpuTemperatureValue > 0 || nextCpuTemperature?.source === 'unsupported' ? 'ok' : 'missing',
+          nextCpuTemperatureValue > 0 ? '' : nextCpuTemperature?.message || nextCpuTemperature?.errorCode || 'main 为空'
         )
         appendMetricHistory(metricHistory.cpuTemp, nextCpuTemperatureValue)
         lastCpuTempRefreshAt = now
@@ -229,8 +279,9 @@ async function refreshProcessorDynamicMetrics(force = false) {
       }
 
       if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
-        cpuCurrentSpeed.value = cpuSpeedRes.value || emptyCpuCurrentSpeedData
-        setFetchState('cpuCurrentSpeed', cpuSpeedRes.value ? 'ok' : 'missing', cpuSpeedRes.value ? '' : '返回为空')
+        const nextCpuSpeed = await retrySystemInformationCpuSpeed(cpuSpeedRes.value)
+        cpuCurrentSpeed.value = nextCpuSpeed || emptyCpuCurrentSpeedData
+        setFetchState('cpuCurrentSpeed', nextCpuSpeed ? 'ok' : 'missing', nextCpuSpeed ? '' : '返回为空')
         appendMetricHistory(metricHistory.cpuSpeed, getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value))
         lastCpuSpeedRefreshAt = now
         hasUpdatedDynamicMetric = true
@@ -239,18 +290,20 @@ async function refreshProcessorDynamicMetrics(force = false) {
       }
 
       if (needsCpuAux && cpuPowerRes.status === 'fulfilled') {
-        cpuPower.value = cpuPowerRes.value
-        setFetchState('cpuPower', cpuPowerRes.value ? 'ok' : 'missing', cpuPowerRes.value ? '' : '返回为空')
-        appendMetricHistory(metricHistory.cpuPower, cpuPowerRes.value?.value || 0)
+        const nextCpuPower = await retryMissingCpuPower(cpuPowerRes.value)
+        cpuPower.value = nextCpuPower
+        setFetchState('cpuPower', nextCpuPower ? 'ok' : 'missing', nextCpuPower ? '' : '返回为空')
+        appendMetricHistory(metricHistory.cpuPower, nextCpuPower?.value || 0)
         hasUpdatedDynamicMetric = true
       } else if (needsCpuAux && cpuPowerRes.status === 'rejected') {
         setFetchState('cpuPower', 'error', normalizeErrorMessage(cpuPowerRes.reason))
       }
 
       if (needsCpuAux && cpuVoltageRes.status === 'fulfilled') {
-        cpuVoltage.value = cpuVoltageRes.value
-        setFetchState('cpuVoltage', cpuVoltageRes.value ? 'ok' : 'missing', cpuVoltageRes.value ? '' : '返回为空')
-        appendMetricHistory(metricHistory.cpuVoltage, cpuVoltageRes.value?.value || 0)
+        const nextCpuVoltage = await retryMissingCpuVoltage(cpuVoltageRes.value)
+        cpuVoltage.value = nextCpuVoltage
+        setFetchState('cpuVoltage', nextCpuVoltage ? 'ok' : 'missing', nextCpuVoltage ? '' : '返回为空')
+        appendMetricHistory(metricHistory.cpuVoltage, nextCpuVoltage?.value || 0)
         hasUpdatedDynamicMetric = true
       } else if (needsCpuAux && cpuVoltageRes.status === 'rejected') {
         setFetchState('cpuVoltage', 'error', normalizeErrorMessage(cpuVoltageRes.reason))
