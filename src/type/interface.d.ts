@@ -305,16 +305,30 @@ declare global {
     reason?: string
     suggestion?: string
   }
+  interface MacMenubarMetricSettingsData {
+    cpuTemperature: boolean
+    cpuLoad: boolean
+    cpuFrequency: boolean
+    fanSpeed: boolean
+    memoryUsage: boolean
+    diskIo: boolean
+    networkIo: boolean
+  }
+  type MacMenubarSettingsPatch = Partial<Omit<MacMenubarSettingsData, 'metrics'>> & {
+    metrics?: Partial<MacMenubarMetricSettingsData>
+  }
   interface MacMenubarSettingsData {
     enabled: boolean
     showTemp: boolean
     showLoad: boolean
     showIcon: boolean
+    metrics: MacMenubarMetricSettingsData
   }
   interface MacMenubarStatusData {
     running: boolean
     supported: boolean
     pid?: number | null
+    shared?: boolean
   }
   interface CpuPowerData {
     value: number | null
@@ -397,10 +411,12 @@ declare global {
       installMacPowermetricsHelper: () => Promise<MacPowermetricsHelperStatusData>
       uninstallMacPowermetricsHelper: () => Promise<MacPowermetricsHelperStatusData>
       getMacMenubarSettings: () => Promise<MacMenubarSettingsData>
-      updateMacMenubarSettings: (patch: Partial<MacMenubarSettingsData>) => Promise<MacMenubarSettingsData>
+      updateMacMenubarSettings: (patch: MacMenubarSettingsPatch) => Promise<MacMenubarSettingsData>
+      refreshMacMenubarTelemetry: () => Promise<void>
       getMacMenubarStatus: () => Promise<MacMenubarStatusData>
-      startMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean; pid?: number | null }>
+      startMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean; pid?: number | null; shared?: boolean }>
       stopMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean }>
+      stopMacMenubarRuntime: () => Promise<{ ok: boolean; running: boolean }>
       getCpuInfo: () => Promise<CpuData | undefined>
       getCpuFullLoad: () => Promise<number>
       getCpuTemperature: () => Promise<CpuTemperatureData | undefined>

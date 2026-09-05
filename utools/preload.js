@@ -12,6 +12,14 @@ configureSystemServiceContext({
   utools: runtimeUtools,
 })
 
+if (typeof runtimeUtools.onPluginOut === 'function') {
+  runtimeUtools.onPluginOut((isKill) => {
+    if (!isKill) return
+
+    systemService.stopMacMenubarRuntime?.()
+  })
+}
+
 const windowPresets = {
   a_watch: {
     prod: { height: 398, width: 432, backgroundColor: 0 },
@@ -33,6 +41,10 @@ const windowPresets = {
     prod: { height: 720, width: 1080, backgroundColor: 1 },
     dev: { height: 760, width: 1120, backgroundColor: 1 },
   },
+  a_menubar_settings: {
+    prod: { height: 680, width: 620, backgroundColor: 1 },
+    dev: { height: 720, width: 660, backgroundColor: 1 },
+  },
 }
 
 async function openPresetWindow(name) {
@@ -47,6 +59,8 @@ async function openPresetWindow(name) {
 
     await window.services.createWindow(name, preset.height, preset.width, preset.backgroundColor)
   } finally {
+    // Hide the launcher context after the independent window is ready. Killing
+    // the plugin here would also destroy the newly created BrowserWindow.
     runtimeUtools.outPlugin()
   }
 }
@@ -79,6 +93,12 @@ window.exports = {
     mode: 'none',
     args: {
       enter: () => openPresetWindow('a_specs_lite'),
+    },
+  },
+  hardwareMenubarSettings: {
+    mode: 'none',
+    args: {
+      enter: () => openPresetWindow('a_menubar_settings'),
     },
   },
 }

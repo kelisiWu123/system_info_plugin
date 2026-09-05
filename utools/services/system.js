@@ -1,5 +1,6 @@
 import si from 'systeminformation'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -49,11 +50,38 @@ const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
   openHardwareMonitorAutoStart: false,
   openHardwareMonitorPort: 18085,
 }
+const DEFAULT_MACOS_MENUBAR_METRICS = {
+  cpuTemperature: true,
+  cpuLoad: true,
+  cpuFrequency: false,
+  fanSpeed: false,
+  memoryUsage: false,
+  diskIo: false,
+  networkIo: false,
+}
 const DEFAULT_MACOS_MENUBAR_SETTINGS = {
   enabled: false,
   showTemp: true,
   showLoad: true,
   showIcon: true,
+  metrics: DEFAULT_MACOS_MENUBAR_METRICS,
+}
+
+const MACOS_MENUBAR_SCHEDULER_DIRECTORY = path.join(os.tmpdir(), 'system-info-plugin', 'macos-menubar')
+const MACOS_MENUBAR_SCHEDULER_LOCK_PATH = path.join(MACOS_MENUBAR_SCHEDULER_DIRECTORY, 'scheduler.lock')
+const MACOS_MENUBAR_SCHEDULER_RECORD_PATH = path.join(MACOS_MENUBAR_SCHEDULER_DIRECTORY, 'scheduler.json')
+const MACOS_MENUBAR_RUNTIME_STOP_PATH = path.join(MACOS_MENUBAR_SCHEDULER_DIRECTORY, 'runtime-stop.json')
+const MACOS_MENUBAR_SCHEDULER_STALE_MS = 10000
+
+const EMPTY_MACOS_MENUBAR_TELEMETRY = {
+  fanSpeed: null,
+  memoryUsedBytes: null,
+  memoryTotalBytes: null,
+  memoryPercent: null,
+  diskReadBytesPerSec: null,
+  diskWriteBytesPerSec: null,
+  networkDownloadBytesPerSec: null,
+  networkUploadBytesPerSec: null,
 }
 const DEFAULT_MONITORING_REFRESH_SETTINGS = {
   profile: 'balanced',
@@ -228,8 +256,10 @@ export function configureSystemServiceContext({ pluginRoot, utools } = {}) {
     : ''
   configuredUtoolsRuntime = utools
   configureMacMenubarContext({ pluginRoot: configuredPluginRoot })
-  if (isMacOS() && getMacMenubarSettings().enabled) {
-    startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
+  clearMacMenubarRuntimeStopSignal()
+  const menubarSettings = getMacMenubarSettings()
+  if (isMacOS() && menubarSettings.enabled && hasEnabledMacMenubarMetric(menubarSettings)) {
+    startMacMenubarTelemetryScheduler()
   }
 }
 
@@ -989,11 +1019,29 @@ function getAppThemeSettings() {
 }
 
 function normalizeMacMenubarSettings(input) {
+  const sourceMetrics = input?.metrics && typeof input.metrics === 'object' ? input.metrics : {}
+  const metrics = {
+    cpuTemperature: typeof sourceMetrics.cpuTemperature === 'boolean'
+      ? sourceMetrics.cpuTemperature
+      : input?.showTemp !== false,
+    cpuLoad: typeof sourceMetrics.cpuLoad === 'boolean'
+      ? sourceMetrics.cpuLoad
+      : input?.showLoad !== false,
+    cpuFrequency: typeof sourceMetrics.cpuFrequency === 'boolean' ? sourceMetrics.cpuFrequency : false,
+    fanSpeed: typeof sourceMetrics.fanSpeed === 'boolean' ? sourceMetrics.fanSpeed : false,
+    memoryUsage: typeof sourceMetrics.memoryUsage === 'boolean' ? sourceMetrics.memoryUsage : false,
+    diskIo: typeof sourceMetrics.diskIo === 'boolean'
+      ? sourceMetrics.diskIo
+      : sourceMetrics.diskRead === true || sourceMetrics.diskWrite === true,
+    networkIo: typeof sourceMetrics.networkIo === 'boolean' ? sourceMetrics.networkIo : false,
+  }
+
   return {
     enabled: Boolean(input?.enabled),
-    showTemp: input?.showTemp !== false,
-    showLoad: input?.showLoad !== false,
+    showTemp: metrics.cpuTemperature,
+    showLoad: metrics.cpuLoad,
     showIcon: input?.showIcon !== false,
+    metrics,
   }
 }
 
@@ -1002,21 +1050,218 @@ export function getMacMenubarSettings() {
     return normalizeMacMenubarSettings(DEFAULT_MACOS_MENUBAR_SETTINGS)
   }
 
+  const stored = readMacMenubarSettingsRaw() || {}
   return normalizeMacMenubarSettings({
     ...DEFAULT_MACOS_MENUBAR_SETTINGS,
-    ...(readMacMenubarSettingsRaw() || {}),
+    ...stored,
+    metrics: stored.metrics,
   })
 }
 
 let lastKnownCpuTemp = null
 let lastKnownCpuLoad = null
 let lastKnownCpuSpeed = null
+let lastKnownMacMenubarTelemetry = { ...EMPTY_MACOS_MENUBAR_TELEMETRY }
 let lastMenubarPushAt = 0
+let macMenubarTelemetrySchedulerTimer
+let macMenubarTelemetrySchedulerLockHandle = null
+let macMenubarTelemetrySchedulerToken = ''
+let macMenubarTelemetryRefreshInFlight = false
 
-export function syncMacMenubarTelemetry() {
-  if (!isMacOS()) return
+function hasEnabledMacMenubarMetric(settings) {
+  return Object.values(settings?.metrics || {}).some(Boolean)
+}
+
+function createMacMenubarSchedulerToken() {
+  return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function readMacMenubarSchedulerRecord() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(MACOS_MENUBAR_SCHEDULER_RECORD_PATH, 'utf8'))
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function isProcessAlive(pid) {
+  const numericPid = Number(pid)
+  if (!Number.isInteger(numericPid) || numericPid <= 0) return false
+
+  try {
+    process.kill(numericPid, 0)
+    return true
+  } catch (error) {
+    return error?.code === 'EPERM'
+  }
+}
+
+function isMacMenubarSchedulerRecordLive(record) {
+  // A hidden renderer can be throttled. A late timer is not proof that its
+  // process died, and must not create a second writer.
+  return Boolean(record?.token && isProcessAlive(record.pid))
+}
+
+function writeMacMenubarSchedulerRecord() {
+  if (!macMenubarTelemetrySchedulerToken) return
+
+  const temporaryPath = `${MACOS_MENUBAR_SCHEDULER_RECORD_PATH}.${process.pid}.tmp`
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify({
+      pid: process.pid,
+      token: macMenubarTelemetrySchedulerToken,
+      heartbeat: Date.now(),
+    }), 'utf8')
+    fs.renameSync(temporaryPath, MACOS_MENUBAR_SCHEDULER_RECORD_PATH)
+  } catch {
+    try { fs.unlinkSync(temporaryPath) } catch { /* Best effort cleanup. */ }
+  }
+}
+
+function writeMacMenubarRuntimeStopSignal() {
+  const temporaryPath = `${MACOS_MENUBAR_RUNTIME_STOP_PATH}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+
+  try {
+    fs.mkdirSync(MACOS_MENUBAR_SCHEDULER_DIRECTORY, { recursive: true })
+    fs.writeFileSync(temporaryPath, JSON.stringify({
+      pid: process.pid,
+      stoppedAt: Date.now(),
+      reason: 'utools-plugin-out',
+    }), 'utf8')
+    fs.renameSync(temporaryPath, MACOS_MENUBAR_RUNTIME_STOP_PATH)
+    return true
+  } catch {
+    try {
+      fs.unlinkSync(temporaryPath)
+    } catch {
+      // Ignore cleanup errors.
+    }
+    return false
+  }
+}
+
+function isMacMenubarRuntimeStopSignaled() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(MACOS_MENUBAR_RUNTIME_STOP_PATH, 'utf8'))
+    return Boolean(parsed && Number(parsed.stoppedAt) > 0)
+  } catch {
+    return false
+  }
+}
+
+function clearMacMenubarRuntimeStopSignal() {
+  try {
+    fs.unlinkSync(MACOS_MENUBAR_RUNTIME_STOP_PATH)
+  } catch {
+    // The signal is optional and may not exist on the first launch.
+  }
+}
+
+function releaseMacMenubarTelemetryScheduler() {
+  const token = macMenubarTelemetrySchedulerToken
+  macMenubarTelemetrySchedulerToken = ''
+
+  if (macMenubarTelemetrySchedulerLockHandle !== null) {
+    try {
+      fs.closeSync(macMenubarTelemetrySchedulerLockHandle)
+    } catch {
+      // Ignore close races.
+    }
+    macMenubarTelemetrySchedulerLockHandle = null
+  }
+
+  if (!token) return
+
+  try {
+    if (readMacMenubarSchedulerRecord()?.token === token) {
+      fs.unlinkSync(MACOS_MENUBAR_SCHEDULER_RECORD_PATH)
+    }
+  } catch {
+    // Best effort cleanup only.
+  }
+
+  try {
+    fs.unlinkSync(MACOS_MENUBAR_SCHEDULER_LOCK_PATH)
+  } catch {
+    // Best effort cleanup only.
+  }
+}
+
+function tryAcquireMacMenubarTelemetryScheduler() {
+  if (macMenubarTelemetrySchedulerLockHandle !== null) {
+    if (readMacMenubarSchedulerRecord()?.token !== macMenubarTelemetrySchedulerToken) return false
+    writeMacMenubarSchedulerRecord()
+    return true
+  }
+
+  try {
+    fs.mkdirSync(MACOS_MENUBAR_SCHEDULER_DIRECTORY, { recursive: true })
+  } catch {
+    return false
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      macMenubarTelemetrySchedulerLockHandle = fs.openSync(MACOS_MENUBAR_SCHEDULER_LOCK_PATH, 'wx')
+      macMenubarTelemetrySchedulerToken = createMacMenubarSchedulerToken()
+      writeMacMenubarSchedulerRecord()
+      return true
+    } catch (error) {
+      if (error?.code !== 'EEXIST') return false
+
+      const current = readMacMenubarSchedulerRecord()
+      if (isMacMenubarSchedulerRecordLive(current)) return false
+
+      try {
+        // The winner may still be publishing its first ownership record.
+        if (Date.now() - fs.statSync(MACOS_MENUBAR_SCHEDULER_LOCK_PATH).mtimeMs < MACOS_MENUBAR_SCHEDULER_STALE_MS) return false
+        fs.unlinkSync(MACOS_MENUBAR_SCHEDULER_LOCK_PATH)
+      } catch {
+        return false
+      }
+    }
+  }
+
+  return false
+}
+
+async function runMacMenubarTelemetrySchedulerTick() {
   const settings = getMacMenubarSettings()
-  if (!settings.enabled) return
+  if (!isMacOS() || isMacMenubarRuntimeStopSignaled() || !settings.enabled || !hasEnabledMacMenubarMetric(settings)) {
+    releaseMacMenubarTelemetryScheduler()
+    return
+  }
+
+  await refreshMacMenubarTelemetry()
+}
+
+function startMacMenubarTelemetryScheduler() {
+  if (!isMacOS() || macMenubarTelemetrySchedulerTimer) return
+
+  macMenubarTelemetrySchedulerTimer = setInterval(() => {
+    void runMacMenubarTelemetrySchedulerTick()
+  }, 2000)
+  macMenubarTelemetrySchedulerTimer.unref?.()
+  void runMacMenubarTelemetrySchedulerTick()
+}
+
+function stopMacMenubarTelemetryScheduler() {
+  if (macMenubarTelemetrySchedulerTimer) {
+    clearInterval(macMenubarTelemetrySchedulerTimer)
+    macMenubarTelemetrySchedulerTimer = undefined
+  }
+  releaseMacMenubarTelemetryScheduler()
+}
+
+export function syncMacMenubarTelemetry(snapshot) {
+  // Page readers call this without a snapshot. Only the elected sampler may
+  // publish a complete batch; a page's partial cache must never replace it.
+  if (!snapshot || !macMenubarTelemetrySchedulerToken
+    || readMacMenubarSchedulerRecord()?.token !== macMenubarTelemetrySchedulerToken) return
+  if (!isMacOS() || isMacMenubarRuntimeStopSignaled()) return
+  const settings = getMacMenubarSettings()
+  if (!settings.enabled || !hasEnabledMacMenubarMetric(settings)) return
 
   const now = Date.now()
   if (now - lastMenubarPushAt < 800) {
@@ -1029,33 +1274,91 @@ export function syncMacMenubarTelemetry() {
   }
 
   updateMacMenubarTelemetry({
-    temp: lastKnownCpuTemp,
-    load: lastKnownCpuLoad,
-    speed: lastKnownCpuSpeed,
+    ...snapshot,
     showIcon: settings.showIcon,
     showTemp: settings.showTemp,
     showLoad: settings.showLoad,
+    metrics: settings.metrics,
   })
 }
 
+export async function refreshMacMenubarTelemetry() {
+  if (!isMacOS() || isMacMenubarRuntimeStopSignaled()) return
+
+  const settings = getMacMenubarSettings()
+  if (!settings.enabled || !hasEnabledMacMenubarMetric(settings)) return
+  if (macMenubarTelemetryRefreshInFlight || !tryAcquireMacMenubarTelemetryScheduler()) return
+
+  macMenubarTelemetryRefreshInFlight = true
+  try {
+    const definitions = [
+      ['cpuTemperature', () => systemService.getCpuTemperature(), (value) => ({ temp: value?.value ?? null })],
+      ['cpuLoad', () => systemService.getCpuFullLoad(), (value) => ({ load: value ?? null })],
+      ['cpuFrequency', () => systemService.getCpuCurrentSpeed(), (value) => ({ speed: value?.max || value?.avg || null })],
+      ['fanSpeed', () => systemService.getCpuFanSpeed(), (value) => ({ fanSpeed: value?.value ?? null })],
+      ['memoryUsage', () => systemService.getMemInfo(), (value) => ({
+        memoryUsedBytes: value?.used ?? null,
+        memoryTotalBytes: value?.total ?? null,
+        memoryPercent: value?.total > 0 && Number.isFinite(value?.used)
+          ? Math.max(0, Math.min(100, value.used / value.total * 100)) : null,
+      })],
+      ['diskIo', () => systemService.getStorageIo(), (value) => ({
+        diskReadBytesPerSec: value?.readBytesPerSec ?? null,
+        diskWriteBytesPerSec: value?.writeBytesPerSec ?? null,
+      })],
+      ['networkIo', () => systemService.getNetworkStatus(), (value) => ({
+        networkDownloadBytesPerSec: value?.rxSec ?? null,
+        networkUploadBytesPerSec: value?.txSec ?? null,
+      })],
+    ].filter(([key]) => settings.metrics[key])
+    const results = await Promise.allSettled(definitions.map(async ([, read, project]) => project(await read())))
+    const snapshot = { temp: null, load: null, speed: null, ...EMPTY_MACOS_MENUBAR_TELEMETRY }
+    for (const result of results) {
+      if (result.status === 'fulfilled') Object.assign(snapshot, result.value)
+    }
+    lastMenubarPushAt = 0
+    syncMacMenubarTelemetry(snapshot)
+  } finally {
+    macMenubarTelemetryRefreshInFlight = false
+    writeMacMenubarSchedulerRecord()
+  }
+}
+
 export async function updateMacMenubarSettings(patch = {}) {
+  const current = getMacMenubarSettings()
   const next = normalizeMacMenubarSettings({
-    ...getMacMenubarSettings(),
+    ...current,
     ...(patch || {}),
+    metrics: {
+      ...current.metrics,
+      ...(patch?.metrics || {}),
+    },
   })
 
   writeMacMenubarSettingsRaw(next)
 
   if (isMacOS()) {
-    if (next.enabled) {
-      startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
-      syncMacMenubarTelemetry()
+    if (next.enabled && hasEnabledMacMenubarMetric(next)) {
+      clearMacMenubarRuntimeStopSignal()
+      lastMenubarPushAt = 0
+      startMacMenubarTelemetryScheduler()
+      void refreshMacMenubarTelemetry()
     } else {
+      stopMacMenubarTelemetryScheduler()
       stopMacMenubarHelper()
     }
   }
 
   return next
+}
+
+export function stopMacMenubarRuntime() {
+  if (isMacOS()) {
+    writeMacMenubarRuntimeStopSignal()
+    stopMacMenubarTelemetryScheduler()
+  }
+
+  return stopMacMenubarHelper()
 }
 
 async function stopPluginManagedOpenHardwareMonitor() {
@@ -3769,7 +4072,7 @@ async function readWindowsStorageIo() {
 }
 
 async function getStorageIo() {
-  return readCachedServiceValue('storageIo', 1500, async () => {
+  const value = await readCachedServiceValue('storageIo', 1500, async () => {
     const windowsStorageIo = await readWindowsStorageIo()
     if (windowsStorageIo) return windowsStorageIo
 
@@ -3791,6 +4094,17 @@ async function getStorageIo() {
       waitPercent: normalizeRateValue(disksIo?.tWaitPercent),
     }
   })
+
+  if (isMacOS()) {
+    lastKnownMacMenubarTelemetry = {
+      ...lastKnownMacMenubarTelemetry,
+      diskReadBytesPerSec: value?.readBytesPerSec ?? null,
+      diskWriteBytesPerSec: value?.writeBytesPerSec ?? null,
+    }
+    syncMacMenubarTelemetry()
+  }
+
+  return value
 }
 
 function parseMacDiskutilTopology(stdout) {
@@ -3910,7 +4224,7 @@ async function getNetworkAdapters() {
 }
 
 async function getNetworkStatus() {
-  return readCachedServiceValue('networkStatus', 3000, async () => {
+  const value = await readCachedServiceValue('networkStatus', 3000, async () => {
     const defaultInterface = await readSystemInfo('networkInterfaceDefault', '', () => si.networkInterfaceDefault())
     const [gatewayResult, statsResult] = await Promise.allSettled([
       si.networkGatewayDefault(),
@@ -3935,6 +4249,17 @@ async function getNetworkStatus() {
       txSec: normalizeRateValue(stats?.tx_sec),
     }
   })
+
+  if (isMacOS()) {
+    lastKnownMacMenubarTelemetry = {
+      ...lastKnownMacMenubarTelemetry,
+      networkDownloadBytesPerSec: value?.rxSec ?? null,
+      networkUploadBytesPerSec: value?.txSec ?? null,
+    }
+    syncMacMenubarTelemetry()
+  }
+
+  return value
 }
 
 async function getTopProcesses() {
@@ -4019,11 +4344,15 @@ export const systemService = {
 
   updateMacMenubarSettings: async (patch) => updateMacMenubarSettings(patch),
 
+  refreshMacMenubarTelemetry: () => refreshMacMenubarTelemetry(),
+
   getMacMenubarStatus: () => getMacMenubarStatus(),
 
   startMacMenubarHelper: () => startMacMenubarHelper({ pluginRoot: configuredPluginRoot }),
 
   stopMacMenubarHelper: () => stopMacMenubarHelper(),
+
+  stopMacMenubarRuntime: () => stopMacMenubarRuntime(),
 
   getCpuInfo: () =>
     readCachedServiceValue(
@@ -4197,34 +4526,72 @@ export const systemService = {
     return value
   },
 
-  getCpuFanSpeed: () => readSystemInfo('cpuFanSpeed', { value: null, source: 'unsupported', unit: 'RPM', max: null }, getHardwareMonitorCpuFanSpeed),
-
-  getMemInfo: () => readCachedServiceValue(
-    'memInfo',
-    3000,
-    () => readSystemInfo(
-      'mem',
-      {
-        active: 0,
-        available: 0,
-        total: 0,
-        free: 0,
-        used: 0,
-        rawActive: 0,
-        rawAvailable: 0,
-        normalizedPlatform: '',
-        swaptotal: 0,
-        swapused: 0,
-        swapfree: 0,
-        pressure: MAC_MEMORY_PRESSURE_FALLBACK,
-      },
-      async () => {
-        const memory = await si.mem()
-        const pressure = await getMacMemoryPressure()
-        return normalizeMemoryInfo(memory, pressure)
-      }
+  getCpuFanSpeed: async () => {
+    const value = await readSystemInfo(
+      'cpuFanSpeed',
+      { value: null, source: 'unsupported', unit: 'RPM', max: null },
+      getHardwareMonitorCpuFanSpeed
     )
-  ),
+
+    if (isMacOS()) {
+      lastKnownMacMenubarTelemetry = {
+        ...lastKnownMacMenubarTelemetry,
+        fanSpeed: typeof value?.value === 'number' && Number.isFinite(value.value) ? value.value : null,
+      }
+      syncMacMenubarTelemetry()
+    }
+
+    return value
+  },
+
+  getMemInfo: async () => {
+    const value = await readCachedServiceValue(
+      'memInfo',
+      3000,
+      () => readSystemInfo(
+        'mem',
+        {
+          active: 0,
+          available: 0,
+          total: 0,
+          free: 0,
+          used: 0,
+          rawActive: 0,
+          rawAvailable: 0,
+          normalizedPlatform: '',
+          swaptotal: 0,
+          swapused: 0,
+          swapfree: 0,
+          pressure: MAC_MEMORY_PRESSURE_FALLBACK,
+        },
+        async () => {
+          const memory = await si.mem()
+          const pressure = await getMacMemoryPressure()
+          return normalizeMemoryInfo(memory, pressure)
+        }
+      )
+    )
+
+    if (isMacOS()) {
+      const total = typeof value?.total === 'number' && Number.isFinite(value.total) && value.total > 0
+        ? value.total
+        : null
+      const used = typeof value?.used === 'number' && Number.isFinite(value.used) && value.used >= 0
+        ? value.used
+        : typeof value?.active === 'number' && Number.isFinite(value.active) && value.active >= 0
+          ? value.active
+          : null
+      lastKnownMacMenubarTelemetry = {
+        ...lastKnownMacMenubarTelemetry,
+        memoryUsedBytes: used,
+        memoryTotalBytes: total,
+        memoryPercent: total !== null && used !== null ? Math.max(0, Math.min(100, (used / total) * 100)) : null,
+      }
+      syncMacMenubarTelemetry()
+    }
+
+    return value
+  },
 
   getStaticMemInfo: () =>
     readCachedServiceValue(

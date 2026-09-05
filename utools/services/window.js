@@ -234,6 +234,7 @@ function getWindowHash(fileName) {
   if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
   if (fileName === 'a_monitor') return 'monitor'
   if (fileName === 'a_specs_lite') return 'deviceSpecs'
+  if (fileName === 'a_menubar_settings') return 'menubarSettings'
   return isWatchWindowName(fileName) ? 'watch?floatingMode=standard&entry=hardwareWatch' : 'computer'
 }
 
@@ -241,6 +242,7 @@ function getProductionWindowUrl(fileName) {
   if (fileName === 'a_watch_super_lite') return 'a_watch_super_lite/index.html'
   if (fileName === 'a_monitor') return 'a_monitor/index.html'
   if (fileName === 'a_specs_lite') return 'a_specs_lite/index.html'
+  if (fileName === 'a_menubar_settings') return 'a_menubar_settings/index.html'
   if (isWatchWindowName(fileName)) return 'watch.html'
   return 'computer.html'
 }
@@ -257,7 +259,7 @@ function buildChildWindowOptions(fileName, height, width, backgroundColor) {
   const isWatchWindow = isWatchWindowName(fileName)
 
   return {
-    title: 'system info',
+    title: fileName === 'a_menubar_settings' ? '菜单栏显示设置' : 'system info',
     height,
     width,
     useContentSize: true,

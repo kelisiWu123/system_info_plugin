@@ -2,7 +2,8 @@ import path from 'node:path'
 
 export interface UtoolsRuntimeLike {
   isDev: () => boolean
-  outPlugin: () => void
+  outPlugin: (isKill?: boolean) => void
+  onPluginOut?: (callback: (isKill: boolean) => void) => void
   createBrowserWindow?: (...args: any[]) => any
   sendToParent?: (channel: string, ...args: unknown[]) => void
   getWindowType?: () => 'main' | 'detach' | 'browser'
@@ -45,6 +46,7 @@ export function resolveUtoolsRuntime(
     createBrowserWindow: runtime.createBrowserWindow?.bind(runtime),
     sendToParent: runtime.sendToParent?.bind(runtime),
     getWindowType: runtime.getWindowType?.bind(runtime),
+    onPluginOut: runtime.onPluginOut?.bind(runtime),
     isDev: typeof runtime.isDev === 'function' ? runtime.isDev.bind(runtime) : () => true,
     outPlugin: typeof runtime.outPlugin === 'function' ? runtime.outPlugin.bind(runtime) : () => undefined,
   }

@@ -13,6 +13,7 @@ declare module 'vue' {
     DeviceSpecsLite: typeof import('./src/components/DeviceSpecsLite/index.vue')['default']
     GraphicsPage: typeof import('./src/components/GraphicsPage/index.vue')['default']
     MemoryPage: typeof import('./src/components/MemoryPage/index.vue')['default']
+    MenubarSettings: typeof import('./src/components/MenubarSettings/index.vue')['default']
     MonitoringDashboard: typeof import('./src/components/MonitoringDashboard/index.vue')['default']
     Processor: typeof import('./src/components/Processor/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

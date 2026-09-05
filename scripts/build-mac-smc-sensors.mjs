@@ -56,6 +56,7 @@ const menubarOutput = resolve('vendor/macos/hwinfox-menubar-helper')
 if (existsSync(menubarSource)) {
   const menubarResult = runClang([
     menubarSource,
+    '-fobjc-arc',
     '-Wall',
     '-Wextra',
     '-O2',

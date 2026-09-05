@@ -10,6 +10,7 @@ import {
 } from '@icon-park/vue-next'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ThemeControl from './components/common/ThemeControl.vue'
+import MenubarSettings from './components/MenubarSettings/index.vue'
 import { overviewHardwareStore } from './composables/useOverviewHardwareData'
 import { useSensorEnhancementController } from './composables/useSensorEnhancementController'
 import { resolveDevPageCopyTarget } from './utils/devPageCopy'
@@ -85,6 +86,7 @@ const initialFloatingEntry = computed(() => resolveInitialFloatingEntry(currentH
 const isWatchPage = computed(() => currentPage.value === 'watch')
 const isMonitorPage = computed(() => currentPage.value === 'monitor')
 const isDeviceSpecsPage = computed(() => currentPage.value === 'deviceSpecs')
+const isMenubarSettingsPage = computed(() => currentPage.value === 'menubarSettings')
 const currentDevCopyTarget = computed(() => resolveDevPageCopyTarget(selectedSection.value))
 
 const {
@@ -130,6 +132,15 @@ const macMenubarSettings = ref<MacMenubarSettingsData>({
   showTemp: true,
   showLoad: true,
   showIcon: true,
+  metrics: {
+    cpuTemperature: true,
+    cpuLoad: true,
+    cpuFrequency: false,
+    fanSpeed: false,
+    memoryUsage: false,
+    diskIo: false,
+    networkIo: false,
+  },
 })
 const macMenubarActionLoading = ref(false)
 
@@ -185,6 +196,8 @@ function syncDocumentTitle() {
       ? '硬件监控'
       : isDeviceSpecsPage.value
         ? '设备规格'
+        : isMenubarSettingsPage.value
+          ? '菜单栏设置'
         : '硬件信息'
 }
 
@@ -537,6 +550,26 @@ onUnmounted(() => {
     </main>
   </div>
 
+  <div v-else-if="isMenubarSettingsPage" class="menubar-settings-stage">
+    <div class="window-titlebar standalone-titlebar">
+      <div class="window-titlebar__brand standalone-titlebar__brand">
+        <span class="window-titlebar__mark" aria-hidden="true">H</span>
+        <span class="standalone-titlebar__text">菜单栏设置</span>
+      </div>
+
+      <div class="window-titlebar__drag-spacer" aria-hidden="true" />
+
+      <div class="window-titlebar__actions standalone-titlebar__actions">
+        <ThemeControl compact />
+        <Bar />
+      </div>
+    </div>
+
+    <main class="menubar-settings-content">
+      <MenubarSettings :active="true" />
+    </main>
+  </div>
+
   <div v-else class="desktop-shell">
     <div class="window-titlebar">
       <div class="window-titlebar__brand">
@@ -817,7 +850,8 @@ onUnmounted(() => {
 }
 
 .device-specs-stage,
-.monitor-dashboard-stage {
+.monitor-dashboard-stage,
+.menubar-settings-stage {
   display: grid;
   grid-template-rows: 44px minmax(0, 1fr);
   height: 100%;
@@ -856,7 +890,8 @@ onUnmounted(() => {
 }
 
 .device-specs-standalone-content,
-.monitor-dashboard-standalone-content {
+.monitor-dashboard-standalone-content,
+.menubar-settings-content {
   grid-row: 2;
   min-width: 0;
   min-height: 0;
@@ -866,6 +901,14 @@ onUnmounted(() => {
 
 .monitor-dashboard-standalone-content {
   padding: 16px 20px 20px;
+}
+
+.menubar-settings-content {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  padding: 20px;
+  overflow: auto;
 }
 
 .desktop-shell {

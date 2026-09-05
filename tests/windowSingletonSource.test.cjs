@@ -50,9 +50,24 @@ test('uTools command exits only after the singleton open-or-focus request has be
 
   assert.match(preload, /async function openPresetWindow\(name\)/)
   assert.match(preload, /await window\.services\.createWindow\(name, preset\.height, preset\.width, preset\.backgroundColor\)/)
-  assert.match(preload, /finally\s*{\s*runtimeUtools\.outPlugin\(\)/)
+  assert.match(preload, /finally\s*{[\s\S]*runtimeUtools\.outPlugin\(\)/)
   assert.match(types, /createWindow: \(fileName: string, height\?: number, width\?: number, backgroundColor\?: number\) => Promise<void>/)
   assert.match(source, /creatSomething: \(fileName, height, width, backgroundColor\) => \{\s*return windowService\.createWindow\(/)
+})
+
+test('ending the uTools plugin stops the shared macOS menubar runtime while window handoff preserves it', () => {
+  const preload = readSource('utools/preload.js')
+  const systemService = readSource('utools/services/system.js')
+  const runtime = readSource('utools/runtime.ts')
+
+  assert.match(runtime, /onPluginOut\?: \(callback: \(isKill: boolean\) => void\) => void/)
+  assert.match(preload, /runtimeUtools\.onPluginOut\(\(isKill\) =>/)
+  assert.doesNotMatch(preload, /runtimeUtools\.getWindowType\?\.\(\) === 'browser'/)
+  assert.doesNotMatch(preload, /runtimeUtools\.outPlugin\(true\)/)
+  assert.match(preload, /systemService\.stopMacMenubarRuntime\?\.\(\)/)
+  assert.match(systemService, /MACOS_MENUBAR_RUNTIME_STOP_PATH/)
+  assert.match(systemService, /function stopMacMenubarRuntime\(\)/)
+  assert.match(systemService, /isMacMenubarRuntimeStopSignaled\(\)/)
 })
 
 test('Electron fallback keeps one BrowserWindow per singleton key and focuses the existing instance', () => {
@@ -73,11 +88,11 @@ test('Electron fallback keeps one BrowserWindow per singleton key and focuses th
   assert.match(source, /Electron 子窗口加载失败/)
 })
 
-test('hardware, monitor, specs, standard watch, and super-lite watch retain distinct singleton keys', () => {
+test('hardware, monitor, specs, menubar settings, standard watch, and super-lite watch retain distinct singleton keys', () => {
   const preload = readSource('utools/preload.js')
   const source = readSource('utools/services/window.js')
 
-  for (const entry of ['a_computer', 'a_monitor', 'a_specs_lite', 'a_watch', 'a_watch_super_lite']) {
+  for (const entry of ['a_computer', 'a_monitor', 'a_specs_lite', 'a_menubar_settings', 'a_watch', 'a_watch_super_lite']) {
     assert.match(preload, new RegExp(`${entry}:`), entry)
   }
 

@@ -16,9 +16,11 @@ test('prefers the provided utools runtime when available', () => {
   const runtime = resolveUtoolsRuntime({
     isDev: () => false,
     outPlugin: () => 'noop',
+    onPluginOut: () => undefined,
   }, {})
 
   assert.equal(runtime.isDev(), false)
+  assert.equal(typeof runtime.onPluginOut, 'function')
 })
 
 test('derives plugin root from dev mode safely', () => {
