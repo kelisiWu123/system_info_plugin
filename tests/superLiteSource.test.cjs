@@ -50,6 +50,13 @@ test('Watch switches floating modes, resizes the window, and persists mode and p
   assert.match(watch, /formatSuperLiteRefreshLabel\(getCurrentPollProfile\(\)\.fast\)/)
 })
 
+test('floating monitor settings are persisted in interaction order', () => {
+  const watch = readSource('src/components/Watch/index.vue')
+
+  assert.match(watch, /let floatingSettingsSaveQueue: Promise<void> = Promise\.resolve\(\)/)
+  assert.match(watch, /async function persistFloatingMonitorSettings\(patch: Partial<FloatingMonitorSettingsData>\) \{[\s\S]*floatingSettingsSaveQueue = floatingSettingsSaveQueue\.then\(async \(\) => \{[\s\S]*await window\.services\.updateFloatingMonitorSettings\?\.\(patch\)[\s\S]*await floatingSettingsSaveQueue/)
+})
+
 test('explicit watch entries override persisted floating mode without mutating defaults', () => {
   const watch = readSource('src/components/Watch/index.vue')
 

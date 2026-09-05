@@ -11,6 +11,8 @@ const initialized = ref(false)
 let mediaQuery: MediaQueryList | undefined
 let broadcastChannel: BroadcastChannel | undefined
 let initializePromise: Promise<void> | undefined
+let themePreferenceSaveQueue: Promise<void> = Promise.resolve()
+let latestThemePreferenceRequestId = 0
 
 function normalizePreference(value: unknown): AppThemePreference {
   return value === 'light' || value === 'dark' ? value : 'system'
@@ -112,18 +114,27 @@ export async function setAppThemePreference(nextPreference: AppThemePreference) 
   applyPreference(next)
   broadcastChannel?.postMessage({ preference: next })
 
-  try {
-    if (typeof window.services?.updateAppThemeSettings !== 'function') return
+  if (typeof window.services?.updateAppThemeSettings !== 'function') return
+  const requestId = ++latestThemePreferenceRequestId
 
-    const saved = await window.services.updateAppThemeSettings({ preference: next })
-    const normalized = normalizePreference(saved?.preference)
-    if (normalized !== next) {
-      applyPreference(normalized)
-      broadcastChannel?.postMessage({ preference: normalized })
+  themePreferenceSaveQueue = themePreferenceSaveQueue.then(async () => {
+    try {
+      const saved = await window.services.updateAppThemeSettings({ preference: next })
+      if (requestId !== latestThemePreferenceRequestId) return
+
+      const normalized = normalizePreference(saved?.preference)
+      if (normalized !== next) {
+        applyPreference(normalized)
+        broadcastChannel?.postMessage({ preference: normalized })
+      }
+    } catch (error) {
+      if (requestId === latestThemePreferenceRequestId) {
+        console.warn('保存外观设置失败:', error)
+      }
     }
-  } catch (error) {
-    console.warn('保存外观设置失败:', error)
-  }
+  })
+
+  await themePreferenceSaveQueue
 }
 
 export const appThemeStore = {

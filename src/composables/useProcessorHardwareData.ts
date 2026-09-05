@@ -182,8 +182,13 @@ function startPolling() {
 
     pollingTimerId = window.setTimeout(async () => {
       pollingTimerId = undefined
-      await refreshProcessorDynamicMetrics()
-      scheduleNext()
+      try {
+        await refreshProcessorDynamicMetrics()
+      } catch (error) {
+        console.error('处理器轮询失败:', error)
+      } finally {
+        scheduleNext()
+      }
     }, getCurrentRefreshIntervals().base)
   }
 

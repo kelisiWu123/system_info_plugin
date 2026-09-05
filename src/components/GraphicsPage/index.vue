@@ -12,6 +12,7 @@ import { formatGpuTemperatureSensorLabel, getGpuIdlePercent, getGraphicsPlatform
 import { normalizeOsPlatform } from '../../utils/platform'
 import StateBlock from '../common/StateBlock.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
+import { getServiceErrorDescription } from '../../utils/serviceReader'
 
 const props = withDefaults(defineProps<{
   active?: boolean
@@ -78,7 +79,10 @@ const pageStateBlock = computed(() => {
     return {
       variant: 'error' as const,
       title: '显卡数据读取失败',
-      description: fetchState.gpuInfo.note || '读取显卡信息时发生异常，可以重试该模块。',
+      description: getServiceErrorDescription(
+        fetchState.gpuInfo.note,
+        '读取显卡信息时发生异常，可以重试该模块。'
+      ),
       actionLabel: '重试该模块',
     }
   }
@@ -632,6 +636,7 @@ const graphicsReportText = computed(() => {
   const lines = [
     '显卡页面报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    ...(pageStateBlock.value ? [`读取状态：${pageStateBlock.value.title}；${pageStateBlock.value.description}`] : []),
     '',
     `显卡：${gpu?.model || gpu?.name || '--'}`,
     `厂商：${gpu?.vendor || '--'}`,

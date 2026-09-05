@@ -12,9 +12,10 @@ test('detail pages keep blocking loading states while overview progressively ren
   const memory = readSource('src/components/MemoryPage/index.vue')
   const storage = readSource('src/components/StoragePage/index.vue')
   const processor = readSource('src/components/Processor/index.vue')
+  const board = readSource('src/components/BoardPage/index.vue')
   const overview = readSource('src/components/Computer/index.vue')
 
-  for (const source of [graphics, memory, storage, processor]) {
+  for (const source of [graphics, memory, storage, processor, board]) {
     assert.match(source, /import StateBlock from '..\/common\/StateBlock.vue'/)
     assert.match(source, /<StateBlock[\s\S]*variant="loading"/)
     assert.match(source, /<StateBlock[\s\S]*:variant="pageStateBlock\.variant"/)
@@ -28,8 +29,9 @@ test('detail pages keep blocking loading states while overview progressively ren
   assert.match(overview, /@retry="retryOverviewPage"/)
 })
 
-test('graphics, memory, storage, processor, and overview pages consume fetchState instead of relying only on field placeholders', () => {
+test('graphics, board, memory, storage, processor, and overview pages consume fetchState instead of relying only on field placeholders', () => {
   const graphics = readSource('src/components/GraphicsPage/index.vue')
+  const board = readSource('src/components/BoardPage/index.vue')
   const memory = readSource('src/components/MemoryPage/index.vue')
   const storage = readSource('src/components/StoragePage/index.vue')
   const processor = readSource('src/components/Processor/index.vue')
@@ -37,6 +39,8 @@ test('graphics, memory, storage, processor, and overview pages consume fetchStat
 
   assert.match(graphics, /fetchState/)
   assert.match(graphics, /fetchState\.gpuInfo/)
+  assert.match(board, /fetchState\[primaryFailure\]/)
+  assert.match(board, /fetchState\[key\]\.status === 'error'/)
   assert.match(memory, /fetchState\.memInfo/)
   assert.match(memory, /fetchState\.memoryLayout/)
   assert.match(storage, /fetchState\.diskData/)
@@ -45,6 +49,14 @@ test('graphics, memory, storage, processor, and overview pages consume fetchStat
   assert.match(processor, /fetchState\.cpuTemperature/)
   assert.match(overview, /fetchState\.cpuInfo/)
   assert.match(overview, /fetchState\.memInfo/)
+
+  for (const source of [graphics, board, memory, storage, processor, overview]) {
+    assert.match(source, /getServiceErrorDescription/)
+  }
+
+  for (const source of [graphics, memory, storage, processor, overview]) {
+    assert.match(source, /读取状态：\$\{pageStateBlock\.value\.title\}/)
+  }
 })
 
 test('graphics store exposes fetchState and explicit force refresh for page retry', () => {

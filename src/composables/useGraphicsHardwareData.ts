@@ -83,8 +83,13 @@ function startPolling() {
 
     pollingTimerId = window.setTimeout(async () => {
       pollingTimerId = undefined
-      await refreshGraphicsDynamicMetrics()
-      scheduleNext()
+      try {
+        await refreshGraphicsDynamicMetrics()
+      } catch (error) {
+        console.error('显卡轮询失败:', error)
+      } finally {
+        scheduleNext()
+      }
     }, getCurrentRefreshIntervals().base)
   }
 
@@ -133,7 +138,8 @@ async function refreshGraphicsDynamicMetrics(force = false) {
         setFetchState('gpuInfo', gpuData.value.length ? 'ok' : 'missing', gpuData.value.length ? '' : '返回空数组')
       } catch (error) {
         setFetchState('gpuInfo', 'error', normalizeErrorMessage(error))
-        throw error
+        diagnostics.markRefreshSkipped('gpu-read-failed', backgroundThrottled.value)
+        return
       }
 
       const nextPrimaryGpu = selectPrimaryGpu(gpuData.value)

@@ -61,6 +61,27 @@ type MonitorHistoryKey =
   | 'diskRead'
   | 'diskWrite'
 
+export type MonitorTelemetryKey =
+  | 'cpuLoad'
+  | 'cpuTemperature'
+  | 'gpu'
+  | 'memory'
+  | 'storage'
+  | 'storageIo'
+  | 'network'
+  | 'processes'
+  | 'time'
+
+export interface MonitorTelemetryStatus {
+  lastSuccessAt?: number
+  error: string
+}
+
+export interface MonitorRefreshResult {
+  failedKeys: MonitorTelemetryKey[]
+  successfulKeys: MonitorTelemetryKey[]
+}
+
 const loading = ref(true)
 const initialized = ref(false)
 const lastSyncedAt = ref<number>()
@@ -94,9 +115,35 @@ const metricHistory = reactive<Record<MonitorHistoryKey, number[]>>({
   diskWrite: [],
 })
 
+const telemetryStatus = reactive<Record<MonitorTelemetryKey, MonitorTelemetryStatus>>({
+  cpuLoad: { error: '' },
+  cpuTemperature: { error: '' },
+  gpu: { error: '' },
+  memory: { error: '' },
+  storage: { error: '' },
+  storageIo: { error: '' },
+  network: { error: '' },
+  processes: { error: '' },
+  time: { error: '' },
+})
+
+const telemetryLabels: Record<MonitorTelemetryKey, string> = {
+  cpuLoad: 'CPU 使用率',
+  cpuTemperature: 'CPU 温度',
+  gpu: 'GPU 数据',
+  memory: '内存数据',
+  storage: '存储用量',
+  storageIo: '存储 I/O',
+  network: '网络数据',
+  processes: '进程列表',
+  time: '系统运行时间',
+}
+
 let subscriberCount = 0
 let initPromise: Promise<void> | undefined
-let refreshInFlight: Promise<void> | undefined
+let refreshInFlight: Promise<MonitorRefreshResult> | undefined
+let refreshInFlightIsForced = false
+let queuedForceRefresh: Promise<MonitorRefreshResult> | undefined
 let settingsPromise: Promise<void> | undefined
 let pollingTimerId: number | undefined
 let visibilityListenersBound = false
@@ -156,14 +203,60 @@ function bindVisibilityListeners() {
   )
 }
 
-function setRefreshError(results: PromiseSettledResult<unknown>[]) {
-  const failed = results.find((result) => result.status === 'rejected')
-  lastError.value = failed?.status === 'rejected' ? normalizeErrorMessage(failed.reason) : ''
+function updateTelemetryStatus(
+  key: MonitorTelemetryKey,
+  result: PromiseSettledResult<unknown>,
+  completedAt: number
+) {
+  const status = telemetryStatus[key]
+  if (result.status === 'fulfilled') {
+    status.lastSuccessAt = completedAt
+    status.error = ''
+    return true
+  }
+
+  status.error = normalizeErrorMessage(result.reason)
+  return false
 }
 
-async function refreshMonitorMetrics(force = false) {
-  if (refreshInFlight) return refreshInFlight
+function summarizeRefreshResults(
+  results: ReadonlyArray<readonly [MonitorTelemetryKey, PromiseSettledResult<unknown>]>,
+  completedAt: number
+): MonitorRefreshResult {
+  const failedKeys: MonitorTelemetryKey[] = []
+  const successfulKeys: MonitorTelemetryKey[] = []
 
+  for (const [key, result] of results) {
+    if (updateTelemetryStatus(key, result, completedAt)) {
+      successfulKeys.push(key)
+    } else {
+      failedKeys.push(key)
+    }
+  }
+
+  lastError.value = (Object.keys(telemetryStatus) as MonitorTelemetryKey[])
+    .filter((key) => telemetryStatus[key].error)
+    .map((key) => telemetryLabels[key])
+    .join('、')
+  if (successfulKeys.length) lastSyncedAt.value = completedAt
+
+  return { failedKeys, successfulKeys }
+}
+
+async function refreshMonitorMetrics(force = false): Promise<MonitorRefreshResult> {
+  if (refreshInFlight) {
+    if (!force || refreshInFlightIsForced) return refreshInFlight
+    if (!queuedForceRefresh) {
+      queuedForceRefresh = refreshInFlight
+        .then(() => refreshMonitorMetrics(true))
+        .finally(() => {
+          queuedForceRefresh = undefined
+        })
+    }
+    return queuedForceRefresh
+  }
+
+  refreshInFlightIsForced = force
   refreshInFlight = (async () => {
     const now = Date.now()
     const intervals = getRefreshIntervals()
@@ -259,10 +352,25 @@ async function refreshMonitorMetrics(force = false) {
       lastTimeRefreshAt = now
     }
 
-    setRefreshError(results)
-    lastSyncedAt.value = Date.now()
+    const completedAt = Date.now()
+    return summarizeRefreshResults([
+      ['cpuLoad', cpuLoadRes],
+      ...(needsCpuTemp ? [['cpuTemperature', cpuTempRes] as const] : []),
+      ...(needsGpu ? [['gpu', gpuRes] as const] : []),
+      ...(needsMemory ? [['memory', memoRes] as const] : []),
+      ...(needsDisk
+        ? [
+            ['storage', diskRes] as const,
+            ['storageIo', storageIoRes] as const,
+          ]
+        : []),
+      ...(needsNetwork ? [['network', networkRes] as const] : []),
+      ...(needsProcesses ? [['processes', processRes] as const] : []),
+      ...(needsTime ? [['time', timeRes] as const] : []),
+    ], completedAt)
   })().finally(() => {
     refreshInFlight = undefined
+    refreshInFlightIsForced = false
   })
 
   return refreshInFlight
@@ -299,8 +407,13 @@ function scheduleNextPoll() {
   pollingTimerId = window.setTimeout(async () => {
     pollingTimerId = undefined
     if (subscriberCount <= 0) return
-    await refreshMonitorMetrics()
-    scheduleNextPoll()
+    try {
+      await refreshMonitorMetrics()
+    } catch {
+      lastError.value = '监控轮询'
+    } finally {
+      scheduleNextPoll()
+    }
   }, getRefreshIntervals().base)
 }
 
@@ -344,8 +457,8 @@ export function deactivateMonitorDashboard() {
   if (subscriberCount === 0) stopPolling()
 }
 
-export async function refreshMonitorDashboardData() {
-  await refreshMonitorMetrics(true)
+export async function refreshMonitorDashboardData(): Promise<MonitorRefreshResult> {
+  return refreshMonitorMetrics(true)
 }
 
 export async function updateMonitorRefreshSettings(patch: Partial<MonitoringRefreshSettingsData>) {
@@ -362,6 +475,7 @@ export const monitorDashboardStore = {
   initialized,
   lastSyncedAt,
   lastError,
+  telemetryStatus,
   monitoringRefreshSettings,
   backgroundThrottled,
   cpuData,

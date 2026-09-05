@@ -58,6 +58,7 @@ test('Windows startup failures remain visible instead of being downgraded to a p
   assert.match(processor, /const windowsSensorReadiness = computed\(\(\) => getWindowsSensorEnhancementReadiness\(openHardwareMonitorStatus\.value\)\)/)
   assert.match(processor, /if \(sensorActionLoading\.value\) return '增强组件正在准备，请稍候'/)
   assert.match(processor, /reconcileWindowsSensorStartStatus\(startStatus, latestStatus\)/)
+  assert.match(processor, /catch \(error\) \{[\s\S]*console\.error\('启动 Windows 传感器增强失败:', error\)[\s\S]*reason: 'WINDOWS_SENSOR_BACKEND_START_FAILED'/)
   assert.match(platform, /reason\.startsWith\('WINDOWS_SENSOR_'\)/)
 })
 

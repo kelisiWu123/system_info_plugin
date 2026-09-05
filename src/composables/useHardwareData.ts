@@ -370,8 +370,13 @@ function scheduleNextPoll() {
   pollingTimerId = window.setTimeout(async () => {
     pollingTimerId = undefined
     if (!hasActiveDynamicScope()) return
-    await refreshActiveDynamicScopes()
-    scheduleNextPoll()
+    try {
+      await refreshActiveDynamicScopes()
+    } catch (error) {
+      console.error('硬件详情轮询失败:', error)
+    } finally {
+      scheduleNextPoll()
+    }
   }, getCurrentRefreshIntervals().base)
 }
 

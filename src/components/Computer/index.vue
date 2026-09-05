@@ -14,6 +14,7 @@ import {
 } from '../../composables/useOverviewHardwareData'
 import { hardwareStore } from '../../composables/useHardwareData'
 import StateBlock from '../common/StateBlock.vue'
+import { getServiceErrorDescription } from '../../utils/serviceReader'
 import {
   bytesToGB,
   formatBytes,
@@ -115,6 +116,7 @@ const {
 } = overviewHardwareStore
 
 const serviceLabels = overviewLiteServiceLabels
+const pageActive = ref(false)
 const subscribed = ref(false)
 const uptimeSeconds = ref(0)
 const diagnosticsExpanded = ref(false)
@@ -127,7 +129,10 @@ const pageStateBlock = computed(() => {
     return {
       variant: 'error' as const,
       title: '系统概览读取失败',
-      description: fetchState.cpuInfo.note || fetchState.memInfo.note || '读取处理器或内存摘要时发生异常，可以重试该模块。',
+      description: getServiceErrorDescription(
+        fetchState.cpuInfo.note || fetchState.memInfo.note,
+        '读取处理器或内存摘要时发生异常，可以重试该模块。'
+      ),
       actionLabel: '重试该模块',
     }
   }
@@ -592,6 +597,7 @@ const overviewReportText = computed(() => {
   const reportLines = [
     '系统概览报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    ...(pageStateBlock.value ? [`读取状态：${pageStateBlock.value.title}；${pageStateBlock.value.description}`] : []),
     '',
     ...summaryCards.value.map((card) => `${card.label}：${card.title}${card.lines.length ? ` / ${card.lines.join(' / ')}` : ''}`),
     '',
@@ -676,7 +682,7 @@ watch(
   () => timeInfo.value?.uptime,
   (uptime) => {
     uptimeSeconds.value = Math.floor(uptime || 0)
-    if (props.active !== false) {
+    if (pageActive.value) {
       startUptimeTicker()
     }
   },
@@ -686,11 +692,15 @@ watch(
 useActivePageLifecycle(
   () => props.active,
   async () => {
+    pageActive.value = true
     await ensureStoreActive()
     uptimeSeconds.value = Math.floor(timeInfo.value?.uptime || 0)
     startUptimeTicker()
   },
-  releaseStore,
+  () => {
+    pageActive.value = false
+    releaseStore()
+  },
 )
 </script>
 

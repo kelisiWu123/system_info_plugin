@@ -28,7 +28,7 @@ const props = defineProps<{
   active?: boolean
 }>()
 
-type SpecAvailability = 'ready' | 'pending' | 'missing' | 'unsupported' | 'error'
+type SpecAvailability = 'ready' | 'pending' | 'missing' | 'unsupported' | 'error' | 'stale'
 
 interface CoreSpecCard {
   id: string
@@ -78,8 +78,19 @@ const {
 } = useDeviceSpecsHardwareData()
 
 const refreshing = ref(false)
+const copyPending = ref(false)
 const copyFeedback = ref<'idle' | 'success' | 'error'>('idle')
+const exportFeedback = ref<'idle' | 'success' | 'error'>('idle')
 let copyFeedbackTimerId: number | undefined
+let exportFeedbackTimerId: number | undefined
+
+const actionFeedbackText = computed(() => {
+  if (copyFeedback.value === 'success') return '设备规格已复制到剪贴板'
+  if (copyFeedback.value === 'error') return '设备规格复制失败'
+  if (exportFeedback.value === 'success') return '设备规格报告已开始导出'
+  if (exportFeedback.value === 'error') return '设备规格报告导出失败'
+  return ''
+})
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -145,19 +156,19 @@ function formatSyncTime(value?: number) {
 }
 
 function resolveAvailability(keys: DeviceSpecsServiceKey[], hasValue: boolean): SpecAvailability {
-  if (hasValue) return 'ready'
-
   const states = keys.map((key) => fetchState[key])
-  if (states.some((state) => state.status === 'pending')) return 'pending'
-
   const failedState = states.find((state) => state.status === 'error')
   if (failedState) {
+    if (hasValue) return 'stale'
     const note = failedState.note.toLowerCase()
     if (note.includes('unsupported') || note.includes('not supported') || note.includes('不支持')) {
       return 'unsupported'
     }
     return 'error'
   }
+
+  if (hasValue) return 'ready'
+  if (states.some((state) => state.status === 'pending')) return 'pending'
 
   return 'missing'
 }
@@ -168,6 +179,7 @@ function availabilityLabel(availability: SpecAvailability) {
     case 'missing': return '系统未提供'
     case 'unsupported': return '当前平台不支持'
     case 'error': return '读取失败'
+    case 'stale': return '读取失败 · 显示上次结果'
     default: return ''
   }
 }
@@ -415,7 +427,20 @@ const coreSpecGroups = computed<CoreSpecGroup[]>(() => [
   },
 ])
 
-const identifiedCoreCount = computed(() => coreSpecCards.value.filter((card) => card.availability === 'ready').length)
+const identifiedCoreCount = computed(() => coreSpecCards.value.filter((card) => (
+  card.availability === 'ready' || card.availability === 'stale'
+)).length)
+const failedReadCount = computed(() => (
+  (Object.keys(fetchState) as DeviceSpecsServiceKey[])
+    .filter((key) => fetchState[key].status === 'error')
+    .length
+))
+const specsStatusText = computed(() => {
+  if (failedReadCount.value) return `核心项 ${identifiedCoreCount.value}/6 · ${failedReadCount.value} 项读取失败`
+  if (!lastSyncedAt.value) return `核心项 ${identifiedCoreCount.value}/6 · 暂无成功读取`
+  const action = identifiedCoreCount.value === 6 ? '已更新' : '已检查'
+  return `核心项 ${identifiedCoreCount.value}/6 · ${action} ${formatSyncTime(lastSyncedAt.value)}`
+})
 
 function formatDisplayLine(item: DisplayData) {
   const name = cleanText(item.model) || cleanText(item.deviceName) || cleanText(item.vendor)
@@ -464,6 +489,7 @@ const specsReportText = computed(() => {
   return [
     '设备规格',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    ...(loaded.value ? [`读取状态：${specsStatusText.value}`] : []),
     `设备：${deviceTitle.value}`,
     systemLine.value ? `系统：${systemLine.value}` : '',
     '',
@@ -480,6 +506,36 @@ function exportReport() {
   )
 }
 
+function resetExportFeedbackLater() {
+  if (exportFeedbackTimerId) window.clearTimeout(exportFeedbackTimerId)
+  exportFeedbackTimerId = window.setTimeout(() => {
+    exportFeedback.value = 'idle'
+    exportFeedbackTimerId = undefined
+  }, 1600)
+}
+
+function clearExportFeedback() {
+  exportFeedback.value = 'idle'
+  if (exportFeedbackTimerId) {
+    window.clearTimeout(exportFeedbackTimerId)
+    exportFeedbackTimerId = undefined
+  }
+}
+
+function exportDeviceSpecsReport() {
+  if (copyPending.value) return
+  clearCopyFeedback()
+
+  try {
+    exportReport()
+    exportFeedback.value = 'success'
+  } catch (error) {
+    console.error('导出设备规格失败:', error)
+    exportFeedback.value = 'error'
+  }
+  resetExportFeedbackLater()
+}
+
 function resetCopyFeedbackLater() {
   if (copyFeedbackTimerId) window.clearTimeout(copyFeedbackTimerId)
   copyFeedbackTimerId = window.setTimeout(() => {
@@ -488,7 +544,19 @@ function resetCopyFeedbackLater() {
   }, 1600)
 }
 
+function clearCopyFeedback() {
+  copyFeedback.value = 'idle'
+  if (copyFeedbackTimerId) {
+    window.clearTimeout(copyFeedbackTimerId)
+    copyFeedbackTimerId = undefined
+  }
+}
+
 async function copyDeviceSpecsInfo() {
+  if (copyPending.value) return false
+  clearExportFeedback()
+  copyPending.value = true
+
   try {
     await writeClipboardText(specsReportText.value)
     copyFeedback.value = 'success'
@@ -499,6 +567,8 @@ async function copyDeviceSpecsInfo() {
     copyFeedback.value = 'error'
     resetCopyFeedbackLater()
     return false
+  } finally {
+    copyPending.value = false
   }
 }
 
@@ -528,6 +598,7 @@ watch(
 
 onUnmounted(() => {
   if (copyFeedbackTimerId) window.clearTimeout(copyFeedbackTimerId)
+  if (exportFeedbackTimerId) window.clearTimeout(exportFeedbackTimerId)
 })
 </script>
 
@@ -552,15 +623,36 @@ onUnmounted(() => {
               <span class="spec-loading-status__pulse" aria-hidden="true" />
               核心项 {{ identifiedCoreCount }}/6 · 正在补齐 {{ pendingReads }} 项
             </div>
-            <div v-else-if="loaded && lastSyncedAt" class="spec-loaded-status">
-              核心项 {{ identifiedCoreCount }}/6 · 已更新 {{ formatSyncTime(lastSyncedAt) }}
+            <div
+              v-else-if="loaded"
+              :class="['spec-loaded-status', { 'spec-loaded-status--warning': failedReadCount > 0 }]"
+              role="status"
+              aria-live="polite"
+            >
+              {{ specsStatusText }}
             </div>
 
-            <button type="button" class="spec-action" @click="copyDeviceSpecsInfo">
-              {{ copyFeedback === 'success' ? '已复制' : copyFeedback === 'error' ? '复制失败' : '复制配置' }}
+            <button type="button" class="spec-action" :disabled="copyPending" :aria-busy="copyPending" @click="copyDeviceSpecsInfo">
+              {{ copyPending ? '复制中…' : copyFeedback === 'success' ? '已复制' : copyFeedback === 'error' ? '复制失败' : '复制配置' }}
             </button>
-            <button type="button" class="spec-action" @click="exportReport">导出</button>
-            <button type="button" class="spec-action spec-action--icon" :disabled="refreshing" title="重新读取设备规格" @click="refreshSpecs">
+            <button
+              type="button"
+              :disabled="copyPending"
+              :class="['spec-action', { 'spec-action--success': exportFeedback === 'success', 'spec-action--error': exportFeedback === 'error' }]"
+              @click="exportDeviceSpecsReport"
+            >
+              {{ exportFeedback === 'success' ? '已开始导出' : exportFeedback === 'error' ? '导出失败' : '导出' }}
+            </button>
+            <span class="spec-action-feedback" role="status" aria-live="polite" aria-atomic="true">{{ actionFeedbackText }}</span>
+            <button
+              type="button"
+              :class="['spec-action', 'spec-action--icon', { 'spec-action--refreshing': refreshing }]"
+              :disabled="refreshing"
+              :aria-busy="refreshing"
+              :aria-label="refreshing ? '正在重新读取设备规格' : '重新读取设备规格'"
+              :title="refreshing ? '正在重新读取设备规格' : '重新读取设备规格'"
+              @click="refreshSpecs"
+            >
               <Refresh theme="outline" size="17" fill="currentColor" :strokeWidth="3" />
             </button>
           </div>
@@ -728,6 +820,10 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
+.spec-loaded-status--warning {
+  color: var(--state-warn-fg);
+}
+
 .spec-loading-status {
   display: inline-flex;
   align-items: center;
@@ -757,14 +853,49 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.spec-action:hover {
+.spec-action:not(:disabled):hover {
   border-color: var(--control-border-strong);
   color: var(--control-fg-strong);
+}
+
+.spec-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.spec-action--success {
+  border-color: rgba(89, 201, 118, 0.54);
+  color: var(--button-feedback-success);
+}
+
+.spec-action--error {
+  border-color: rgba(255, 126, 107, 0.56);
+  color: var(--button-feedback-error);
+}
+
+.spec-action-feedback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .spec-action--icon {
   width: 34px;
   padding: 0;
+}
+
+.spec-action--refreshing svg {
+  animation: spec-action-spin 0.8s linear infinite;
+}
+
+@keyframes spec-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .core-spec-sections {
@@ -824,6 +955,11 @@ onUnmounted(() => {
   border-color: rgba(255, 126, 107, 0.32);
 }
 
+.core-spec-card--stale {
+  border-color: var(--state-warn-fg);
+  border-style: dashed;
+}
+
 .core-spec-card__head {
   display: flex;
   align-items: center;
@@ -880,6 +1016,11 @@ onUnmounted(() => {
 .core-spec-card__status--error {
   background: var(--state-danger-bg);
   color: var(--accent-danger);
+}
+
+.core-spec-card__status--stale {
+  background: var(--state-warn-bg);
+  color: var(--state-warn-fg);
 }
 
 .core-spec-card h2 {
@@ -984,6 +1125,10 @@ onUnmounted(() => {
 
 .secondary-spec-row--error p {
   color: var(--accent-danger);
+}
+
+.secondary-spec-row--stale p {
+  color: var(--state-warn-fg);
 }
 
 @media (max-width: 900px) {

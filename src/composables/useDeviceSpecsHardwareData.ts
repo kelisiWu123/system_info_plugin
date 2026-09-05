@@ -182,7 +182,9 @@ async function readDeviceSpecsHardwareData() {
     ),
   ])
 
-  lastSyncedAt.value = Date.now()
+  if (Object.values(fetchState).some((state) => state.status !== 'error')) {
+    lastSyncedAt.value = Date.now()
+  }
 }
 
 export async function loadDeviceSpecsHardwareData(force = false) {

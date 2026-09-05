@@ -5,6 +5,7 @@ import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshH
 import { clampPercent, formatBytes, formatSpeed, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes, hasDiskHealthTelemetry } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
+import { getServiceErrorDescription } from '../../utils/serviceReader'
 
 const props = defineProps<{
   active?: boolean
@@ -75,7 +76,10 @@ const pageStateBlock = computed(() => {
     return {
       variant: 'error' as const,
       title: '存储数据读取失败',
-      description: fetchState.diskLayout.note || fetchState.diskData.note || '读取物理磁盘或挂载卷信息时发生异常，可以重试该模块。',
+      description: getServiceErrorDescription(
+        fetchState.diskLayout.note || fetchState.diskData.note,
+        '读取物理磁盘或挂载卷信息时发生异常，可以重试该模块。'
+      ),
       actionLabel: '重试该模块',
     }
   }
@@ -355,6 +359,7 @@ const storageReportText = computed(() => {
   const lines = [
     '存储页面报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    ...(pageStateBlock.value ? [`读取状态：${pageStateBlock.value.title}；${pageStateBlock.value.description}`] : []),
     '',
     `物理磁盘：${physicalDisks.value.length}`,
     `挂载卷：${volumeRows.value.length}`,

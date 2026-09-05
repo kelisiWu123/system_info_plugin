@@ -1,7 +1,11 @@
 export async function writeClipboardText(text: string) {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Clipboard permissions may reject even though the document fallback remains available.
+    }
   }
 
   const textarea = document.createElement('textarea')
@@ -27,10 +31,13 @@ export function downloadTextFile(filename: string, text: string) {
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
 
   try {
     anchor.click()
   } finally {
-    URL.revokeObjectURL(url)
+    anchor.remove()
+    globalThis.setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 }

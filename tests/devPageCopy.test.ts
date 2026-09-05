@@ -7,19 +7,19 @@ test('resolves the dev copy target for each supported hardware section', () => {
   assert.deepEqual(resolveDevPageCopyTarget('overview'), {
     section: 'overview',
     methodName: 'copyOverviewInfo',
-    buttonLabel: '拷贝当前页信息',
+    buttonLabel: '复制当前页信息',
   })
 
   assert.deepEqual(resolveDevPageCopyTarget('processor'), {
     section: 'processor',
     methodName: 'copyProcessorInfo',
-    buttonLabel: '拷贝当前页信息',
+    buttonLabel: '复制当前页信息',
   })
 
   assert.deepEqual(resolveDevPageCopyTarget('graphics'), {
     section: 'graphics',
     methodName: 'copyGraphicsInfo',
-    buttonLabel: '拷贝当前页信息',
+    buttonLabel: '复制当前页信息',
   })
 })
 

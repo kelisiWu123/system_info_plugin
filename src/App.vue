@@ -51,13 +51,19 @@ const currentHash = ref(window.location.hash)
 const selectedSection = ref<ComputerSection>('overview')
 const copyPending = ref(false)
 const copyFeedback = ref<'idle' | 'success' | 'error'>('idle')
+const exportFeedback = ref<'idle' | 'success' | 'error'>('idle')
 const computerRef = ref<CopyablePageHandle | null>(null)
 const processorRef = ref<CopyablePageHandle | null>(null)
 const graphicsRef = ref<CopyablePageHandle | null>(null)
 const boardRef = ref<CopyablePageHandle | null>(null)
 const memoryRef = ref<CopyablePageHandle | null>(null)
 const storageRef = ref<CopyablePageHandle | null>(null)
+const sensorMenuRootRef = ref<HTMLElement | null>(null)
+const sensorMenuTriggerRef = ref<HTMLButtonElement | null>(null)
+const sensorAuthorizationDialogRef = ref<HTMLElement | null>(null)
+const sensorAuthorizationReturnFocus = ref<HTMLElement | null>(null)
 let copyFeedbackTimerId: number | undefined
+let exportFeedbackTimerId: number | undefined
 
 const primaryNavItems: SidebarItem[] = [
   { id: 'overview', label: '概览', icon: ComputerIcon, page: 'computer' },
@@ -137,11 +143,71 @@ function syncDocumentTitle() {
         : '硬件信息'
 }
 
+watch(sensorAuthorizationPromptVisible, async (visible) => {
+  if (visible) {
+    sensorAuthorizationReturnFocus.value = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
+    await nextTick()
+    sensorAuthorizationDialogRef.value?.focus()
+    return
+  }
+
+  const returnFocus = sensorAuthorizationReturnFocus.value
+  sensorAuthorizationReturnFocus.value = null
+  await nextTick()
+  if (!sensorAuthorizationPromptVisible.value && returnFocus?.isConnected) {
+    returnFocus.focus()
+  }
+})
+
+function trapSensorAuthorizationFocus(event: KeyboardEvent) {
+  const dialog = sensorAuthorizationDialogRef.value
+  if (!dialog) return
+
+  const buttons = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+  if (!buttons.length) {
+    event.preventDefault()
+    dialog.focus()
+    return
+  }
+
+  const firstButton = buttons[0]
+  const lastButton = buttons[buttons.length - 1]
+  const activeElement = document.activeElement
+
+  if (event.shiftKey && (activeElement === firstButton || activeElement === dialog)) {
+    event.preventDefault()
+    lastButton.focus()
+  } else if (!event.shiftKey && activeElement === lastButton) {
+    event.preventDefault()
+    firstButton.focus()
+  }
+}
+
+function dismissSensorAuthorizationPrompt() {
+  if (sensorActionLoading.value) return
+  sensorAuthorizationPromptVisible.value = false
+}
+
+function closeSensorMenuAndRestoreFocus() {
+  sensorMenuOpen.value = false
+  nextTick(() => sensorMenuTriggerRef.value?.focus())
+}
+
+function closeSensorMenuOnOutsidePointer(event: PointerEvent) {
+  if (!sensorMenuOpen.value || !(event.target instanceof Node)) return
+  if (!sensorMenuRootRef.value?.contains(event.target)) {
+    sensorMenuOpen.value = false
+  }
+}
+
 function selectSection(id: SidebarItem['id']) {
   selectedSection.value = id
   sensorMenuOpen.value = false
   sensorActionMessage.value = ''
   clearCopyFeedback()
+  clearExportFeedback()
 
   if (currentPage.value !== 'computer' || !window.location.hash) {
     window.location.hash = 'computer'
@@ -167,6 +233,25 @@ function clearCopyFeedback() {
   }
 }
 
+function resetExportFeedbackLater() {
+  if (exportFeedbackTimerId) {
+    window.clearTimeout(exportFeedbackTimerId)
+  }
+
+  exportFeedbackTimerId = window.setTimeout(() => {
+    exportFeedback.value = 'idle'
+    exportFeedbackTimerId = undefined
+  }, 1800)
+}
+
+function clearExportFeedback() {
+  exportFeedback.value = 'idle'
+  if (exportFeedbackTimerId) {
+    window.clearTimeout(exportFeedbackTimerId)
+    exportFeedbackTimerId = undefined
+  }
+}
+
 function getCurrentCopyHandle() {
   switch (selectedSection.value) {
     case 'overview':
@@ -188,6 +273,7 @@ function getCurrentCopyHandle() {
 
 async function copyCurrentSectionInfo() {
   if (!currentDevCopyTarget.value || copyPending.value) return
+  clearExportFeedback()
 
   const handle = getCurrentCopyHandle()
   const method = handle?.[currentDevCopyTarget.value.methodName]
@@ -202,13 +288,29 @@ async function copyCurrentSectionInfo() {
     const ok = await method()
     copyFeedback.value = ok ? 'success' : 'error'
     resetCopyFeedbackLater()
+  } catch (error) {
+    console.error('复制当前页面信息失败:', error)
+    copyFeedback.value = 'error'
+    resetCopyFeedbackLater()
   } finally {
     copyPending.value = false
   }
 }
 
 function exportCurrentSectionReport() {
-  getCurrentCopyHandle()?.exportReport?.()
+  if (copyPending.value) return
+  clearCopyFeedback()
+
+  try {
+    const exportReport = getCurrentCopyHandle()?.exportReport
+    if (!exportReport) throw new Error('当前页面不支持报告导出')
+    exportReport()
+    exportFeedback.value = 'success'
+  } catch (error) {
+    console.error('导出当前页面报告失败:', error)
+    exportFeedback.value = 'error'
+  }
+  resetExportFeedbackLater()
 }
 
 const devCopyButtonClass = computed(() => [
@@ -218,10 +320,31 @@ const devCopyButtonClass = computed(() => [
 ])
 
 const devCopyButtonText = computed(() => {
-  if (copyPending.value) return '拷贝中...'
-  if (copyFeedback.value === 'success') return '已拷贝'
-  if (copyFeedback.value === 'error') return '拷贝失败'
-  return currentDevCopyTarget.value?.buttonLabel || '拷贝当前页信息'
+  if (copyPending.value) return '复制中...'
+  if (copyFeedback.value === 'success') return '已复制'
+  if (copyFeedback.value === 'error') return '复制失败'
+  return currentDevCopyTarget.value?.buttonLabel || '复制当前页信息'
+})
+
+const exportButtonClass = computed(() => [
+  'export-button',
+  exportFeedback.value === 'success' ? 'export-button--success' : '',
+  exportFeedback.value === 'error' ? 'export-button--error' : '',
+])
+
+const exportButtonText = computed(() => {
+  if (exportFeedback.value === 'success') return '已开始导出'
+  if (exportFeedback.value === 'error') return '导出失败'
+  return '导出报告'
+})
+
+const headerActionFeedbackText = computed(() => {
+  if (copyPending.value) return '正在复制当前页面信息'
+  if (copyFeedback.value === 'success') return '当前页面信息已复制到剪贴板'
+  if (copyFeedback.value === 'error') return '当前页面信息复制失败'
+  if (exportFeedback.value === 'success') return '报告已开始导出'
+  if (exportFeedback.value === 'error') return '报告导出失败'
+  return ''
 })
 
 const processorSensorControlVisible = computed(() =>
@@ -304,16 +427,22 @@ watch(
 
 onMounted(() => {
   window.addEventListener('hashchange', syncHash)
+  document.addEventListener('pointerdown', closeSensorMenuOnOutsidePointer)
   syncBodyMode()
   syncDocumentTitle()
 })
 
 onUnmounted(() => {
   window.removeEventListener('hashchange', syncHash)
+  document.removeEventListener('pointerdown', closeSensorMenuOnOutsidePointer)
   document.body.classList.remove('watch-window-body')
   if (copyFeedbackTimerId) {
     window.clearTimeout(copyFeedbackTimerId)
     copyFeedbackTimerId = undefined
+  }
+  if (exportFeedbackTimerId) {
+    window.clearTimeout(exportFeedbackTimerId)
+    exportFeedbackTimerId = undefined
   }
 })
 </script>
@@ -373,12 +502,15 @@ onUnmounted(() => {
 
       <div class="window-titlebar__right">
         <div v-if="processorSensorControlVisible" class="window-titlebar__controls">
-          <div class="header-sensor-menu">
+          <div ref="sensorMenuRootRef" class="header-sensor-menu">
             <button
+              ref="sensorMenuTriggerRef"
               type="button"
               :disabled="processorSensorControlDisabled"
               :aria-label="processorSensorControlAriaLabel"
               :title="processorSensorControlTitle"
+              :aria-expanded="sensorMenuOpen"
+              aria-controls="sensor-menu-popover"
               :class="[
                 'header-sensor-trigger',
                 `header-sensor-trigger--${sensorEnhancementStatus}`,
@@ -388,6 +520,7 @@ onUnmounted(() => {
                 },
               ]"
               @click="toggleSensorMenu()"
+              @keydown.esc.stop="closeSensorMenuAndRestoreFocus"
             >
               <span>{{ processorSensorControlLabel }}</span>
               <em>{{ processorSensorControlStatus }}</em>
@@ -401,13 +534,20 @@ onUnmounted(() => {
               />
             </button>
 
-            <div v-if="sensorMenuOpen" class="sensor-menu-popover">
+            <div
+              v-if="sensorMenuOpen"
+              id="sensor-menu-popover"
+              class="sensor-menu-popover"
+              role="group"
+              aria-label="硬件传感器控制"
+              @keydown.esc.stop="closeSensorMenuAndRestoreFocus"
+            >
               <div class="sensor-menu-popover__head">
                 <span>{{ processorSensorControlLabel }}</span>
                 <strong>{{ processorSensorControlStatus }}</strong>
               </div>
               <p>{{ sensorEnhancementDescription }}</p>
-              <p v-if="sensorActionMessage" class="sensor-menu-popover__message">{{ sensorActionMessage }}</p>
+              <p v-if="sensorActionMessage" class="sensor-menu-popover__message" role="status" aria-live="polite">{{ sensorActionMessage }}</p>
 
               <div class="sensor-menu-popover__actions">
                 <button
@@ -511,12 +651,14 @@ onUnmounted(() => {
         <div class="main-header__copy">
           <h1>{{ headerMeta.title }}</h1>
           <p>{{ headerMeta.description }}</p>
+          <span class="assistive-status" role="status" aria-live="polite" aria-atomic="true">已打开{{ headerMeta.title }}页面</span>
         </div>
 
         <div v-if="showMainHeaderActions" class="main-header__actions">
           <button
             type="button"
             :disabled="copyPending"
+            :aria-busy="copyPending"
             :class="devCopyButtonClass"
             @click="copyCurrentSectionInfo()"
           >
@@ -524,11 +666,13 @@ onUnmounted(() => {
           </button>
           <button
             type="button"
-            class="export-button"
+            :disabled="copyPending"
+            :class="exportButtonClass"
             @click="exportCurrentSectionReport()"
           >
-            导出报告
+            {{ exportButtonText }}
           </button>
+          <span class="assistive-status" role="status" aria-live="polite" aria-atomic="true">{{ headerActionFeedbackText }}</span>
         </div>
       </header>
 
@@ -572,12 +716,22 @@ onUnmounted(() => {
   </div>
 
   <div v-if="sensorAuthorizationPromptVisible" class="sensor-auth-overlay">
-    <section class="sensor-auth-dialog">
+    <section
+      ref="sensorAuthorizationDialogRef"
+      class="sensor-auth-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sensor-auth-dialog-title"
+      aria-describedby="sensor-auth-dialog-description"
+      tabindex="-1"
+      @keydown.tab="trapSensorAuthorizationFocus"
+      @keydown.esc.stop="dismissSensorAuthorizationPrompt"
+    >
       <div class="sensor-auth-dialog__head">
         <span>传感器增强</span>
-        <h2>启用传感器增强</h2>
+        <h2 id="sensor-auth-dialog-title">启用传感器增强</h2>
       </div>
-      <p>
+      <p id="sensor-auth-dialog-description">
         为了读取更完整的温度、频率和功耗数据，需要一次系统授权。授权后会自动启用增强模式，你也可以随时在传感器设置中关闭。
       </p>
       <div class="sensor-auth-dialog__actions">
@@ -1144,10 +1298,16 @@ onUnmounted(() => {
   transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
-.debug-button:hover {
+.debug-button:not(:disabled):hover {
   background: var(--button-hover-bg);
   border-color: rgba(108, 130, 166, 0.58);
   color: var(--text-primary);
+}
+
+.debug-button:disabled,
+.export-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .debug-button--success {
@@ -1160,9 +1320,29 @@ onUnmounted(() => {
   color: var(--button-feedback-error);
 }
 
-.export-button:hover {
+.export-button:not(:disabled):hover {
   background: var(--button-hover-bg);
   border-color: var(--button-hover-border);
+}
+
+.export-button--success {
+  border-color: rgba(89, 201, 118, 0.54);
+  color: var(--button-feedback-success);
+}
+
+.export-button--error {
+  border-color: rgba(255, 126, 107, 0.56);
+  color: var(--button-feedback-error);
+}
+
+.assistive-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .main-content {

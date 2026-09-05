@@ -52,17 +52,18 @@ function progressWidth(label: string) {
       </div>
 
       <div class="super-lite-actions">
-        <button type="button" class="super-lite-mode-switch" title="切回标准模式" @click="emit('switch-standard')">标准</button>
+        <button type="button" class="super-lite-mode-switch" title="切回标准模式" aria-label="切回标准模式" @click="emit('switch-standard')">标准</button>
         <button
           type="button"
           class="super-lite-pin"
           :aria-pressed="pinned"
-          title="固定窗口"
+          :title="pinned ? '取消固定窗口' : '固定窗口'"
+          :aria-label="pinned ? '取消固定窗口' : '固定窗口'"
           @click="emit('toggle-pin')"
         >
           <Pushpin theme="outline" size="13" fill="currentColor" :strokeWidth="3" />
         </button>
-        <button type="button" class="super-lite-close" title="关闭窗口" @click="emit('close-window')">
+        <button type="button" class="super-lite-close" title="关闭窗口" aria-label="关闭窗口" @click="emit('close-window')">
           <CloseSmall theme="outline" size="14" fill="currentColor" :strokeWidth="3" />
         </button>
       </div>

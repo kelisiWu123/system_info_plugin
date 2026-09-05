@@ -17,6 +17,29 @@ test('main shell exposes copy/export actions outside development mode and remove
   assert.doesNotMatch(source, /模块开发中/)
 })
 
+test('report exports confirm start or failure instead of failing silently', () => {
+  const source = readSource('src/App.vue')
+
+  assert.match(source, /const exportFeedback = ref<'idle' \| 'success' \| 'error'>\('idle'\)/)
+  assert.match(source, /console\.error\('导出当前页面报告失败:'/)
+  assert.match(source, /console\.error\('复制当前页面信息失败:'/)
+  assert.match(source, /return '已开始导出'/)
+  assert.match(source, /const headerActionFeedbackText = computed/)
+  assert.match(source, /当前页面信息已复制到剪贴板/)
+  assert.match(source, /:aria-busy="copyPending"/)
+  assert.match(source, /报告已开始导出/)
+})
+
+test('copy actions use one consistent user-facing term', () => {
+  const app = readSource('src/App.vue')
+  const copyTarget = readSource('src/utils/devPageCopy.ts')
+
+  assert.match(app, /'复制当前页信息'/)
+  assert.match(copyTarget, /buttonLabel: '复制当前页信息'/)
+  assert.doesNotMatch(app, /拷贝/)
+  assert.doesNotMatch(copyTarget, /拷贝/)
+})
+
 test('advanced refresh controls stay in monitoring while sensor controls are limited to CPU and GPU details', () => {
   const app = readSource('src/App.vue')
   const monitor = readSource('src/components/MonitoringDashboard/index.vue')

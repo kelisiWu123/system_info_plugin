@@ -128,6 +128,13 @@ let lastOpenHardwareMonitorRunning: boolean | null = null
 let openHardwareMonitorPlatform: 'unknown' | 'windows' | 'other' = 'unknown'
 let watchRefreshGeneration = 0
 let floatingSettingsLoaded = false
+let fastRefreshInFlight: Promise<void> | undefined
+let slowRefreshInFlight: Promise<void> | undefined
+let fastRefreshInFlightIsForced = false
+let slowRefreshInFlightIsForced = false
+let queuedFastForceRefresh: Promise<void> | undefined
+let queuedSlowForceRefresh: Promise<void> | undefined
+let floatingSettingsSaveQueue: Promise<void> = Promise.resolve()
 
 const STATIC_INFO_INTERVAL_MS = 20000
 const TIME_INFO_INTERVAL_MS = 10000
@@ -553,7 +560,7 @@ async function refreshOpenHardwareMonitorReadiness(force = false) {
   }
 }
 
-async function refreshFastMetrics(force = false) {
+async function performFastMetricsRefresh(force = false) {
   try {
     const refreshGeneration = watchRefreshGeneration
     const ohmBecameReady = await refreshOpenHardwareMonitorReadiness(force)
@@ -674,7 +681,7 @@ async function refreshFastMetrics(force = false) {
   }
 }
 
-async function refreshSlowMetrics(force = false) {
+async function performSlowMetricsRefresh(force = false) {
   try {
     const refreshGeneration = watchRefreshGeneration
     const now = Date.now()
@@ -713,6 +720,48 @@ async function refreshSlowMetrics(force = false) {
   }
 }
 
+function refreshFastMetrics(force = false): Promise<void> {
+  if (fastRefreshInFlight) {
+    if (!force || fastRefreshInFlightIsForced) return fastRefreshInFlight
+    if (queuedFastForceRefresh) return queuedFastForceRefresh
+
+    queuedFastForceRefresh = fastRefreshInFlight
+      .then(() => refreshFastMetrics(true))
+      .finally(() => {
+        queuedFastForceRefresh = undefined
+      })
+    return queuedFastForceRefresh
+  }
+
+  fastRefreshInFlightIsForced = force
+  fastRefreshInFlight = performFastMetricsRefresh(force).finally(() => {
+    fastRefreshInFlight = undefined
+    fastRefreshInFlightIsForced = false
+  })
+  return fastRefreshInFlight
+}
+
+function refreshSlowMetrics(force = false): Promise<void> {
+  if (slowRefreshInFlight) {
+    if (!force || slowRefreshInFlightIsForced) return slowRefreshInFlight
+    if (queuedSlowForceRefresh) return queuedSlowForceRefresh
+
+    queuedSlowForceRefresh = slowRefreshInFlight
+      .then(() => refreshSlowMetrics(true))
+      .finally(() => {
+        queuedSlowForceRefresh = undefined
+      })
+    return queuedSlowForceRefresh
+  }
+
+  slowRefreshInFlightIsForced = force
+  slowRefreshInFlight = performSlowMetricsRefresh(force).finally(() => {
+    slowRefreshInFlight = undefined
+    slowRefreshInFlightIsForced = false
+  })
+  return slowRefreshInFlight
+}
+
 function stopPolling() {
   watchRefreshGeneration += 1
   if (fastTimerId) {
@@ -729,6 +778,7 @@ function stopPolling() {
 async function startPolling() {
   stopPolling()
   watchRefreshGeneration += 1
+  const pollingGeneration = watchRefreshGeneration
   lastCpuSensorRefreshAt = 0
   lastCpuAuxSensorRefreshAt = 0
   lastCpuSpeedRefreshAt = 0
@@ -738,6 +788,7 @@ async function startPolling() {
 
   await refreshFastMetrics(true)
   await refreshSlowMetrics(true)
+  if (pollingGeneration !== watchRefreshGeneration || props.active === false) return
 
   const pollProfile = getCurrentPollProfile()
 
@@ -751,11 +802,15 @@ async function startPolling() {
 }
 
 async function persistFloatingMonitorSettings(patch: Partial<FloatingMonitorSettingsData>) {
-  try {
-    await window.services.updateFloatingMonitorSettings?.(patch)
-  } catch (error) {
-    console.warn('悬浮监控设置持久化失败:', error)
-  }
+  floatingSettingsSaveQueue = floatingSettingsSaveQueue.then(async () => {
+    try {
+      await window.services.updateFloatingMonitorSettings?.(patch)
+    } catch (error) {
+      console.warn('悬浮监控设置持久化失败:', error)
+    }
+  })
+
+  await floatingSettingsSaveQueue
 }
 
 function resizeFloatingMode(mode: FloatingMonitorMode) {
@@ -918,7 +973,7 @@ onUnmounted(() => {
         </div>
 
         <div class="monitor-shell__actions">
-          <button type="button" class="monitor-action monitor-action--text" title="进入超级轻量模式" @click="switchFloatingMode('super-lite')">
+          <button type="button" class="monitor-action monitor-action--text" title="进入超级轻量模式" aria-label="进入超级轻量模式" @click="switchFloatingMode('super-lite')">
             轻
           </button>
           <button

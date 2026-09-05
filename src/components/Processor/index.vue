@@ -10,6 +10,7 @@ import {
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
+import { getServiceErrorDescription } from '../../utils/serviceReader'
 import {
   getSensorEnhancementControlLabel,
   getSensorEnhancementPlatform,
@@ -105,7 +106,10 @@ const pageStateBlock = computed(() => {
     return {
       variant: 'error' as const,
       title: '处理器数据读取失败',
-      description: fetchState.cpuInfo.note || fetchState.cpuTemperature.note || '读取处理器规格或温度信息时发生异常，可以重试该模块。',
+      description: getServiceErrorDescription(
+        fetchState.cpuInfo.note || fetchState.cpuTemperature.note,
+        '读取处理器规格或温度信息时发生异常，可以重试该模块。'
+      ),
       actionLabel: '重试该模块',
     }
   }
@@ -1036,6 +1040,7 @@ const processorReportText = computed(() => {
   const lines = [
     '处理器页面报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    ...(pageStateBlock.value ? [`读取状态：${pageStateBlock.value.title}；${pageStateBlock.value.description}`] : []),
     '',
     `处理器：${cpuData.value?.brand || '--'}`,
     `家族信息：${joinParts([cpuData.value?.family, cpuData.value?.vendor], ' / ') || '--'}`,
@@ -1311,6 +1316,12 @@ async function startWindowsSensorEnhancement() {
     await refreshWindowsSensorDiagnostics()
   } catch (error) {
     console.error('启动 Windows 传感器增强失败:', error)
+    openHardwareMonitorStatus.value = {
+      ...(openHardwareMonitorStatus.value || {}),
+      running: false,
+      reason: 'WINDOWS_SENSOR_BACKEND_START_FAILED',
+      suggestion: error instanceof Error ? error.message : '启动传感器增强组件失败，请重试',
+    } as WindowsSensorEnhancementStatusData
   } finally {
     sensorActionLoading.value = false
   }

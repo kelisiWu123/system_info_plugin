@@ -207,6 +207,9 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
       } else if (platform.value === 'macos') {
         macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
       }
+    } catch (error) {
+      console.error('读取传感器增强状态失败:', error)
+      sensorActionMessage.value = '传感器状态读取失败，请重试'
     } finally {
       sensorSettingsLoading.value = false
     }
@@ -244,6 +247,9 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
         macHelperStatus.value = await window.services.getMacPowermetricsHelperStatus()
       }
       await refreshProcessorState()
+    } catch (error) {
+      console.error('准备传感器增强失败:', error)
+      sensorActionMessage.value = '传感器增强准备失败，请重试'
     } finally {
       sensorActionLoading.value = false
     }
@@ -272,6 +278,9 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
 
       await refreshProcessorState()
       sensorMenuOpen.value = false
+    } catch (error) {
+      console.error('更新传感器增强设置失败:', error)
+      sensorActionMessage.value = '传感器增强设置失败，请重试'
     } finally {
       sensorActionLoading.value = false
     }
@@ -290,6 +299,9 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
         : macHelperStatus.value.suggestion || '增强组件尚未就绪'
       await refreshProcessorState()
       sensorMenuOpen.value = false
+    } catch (error) {
+      console.error('请求传感器增强授权失败:', error)
+      sensorActionMessage.value = '授权失败，请重试'
     } finally {
       sensorActionLoading.value = false
     }
@@ -308,8 +320,13 @@ export function useSensorEnhancementController(options: SensorEnhancementControl
   }
 
   async function refreshFromMenu() {
-    await refreshState()
-    await refreshProcessorState()
+    try {
+      await refreshState()
+      await refreshProcessorState()
+    } catch (error) {
+      console.error('重新检测传感器增强状态失败:', error)
+      sensorActionMessage.value = '传感器状态读取失败，请重试'
+    }
   }
 
   async function copyDiagnostics() {

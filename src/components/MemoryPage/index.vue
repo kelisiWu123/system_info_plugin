@@ -4,6 +4,7 @@ import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import StateBlock from '../common/StateBlock.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
+import { getServiceErrorDescription } from '../../utils/serviceReader'
 import { buildMemorySlotLabels, getMemoryChannel } from '../../utils/memory'
 import {
   bytesToGB,
@@ -58,7 +59,10 @@ const pageStateBlock = computed(() => {
     return {
       variant: 'error' as const,
       title: '内存数据读取失败',
-      description: fetchState.memInfo.note || fetchState.memoryLayout.note || '读取内存占用或模组布局时发生异常，可以重试该模块。',
+      description: getServiceErrorDescription(
+        fetchState.memInfo.note || fetchState.memoryLayout.note,
+        '读取内存占用或模组布局时发生异常，可以重试该模块。'
+      ),
       actionLabel: '重试该模块',
     }
   }
@@ -289,6 +293,7 @@ const memoryReportText = computed(() => {
   const lines = [
     '内存页面报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    ...(pageStateBlock.value ? [`读取状态：${pageStateBlock.value.title}；${pageStateBlock.value.description}`] : []),
     '',
     `套装：${kitSummary.value}`,
     `制造商：${memoryManufacturer.value}`,

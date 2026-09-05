@@ -41,6 +41,14 @@ test('cached hardware pages share one activation lifecycle that releases polling
   }
 })
 
+test('cached overview ignores late uptime updates after deactivation', () => {
+  const overview = readSource('src/components/Computer/index.vue')
+
+  assert.match(overview, /const pageActive = ref\(false\)/)
+  assert.match(overview, /\(uptime\) => \{[\s\S]*if \(pageActive\.value\) \{[\s\S]*startUptimeTicker\(\)/)
+  assert.match(overview, /useActivePageLifecycle\([\s\S]*pageActive\.value = true[\s\S]*\(\) => \{[\s\S]*pageActive\.value = false[\s\S]*releaseStore\(\)/)
+})
+
 test('sensor details wait for the cached processor page to reactivate before using its template ref', () => {
   const app = readSource('src/App.vue')
 

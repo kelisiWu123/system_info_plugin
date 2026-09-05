@@ -19,6 +19,7 @@ import {
   refreshMonitorDashboardData,
   updateMonitorRefreshSettings,
 } from '../../composables/useMonitorDashboardData'
+import type { MonitorTelemetryKey } from '../../composables/useMonitorDashboardData'
 import {
   formatBytes,
   formatUptime,
@@ -42,6 +43,8 @@ interface MonitorMetricCard {
   kind: MetricKind
   icon: unknown
   history: number[]
+  telemetryKey: MonitorTelemetryKey
+  stale: boolean
 }
 
 const {
@@ -49,6 +52,7 @@ const {
   initialized,
   lastSyncedAt,
   lastError,
+  telemetryStatus,
   monitoringRefreshSettings,
   backgroundThrottled,
   cpuData,
@@ -70,6 +74,8 @@ const floatingLaunchMode = ref<'standard' | 'super-lite' | null>(null)
 const floatingLaunchError = ref('')
 const refreshing = ref(false)
 const settingsPending = ref(false)
+const refreshFeedback = ref('')
+let refreshFeedbackTimerId: number | undefined
 
 const refreshProfiles = [
   { id: 'eco', label: '省电' },
@@ -114,6 +120,39 @@ function formatSyncTime(value?: number) {
 
 function formatProcessMemory(item: TopProcessData) {
   return item.memRss > 0 ? formatBytes(item.memRss * 1024) : `${item.mem.toFixed(1)}%`
+}
+
+function telemetryDescription(key: MonitorTelemetryKey, fallback: string) {
+  const status = telemetryStatus[key]
+  if (!status.error) return fallback
+  if (status.lastSuccessAt) return `读取失败 · 上次成功 ${formatSyncTime(status.lastSuccessAt)}`
+  return '读取失败，暂无可用数据'
+}
+
+function telemetryError(key: MonitorTelemetryKey) {
+  return telemetryStatus[key].error || undefined
+}
+
+function telemetryIsStale(key: MonitorTelemetryKey) {
+  const status = telemetryStatus[key]
+  return Boolean(status.error && status.lastSuccessAt)
+}
+
+function clearRefreshFeedback() {
+  if (refreshFeedbackTimerId) {
+    window.clearTimeout(refreshFeedbackTimerId)
+    refreshFeedbackTimerId = undefined
+  }
+  refreshFeedback.value = ''
+}
+
+function showRefreshFeedback(message: string) {
+  clearRefreshFeedback()
+  refreshFeedback.value = message
+  refreshFeedbackTimerId = window.setTimeout(() => {
+    refreshFeedback.value = ''
+    refreshFeedbackTimerId = undefined
+  }, 4000)
 }
 
 function temperatureValue() {
@@ -161,11 +200,24 @@ const gpuLoadPercent = computed(() => clampPercent(primaryGpu.value?.utilization
 const gpuTemperatureValue = computed(() => (
   typeof primaryGpu.value?.temperatureGpu === 'number' ? primaryGpu.value.temperatureGpu : null
 ))
+const cpuTemperatureDescription = computed(() => {
+  if (!initialized.value) return '正在读取处理器温度'
+  if (cpuTemperature.value?.source === 'unsupported') return '当前传感器暂不可用'
+  return cpuTemperatureValue.value === null ? '暂未提供处理器温度读数' : '处理器温度'
+})
+const gpuTemperatureDescription = computed(() => {
+  if (!initialized.value) return '正在读取图形处理器温度'
+  if (!primaryGpu.value) return '未检测到图形处理器'
+  return gpuTemperatureValue.value === null ? '当前显卡未提供温度读数' : '图形处理器温度'
+})
 const memoryUsedBytes = computed(() => getDisplayMemoryUsedBytes(memoData.value))
 const memoryDisplayValue = computed(() => (
   memoData.value.normalizedPlatform === 'darwin'
     ? getMemoryPressureLabel(memoData.value.pressure?.level)
     : formatPercent(usedMemoPercent.value)
+))
+const hasMemoryTelemetry = computed(() => (
+  memoData.value.total > 0 || memoData.value.pressure?.level !== 'unknown'
 ))
 
 const metricCards = computed<MonitorMetricCard[]>(() => [
@@ -173,82 +225,100 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
     id: 'cpu-load',
     label: 'CPU 使用率',
     value: initialized.value && metricHistory.cpuLoad.length ? formatPercent(cpuLoad.value) : '--',
-    secondary: !initialized.value
+    secondary: telemetryDescription('cpuLoad', !initialized.value
       ? '正在读取处理器负载'
-      : metricHistory.cpuLoad.length ? (cpuData.value?.brand || '处理器负载') : '暂未提供处理器负载',
+      : metricHistory.cpuLoad.length ? (cpuData.value?.brand || '处理器负载') : '暂未提供处理器负载'),
     percent: clampPercent(cpuLoad.value),
     kind: 'load',
     icon: Cpu,
     history: metricHistory.cpuLoad,
+    telemetryKey: 'cpuLoad',
+    stale: telemetryIsStale('cpuLoad'),
   },
   {
     id: 'cpu-temp',
     label: 'CPU 温度',
     value: initialized.value ? formatTemperature(cpuTemperatureValue.value) : '--',
-    secondary: !initialized.value
-      ? '正在读取处理器温度'
-      : cpuTemperature.value?.source === 'unsupported' ? '当前传感器暂不可用' : '处理器温度',
+    secondary: telemetryDescription('cpuTemperature', cpuTemperatureDescription.value),
     percent: clampPercent(cpuTemperatureValue.value || 0),
     kind: 'temperature',
     icon: Thermometer,
     history: metricHistory.cpuTemp,
+    telemetryKey: 'cpuTemperature',
+    stale: telemetryIsStale('cpuTemperature'),
   },
   {
     id: 'gpu-load',
     label: 'GPU 使用率',
     value: initialized.value && typeof primaryGpu.value?.utilizationGpu === 'number' ? formatPercent(gpuLoadPercent.value) : '--',
-    secondary: !initialized.value
+    secondary: telemetryDescription('gpu', !initialized.value
       ? '正在读取图形处理器'
       : primaryGpu.value && typeof primaryGpu.value.utilizationGpu === 'number'
         ? (primaryGpu.value.model || primaryGpu.value.name || '图形处理器')
-        : '暂未提供图形处理器负载',
+        : '暂未提供图形处理器负载'),
     percent: gpuLoadPercent.value,
     kind: 'load',
     icon: GraphicDesign,
     history: metricHistory.gpuLoad,
+    telemetryKey: 'gpu',
+    stale: telemetryIsStale('gpu'),
   },
   {
     id: 'gpu-temp',
     label: 'GPU 温度',
     value: initialized.value && primaryGpu.value ? formatTemperature(gpuTemperatureValue.value) : '--',
-    secondary: initialized.value ? '图形处理器温度' : '正在读取图形处理器温度',
+    secondary: telemetryDescription('gpu', gpuTemperatureDescription.value),
     percent: clampPercent(gpuTemperatureValue.value || 0),
     kind: 'temperature',
     icon: Speed,
     history: metricHistory.gpuTemp,
+    telemetryKey: 'gpu',
+    stale: telemetryIsStale('gpu'),
   },
   {
     id: 'memory',
     label: memoData.value.normalizedPlatform === 'darwin' ? '内存压力' : '内存使用率',
-    value: initialized.value ? memoryDisplayValue.value : '--',
-    secondary: memoData.value.total
+    value: initialized.value && hasMemoryTelemetry.value ? memoryDisplayValue.value : '--',
+    secondary: telemetryDescription('memory', memoData.value.total
       ? `${formatBytes(memoryUsedBytes.value)} / ${formatBytes(memoData.value.total)}`
-      : initialized.value ? '暂未提供内存数据' : '正在读取内存数据',
+      : initialized.value ? '暂未提供内存数据' : '正在读取内存数据'),
     percent: clampPercent(usedMemoPercent.value),
     kind: 'memory',
     icon: Memory,
     history: metricHistory.memoryLoad,
+    telemetryKey: 'memory',
+    stale: telemetryIsStale('memory'),
   },
   {
     id: 'storage',
     label: '存储使用率',
     value: initialized.value && storageUsage.value.total ? formatPercent(storageUsage.value.percent) : '--',
-    secondary: storageUsage.value.total
+    secondary: telemetryDescription('storage', storageUsage.value.total
       ? `${formatBytes(storageUsage.value.used)} / ${formatBytes(storageUsage.value.total)}`
-      : initialized.value ? '暂未提供磁盘数据' : '正在读取磁盘数据',
+      : initialized.value ? '暂未提供磁盘数据' : '正在读取磁盘数据'),
     percent: clampPercent(storageUsage.value.percent),
     kind: 'storage',
     icon: HardDisk,
     history: metricHistory.storageLoad,
+    telemetryKey: 'storage',
+    stale: telemetryIsStale('storage'),
   },
 ])
 
 const monitorStatusText = computed(() => {
   if (loading.value) return '正在建立监控基线'
-  if (lastError.value) return '部分监控项暂不可用'
+  if (lastError.value) return '部分数据未刷新'
   if (backgroundThrottled.value) return '后台降频中'
   return '监控运行中'
 })
+const monitorFailureText = computed(() => {
+  const failures = lastError.value.split('、').filter(Boolean)
+  if (failures.length <= 3) return failures.length ? `${lastError.value}读取失败` : ''
+  return `${failures.length} 项数据读取失败`
+})
+const lastSuccessText = computed(() => (
+  lastSyncedAt.value ? `最近成功 ${formatSyncTime(lastSyncedAt.value)}` : '尚无成功数据'
+))
 
 const networkTitle = computed(() => networkStatus.value.defaultInterface || '默认网络')
 const networkMeta = computed(() => {
@@ -259,12 +329,24 @@ const networkMeta = computed(() => {
   ].filter(Boolean)
   return parts.join(' · ') || '等待网络状态'
 })
+const networkDescription = computed(() => telemetryDescription('network', networkMeta.value))
+const storageIoDescription = computed(() => telemetryDescription(
+  'storageIo',
+  '首次采样会建立基线，随后显示实时吞吐和 IOPS。'
+))
+const processStatus = computed(() => telemetryDescription('processes', 'CPU Top + 内存 Top 合并'))
+const processEmptyMessage = computed(() => {
+  if (telemetryStatus.processes.error) return telemetryDescription('processes', '')
+  return initialized.value ? '暂未检测到占用较高的进程' : '正在读取进程占用…'
+})
 
 async function applyRefreshProfile(profile: MonitoringRefreshSettingsData['profile']) {
   if (settingsPending.value || monitoringRefreshSettings.value.profile === profile) return
   settingsPending.value = true
   try {
     await updateMonitorRefreshSettings({ profile })
+  } catch {
+    showRefreshFeedback('刷新设置保存失败，请重试')
   } finally {
     settingsPending.value = false
   }
@@ -277,6 +359,8 @@ async function toggleBackgroundThrottle() {
     await updateMonitorRefreshSettings({
       backgroundThrottleEnabled: !monitoringRefreshSettings.value.backgroundThrottleEnabled,
     })
+  } catch {
+    showRefreshFeedback('后台降频设置保存失败，请重试')
   } finally {
     settingsPending.value = false
   }
@@ -286,7 +370,12 @@ async function refreshNow() {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    await refreshMonitorDashboardData()
+    const result = await refreshMonitorDashboardData()
+    showRefreshFeedback(result.failedKeys.length
+      ? `已刷新；${result.failedKeys.length} 项暂未更新`
+      : '监控数据已更新')
+  } catch {
+    showRefreshFeedback('刷新失败，请重试')
   } finally {
     refreshing.value = false
   }
@@ -345,6 +434,7 @@ watch(
 
 onUnmounted(() => {
   release()
+  clearRefreshFeedback()
 })
 </script>
 
@@ -355,8 +445,12 @@ onUnmounted(() => {
         <header class="monitor-dashboard-hero">
           <div class="monitor-dashboard-hero__copy">
             <div class="monitor-dashboard-kicker">
-              <span class="monitor-dashboard-kicker__pulse" aria-hidden="true" />
+              <span :class="['monitor-dashboard-kicker__pulse', { 'monitor-dashboard-kicker__pulse--warning': Boolean(lastError) }]" aria-hidden="true" />
               <span>{{ monitorStatusText }}</span>
+              <template v-if="lastError">
+                <span>·</span>
+                <span>{{ monitorFailureText }}</span>
+              </template>
               <span>·</span>
               <span>运行 {{ formatUptime(timeInfo?.uptime || 0) }}</span>
             </div>
@@ -365,11 +459,23 @@ onUnmounted(() => {
           </div>
 
           <div class="monitor-dashboard-hero__actions">
-            <button type="button" class="monitor-launch-button monitor-launch-button--primary" :disabled="Boolean(floatingLaunchMode)" @click="openStandardFloatingMonitor">
+            <button
+              type="button"
+              class="monitor-launch-button monitor-launch-button--primary"
+              :disabled="Boolean(floatingLaunchMode)"
+              :aria-busy="floatingLaunchMode === 'standard'"
+              @click="openStandardFloatingMonitor"
+            >
               <DashboardOne theme="outline" size="17" fill="currentColor" :strokeWidth="3" />
               {{ floatingLaunchMode === 'standard' ? '打开中…' : '标准悬浮监控' }}
             </button>
-            <button type="button" class="monitor-launch-button" :disabled="Boolean(floatingLaunchMode)" @click="openSuperLiteMonitor">
+            <button
+              type="button"
+              class="monitor-launch-button"
+              :disabled="Boolean(floatingLaunchMode)"
+              :aria-busy="floatingLaunchMode === 'super-lite'"
+              @click="openSuperLiteMonitor"
+            >
               <DataSheet theme="outline" size="17" fill="currentColor" :strokeWidth="3" />
               {{ floatingLaunchMode === 'super-lite' ? '打开中…' : '超轻量悬浮' }}
             </button>
@@ -385,6 +491,7 @@ onUnmounted(() => {
               :key="profile.id"
               type="button"
               :disabled="settingsPending"
+              :aria-busy="settingsPending"
               :aria-pressed="monitoringRefreshSettings.profile === profile.id"
               :class="['monitor-profile-button', { 'monitor-profile-button--active': monitoringRefreshSettings.profile === profile.id }]"
               @click="applyRefreshProfile(profile.id)"
@@ -397,16 +504,24 @@ onUnmounted(() => {
             <button
               type="button"
               :disabled="settingsPending"
+              :aria-busy="settingsPending"
               :class="['monitor-background-button', { 'monitor-background-button--active': monitoringRefreshSettings.backgroundThrottleEnabled }]"
               @click="toggleBackgroundThrottle"
             >
               后台降频 {{ monitoringRefreshSettings.backgroundThrottleEnabled ? '开' : '关' }}
             </button>
-            <button type="button" class="monitor-refresh-button" :disabled="refreshing" @click="refreshNow">
+            <button
+              type="button"
+              class="monitor-refresh-button"
+              :disabled="refreshing"
+              :aria-busy="refreshing"
+              @click="refreshNow"
+            >
               <Refresh theme="outline" size="16" fill="currentColor" :strokeWidth="3" />
               {{ refreshing ? '刷新中' : '刷新' }}
             </button>
-            <span class="monitor-toolbar__synced">{{ formatSyncTime(lastSyncedAt) }}</span>
+            <span class="monitor-toolbar__synced">{{ lastSuccessText }}</span>
+            <span v-if="refreshFeedback" class="monitor-refresh-feedback" role="status" aria-live="polite">{{ refreshFeedback }}</span>
           </div>
         </section>
 
@@ -414,7 +529,12 @@ onUnmounted(() => {
           <article
             v-for="card in metricCards"
             :key="card.id"
-            :class="['monitor-metric-card', `monitor-metric-card--${resolveMetricState(card)}`]"
+            :class="[
+              'monitor-metric-card',
+              `monitor-metric-card--${resolveMetricState(card)}`,
+              { 'monitor-metric-card--stale': card.stale },
+            ]"
+            :title="telemetryError(card.telemetryKey)"
           >
             <div class="monitor-metric-card__head">
               <div class="monitor-metric-card__icon">
@@ -437,7 +557,7 @@ onUnmounted(() => {
         </section>
 
         <section class="monitor-live-grid">
-          <article class="monitor-live-card">
+          <article :class="['monitor-live-card', { 'monitor-live-card--stale': telemetryIsStale('network') }]" :title="telemetryError('network')">
             <div class="monitor-live-card__head">
               <div>
                 <span class="monitor-live-card__eyebrow">网络</span>
@@ -445,7 +565,7 @@ onUnmounted(() => {
               </div>
               <NetworkTree theme="outline" size="24" fill="currentColor" :strokeWidth="3" />
             </div>
-            <p>{{ networkMeta }}</p>
+            <p>{{ networkDescription }}</p>
             <div class="monitor-live-card__values">
               <div>
                 <span>下载</span>
@@ -462,7 +582,7 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article class="monitor-live-card">
+          <article :class="['monitor-live-card', { 'monitor-live-card--stale': telemetryIsStale('storageIo') }]" :title="telemetryError('storageIo')">
             <div class="monitor-live-card__head">
               <div>
                 <span class="monitor-live-card__eyebrow">存储 I/O</span>
@@ -470,7 +590,7 @@ onUnmounted(() => {
               </div>
               <HardDisk theme="outline" size="24" fill="currentColor" :strokeWidth="3" />
             </div>
-            <p>首次采样会建立基线，随后显示实时吞吐和 IOPS。</p>
+            <p>{{ storageIoDescription }}</p>
             <div class="monitor-live-card__values">
               <div>
                 <span>读取</span>
@@ -489,12 +609,12 @@ onUnmounted(() => {
         </section>
 
         <section class="monitor-process-panel">
-          <div class="monitor-process-panel__head">
+          <div :class="['monitor-process-panel__head', { 'monitor-process-panel__head--stale': telemetryIsStale('processes') }]" :title="telemetryError('processes')">
             <div>
               <span>资源热点</span>
               <h2>高占用进程</h2>
             </div>
-            <span>CPU Top + 内存 Top 合并</span>
+            <span>{{ processStatus }}</span>
           </div>
 
           <div v-if="topProcesses.length" class="monitor-process-list">
@@ -514,7 +634,7 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
-          <div v-else class="monitor-process-empty">正在读取进程占用…</div>
+          <div v-else class="monitor-process-empty">{{ processEmptyMessage }}</div>
         </section>
       </div>
     </div>
@@ -564,6 +684,11 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--accent-green);
   box-shadow: 0 0 0 4px var(--state-good-bg);
+}
+
+.monitor-dashboard-kicker__pulse--warning {
+  background: var(--accent-yellow);
+  box-shadow: 0 0 0 4px var(--state-warn-bg);
 }
 
 .monitor-dashboard-hero h1 {
@@ -665,6 +790,13 @@ onUnmounted(() => {
   color: var(--text-subtle);
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.monitor-refresh-feedback {
+  color: var(--state-good-fg);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .monitor-profile-button {
@@ -725,6 +857,11 @@ onUnmounted(() => {
 .monitor-metric-card--danger::before {
   background: var(--accent-danger);
   opacity: 1;
+}
+
+.monitor-metric-card--stale {
+  border-color: var(--state-warn-fg);
+  border-style: dashed;
 }
 
 .monitor-metric-card__head {
@@ -866,6 +1003,11 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+.monitor-live-card--stale > p,
+.monitor-process-panel__head--stale > span {
+  color: var(--state-warn-fg);
+}
+
 .monitor-live-card__values {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -982,6 +1124,17 @@ onUnmounted(() => {
 
   .monitor-dashboard-hero__actions {
     padding-top: 0;
+  }
+
+  .monitor-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .monitor-toolbar__right {
+    flex: 1 1 320px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .monitor-metric-grid {

@@ -387,8 +387,13 @@ function startPolling() {
 
     pollingTimerId = window.setTimeout(async () => {
       pollingTimerId = undefined
-      await refreshOverviewMetrics()
-      scheduleNext()
+      try {
+        await refreshOverviewMetrics()
+      } catch (error) {
+        console.error('系统概览轮询失败:', error)
+      } finally {
+        scheduleNext()
+      }
     }, getCurrentRefreshIntervals().base)
   }
 

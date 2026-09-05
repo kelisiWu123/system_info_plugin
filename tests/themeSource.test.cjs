@@ -34,6 +34,10 @@ test('renderer resolves system appearance live and synchronizes theme changes ac
   assert.match(theme, /new BroadcastChannel\(THEME_BROADCAST_CHANNEL\)/)
   assert.match(theme, /window\.addEventListener\('storage'/)
   assert.match(theme, /updateAppThemeSettings\(\{ preference: next \}\)/)
+  assert.match(theme, /let themePreferenceSaveQueue: Promise<void> = Promise\.resolve\(\)/)
+  assert.match(theme, /let latestThemePreferenceRequestId = 0/)
+  assert.match(theme, /themePreferenceSaveQueue = themePreferenceSaveQueue\.then\(async \(\) =>/)
+  assert.match(theme, /if \(requestId !== latestThemePreferenceRequestId\) return/)
   assert.match(main, /await initializeAppTheme\(\)[\s\S]*app\.mount\('#app'\)/)
 })
 

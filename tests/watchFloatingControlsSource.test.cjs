@@ -23,6 +23,7 @@ test('standard watch icon controls expose explicit labels and pin state', () => 
   assert.match(watch, /:aria-pressed="pinned"/)
   assert.match(watch, /title="最小化窗口" aria-label="最小化窗口"/)
   assert.match(watch, /title="关闭窗口" aria-label="关闭窗口"/)
+  assert.match(watch, /title="进入超级轻量模式" aria-label="进入超级轻量模式"/)
 })
 
 test('super-lite watch exposes the standard-mode switch in the header actions instead of the footer', () => {
@@ -37,6 +38,10 @@ test('super-lite watch exposes a close control wired to the shared closeWindow h
   const superLite = readSource('src/components/Watch/SuperLiteMonitorView.vue')
 
   assert.match(superLite, /title="关闭窗口"[\s\S]*emit\('close-window'\)/)
+  assert.match(superLite, /:title="pinned \? '取消固定窗口' : '固定窗口'"/)
+  assert.match(superLite, /:aria-label="pinned \? '取消固定窗口' : '固定窗口'"/)
+  assert.match(superLite, /title="关闭窗口" aria-label="关闭窗口"/)
+  assert.match(superLite, /title="切回标准模式" aria-label="切回标准模式"/)
   assert.match(watch, /function closeWindow\(\)\s*{[\s\S]*window\.services\.closeWindow\(\)/)
   assert.match(watch, /<SuperLiteMonitorView[\s\S]*@close-window="closeWindow"/)
 })

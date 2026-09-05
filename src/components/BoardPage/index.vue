@@ -14,12 +14,22 @@ import { selectPrimaryGpu } from '../../utils/gpu'
 import { bytesToGB, formatBytes, getPhysicalDiskLayout } from '../../utils'
 import { buildMemorySlotLabels } from '../../utils/memory'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
+import { getServiceErrorDescription } from '../../utils/serviceReader'
 
 const props = defineProps<{
   active?: boolean
 }>()
 
 type BoardTabKey = 'slots' | 'storage' | 'usb' | 'io'
+type BoardServiceKey =
+  | 'cpuInfo'
+  | 'memoryLayout'
+  | 'boardData'
+  | 'biosData'
+  | 'diskLayout'
+  | 'audioDevices'
+  | 'networkInterfaces'
+  | 'osInfo'
 
 interface BoardListRow {
   label: string
@@ -37,6 +47,7 @@ const {
   networkInterfaces,
   osInfo,
   cpuData,
+  fetchState,
 } = hardwareStore
 
 const activeTab = ref<BoardTabKey>('slots')
@@ -44,6 +55,19 @@ const subscribed = ref(false)
 const boardPrimaryGpu = ref<GpuData>()
 const boardGpuSnapshotLoading = ref(false)
 const boardGpuSnapshotLoaded = ref(false)
+
+const boardServiceLabels: Record<BoardServiceKey, string> = {
+  cpuInfo: '处理器插槽',
+  memoryLayout: '内存插槽',
+  boardData: '主板信息',
+  biosData: 'BIOS 信息',
+  diskLayout: '存储接口',
+  audioDevices: '音频设备',
+  networkInterfaces: '网络接口',
+  osInfo: '系统平台',
+}
+
+const boardServiceKeys = Object.keys(boardServiceLabels) as BoardServiceKey[]
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -123,6 +147,55 @@ function makePlaceholderRows(message: string): BoardListRow[] {
 }
 
 const isDarwinPlatform = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
+const failedBoardServiceKeys = computed(() =>
+  boardServiceKeys.filter((key) => fetchState[key].status === 'error')
+)
+const pageStateBlock = computed(() => {
+  const hasPrimaryBoardInfo = Boolean(boardData.value || biosData.value)
+  const primaryBoardKeys: BoardServiceKey[] = ['boardData', 'biosData']
+  const primaryFailure = primaryBoardKeys.find((key) => fetchState[key].status === 'error')
+
+  if (!hasPrimaryBoardInfo && primaryFailure) {
+    return {
+      variant: 'error' as const,
+      title: '主板数据读取失败',
+      description: getServiceErrorDescription(
+        fetchState[primaryFailure].note,
+        '读取主板或 BIOS 信息时发生异常，可以重试该模块。'
+      ),
+      actionLabel: '重试该模块',
+    }
+  }
+
+  if (!hasPrimaryBoardInfo && primaryBoardKeys.every((key) => fetchState[key].status === 'missing')) {
+    return {
+      variant: 'empty' as const,
+      title: '未识别到主板信息',
+      description: '当前系统数据源没有返回主板或 BIOS 信息。',
+      actionLabel: '重试该模块',
+    }
+  }
+
+  return null
+})
+const partialReadStatus = computed(() => {
+  const labels = failedBoardServiceKeys.value.map((key) => boardServiceLabels[key])
+  if (!labels.length) return ''
+  return labels.length <= 3
+    ? `部分信息读取失败：${labels.join('、')}`
+    : `${labels.length} 项主板相关信息读取失败`
+})
+const partialReadDetails = computed(() =>
+  failedBoardServiceKeys.value
+    .map(
+      (key) =>
+        `${boardServiceLabels[key]}：${getServiceErrorDescription(
+          fetchState[key].note,
+          '本次读取失败，请重新读取。'
+        )}`
+    )
+    .join('\n')
+)
 const boardName = computed(() =>
   getBoardDisplayName({
     platform: osInfo.value?.platform,
@@ -160,6 +233,39 @@ const boardTabs = [
   { id: 'usb' as const, label: 'USB 接口', icon: Memory },
   { id: 'io' as const, label: '网络与音频', icon: Signal },
 ]
+
+function focusBoardTab(tab: BoardTabKey) {
+  window.requestAnimationFrame(() => {
+    document.getElementById(`board-tab-${tab}`)?.focus()
+  })
+}
+
+function selectBoardTab(tab: BoardTabKey, shouldFocus = false) {
+  activeTab.value = tab
+  if (shouldFocus) focusBoardTab(tab)
+}
+
+function handleBoardTabKeydown(event: KeyboardEvent, currentTab: BoardTabKey) {
+  const currentIndex = boardTabs.findIndex((tab) => tab.id === currentTab)
+  if (currentIndex < 0) return
+
+  const lastIndex = boardTabs.length - 1
+  let nextIndex: number | undefined
+
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    nextIndex = currentIndex === lastIndex ? 0 : currentIndex + 1
+  } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    nextIndex = currentIndex === 0 ? lastIndex : currentIndex - 1
+  } else if (event.key === 'Home') {
+    nextIndex = 0
+  } else if (event.key === 'End') {
+    nextIndex = lastIndex
+  }
+
+  if (nextIndex === undefined) return
+  event.preventDefault()
+  selectBoardTab(boardTabs[nextIndex].id, true)
+}
 
 const tabRows = computed<Record<BoardTabKey, BoardListRow[]>>(() => {
   const slotRows: BoardListRow[] = []
@@ -275,6 +381,7 @@ const boardReportText = computed(() => {
   const lines = [
     '主板页面报告',
     `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    ...(partialReadStatus.value ? [`读取状态：${partialReadStatus.value}`] : []),
     '',
     `主板：${boardName.value}`,
     `芯片组：${chipsetName.value}`,
@@ -362,7 +469,30 @@ useActivePageLifecycle(
       @retry="retryBoardPage"
     />
 
+    <StateBlock
+      v-else-if="pageStateBlock"
+      :variant="pageStateBlock.variant"
+      :title="pageStateBlock.title"
+      :description="pageStateBlock.description"
+      :action-label="pageStateBlock.actionLabel"
+      @retry="retryBoardPage"
+    />
+
     <template v-else>
+      <section
+        v-if="partialReadStatus"
+        class="board-read-status"
+        role="status"
+        aria-live="polite"
+        :title="partialReadDetails"
+      >
+        <div>
+          <strong>部分内容暂未更新</strong>
+          <span>{{ partialReadStatus }}</span>
+        </div>
+        <button type="button" @click="retryBoardPage">重新读取</button>
+      </section>
+
       <section class="board-hero">
         <article class="hero-card">
           <div class="hero-card__head">
@@ -387,42 +517,54 @@ useActivePageLifecycle(
             <button
               v-for="tab in boardTabs"
               :key="tab.id"
+              :id="`board-tab-${tab.id}`"
               type="button"
               role="tab"
               :aria-selected="activeTab === tab.id"
+              :aria-controls="`board-panel-${tab.id}`"
+              :tabindex="activeTab === tab.id ? 0 : -1"
               :class="['board-tab', { 'board-tab--active': activeTab === tab.id }]"
-              @click="activeTab = tab.id"
+              @click="selectBoardTab(tab.id)"
+              @keydown="handleBoardTabKeydown($event, tab.id)"
             >
               <component :is="tab.icon" theme="outline" size="15" fill="currentColor" :strokeWidth="3" />
               <span>{{ tab.label }}</span>
             </button>
           </div>
 
-          <StateBlock
-            v-if="activeTab === 'usb'"
-            variant="soon"
-            title="USB 端口级枚举即将支持"
-            description="当前系统数据链路尚未提供主板 USB 端口、控制器与连接设备的稳定枚举。"
-          />
+          <div
+            :id="`board-panel-${activeTab}`"
+            class="board-tabpanel"
+            role="tabpanel"
+            :aria-labelledby="`board-tab-${activeTab}`"
+            tabindex="0"
+          >
+            <StateBlock
+              v-if="activeTab === 'usb'"
+              variant="soon"
+              title="USB 端口级枚举即将支持"
+              description="当前系统数据链路尚未提供主板 USB 端口、控制器与连接设备的稳定枚举。"
+            />
 
-          <div v-else class="board-panel__body board-panel__body--split">
-            <div class="board-list">
-              <div v-for="row in tabRows[activeTab]" :key="`${activeTab}-${row.label}-${row.primary}`" class="board-list__row">
-                <span>{{ row.label }}</span>
-                <strong>{{ row.primary }}</strong>
-                <em v-if="row.secondary">{{ row.secondary }}</em>
+            <div v-else class="board-panel__body board-panel__body--split">
+              <div class="board-list">
+                <div v-for="row in tabRows[activeTab]" :key="`${activeTab}-${row.label}-${row.primary}`" class="board-list__row">
+                  <span>{{ row.label }}</span>
+                  <strong>{{ row.primary }}</strong>
+                  <em v-if="row.secondary">{{ row.secondary }}</em>
+                </div>
               </div>
-            </div>
 
-            <div class="board-schematic" :data-active-tab="activeTab">
-              <div class="board-schematic__outline">
-                <div class="board-schematic__cpu"></div>
-                <div class="board-schematic__ram bank-1"></div>
-                <div class="board-schematic__ram bank-2"></div>
-                <div class="board-schematic__slot slot-1"></div>
-                <div class="board-schematic__slot slot-2"></div>
-                <div class="board-schematic__slot slot-3"></div>
-                <div class="board-schematic__io"></div>
+              <div class="board-schematic" :data-active-tab="activeTab">
+                <div class="board-schematic__outline">
+                  <div class="board-schematic__cpu"></div>
+                  <div class="board-schematic__ram bank-1"></div>
+                  <div class="board-schematic__ram bank-2"></div>
+                  <div class="board-schematic__slot slot-1"></div>
+                  <div class="board-schematic__slot slot-2"></div>
+                  <div class="board-schematic__slot slot-3"></div>
+                  <div class="board-schematic__io"></div>
+                </div>
               </div>
             </div>
           </div>
@@ -549,6 +691,52 @@ useActivePageLifecycle(
   grid-template-columns: 1fr;
 }
 
+.board-read-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-yellow) 44%, var(--panel-border));
+  border-radius: var(--control-radius);
+  background: color-mix(in srgb, var(--accent-yellow) 9%, var(--surface-card-background));
+  color: var(--text-secondary);
+
+  div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  span {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  button {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--control-border);
+    border-radius: var(--control-radius);
+    background: var(--control-bg);
+    color: var(--control-fg-strong);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+}
+
 .board-middle {
   grid-template-columns: 1.35fr 0.7fr;
 }
@@ -658,6 +846,11 @@ useActivePageLifecycle(
   gap: 8px;
   margin-bottom: 14px;
   overflow: auto;
+}
+
+.board-tabpanel:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-cyan) 72%, transparent);
+  outline-offset: 4px;
 }
 
 .board-tab {
@@ -900,6 +1093,21 @@ useActivePageLifecycle(
     border-left: 0;
     border-top: 1px solid rgba(86, 101, 126, 0.12);
     padding-top: 16px;
+  }
+
+  .board-read-status {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .board-read-status {
+    align-items: stretch;
+    flex-direction: column;
+
+    button {
+      width: 100%;
+    }
   }
 }
 </style>

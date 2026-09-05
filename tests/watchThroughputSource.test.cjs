@@ -52,6 +52,21 @@ test('watch polls throughput for overview or super-lite but not standard CPU and
   assert.match(watch, /const needsImmediateThroughputRefresh = mode === 'super-lite' \|\| monitorMode\.value === 'overview'/)
 })
 
+test('watch coalesces overlapping refreshes while preserving queued forced refreshes', () => {
+  const watch = readProjectFile('src/components/Watch/index.vue')
+
+  assert.match(watch, /let fastRefreshInFlight: Promise<void> \| undefined/)
+  assert.match(watch, /let slowRefreshInFlight: Promise<void> \| undefined/)
+  assert.match(watch, /function refreshFastMetrics\(force = false\): Promise<void> \{[\s\S]*if \(fastRefreshInFlight\) \{[\s\S]*if \(!force \|\| fastRefreshInFlightIsForced\) return fastRefreshInFlight[\s\S]*queuedFastForceRefresh = fastRefreshInFlight[\s\S]*\.then\(\(\) => refreshFastMetrics\(true\)\)/)
+  assert.match(watch, /function refreshSlowMetrics\(force = false\): Promise<void> \{[\s\S]*if \(slowRefreshInFlight\) \{[\s\S]*if \(!force \|\| slowRefreshInFlightIsForced\) return slowRefreshInFlight[\s\S]*queuedSlowForceRefresh = slowRefreshInFlight[\s\S]*\.then\(\(\) => refreshSlowMetrics\(true\)\)/)
+})
+
+test('only the latest floating monitor startup may install polling timers', () => {
+  const watch = readProjectFile('src/components/Watch/index.vue')
+
+  assert.match(watch, /async function startPolling\(\) \{[\s\S]*watchRefreshGeneration \+= 1[\s\S]*const pollingGeneration = watchRefreshGeneration[\s\S]*await refreshFastMetrics\(true\)[\s\S]*await refreshSlowMetrics\(true\)[\s\S]*if \(pollingGeneration !== watchRefreshGeneration \|\| props\.active === false\) return[\s\S]*fastTimerId = window\.setInterval/)
+})
+
 test('watch and storage page share the same byte-rate formatter and footer reports the real poll interval', () => {
   const watch = readProjectFile('src/components/Watch/index.vue')
   const storage = readProjectFile('src/components/StoragePage/index.vue')
