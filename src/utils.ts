@@ -71,16 +71,30 @@ function formatDisplayResolution(display?: DisplayData): string {
   return '--'
 }
 
-function getDisplayCpuCurrentSpeedGHz(speed?: CpuCurrentSpeedData | null): number {
+function getDisplayCpuCurrentSpeedGHz(speed?: CpuCurrentSpeedData | null, platform?: string): number {
   if (!speed) return 0
-
-  if (typeof speed.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0) {
-    return speed.avg
-  }
 
   const validCoreSpeeds = Array.isArray(speed.cores)
     ? speed.cores.filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
     : []
+
+  const isMac = platform === 'darwin'
+    || (typeof navigator !== 'undefined' && /Macintosh|Mac OS X/i.test(navigator.userAgent))
+    || (typeof process !== 'undefined' && process.platform === 'darwin')
+
+  // On macOS (or powermetrics cluster reporting), display the performance core (peak cluster) speed
+  if (isMac || speed.source === 'powermetrics') {
+    if (validCoreSpeeds.length) {
+      return Math.max(...validCoreSpeeds)
+    }
+    if (typeof speed.max === 'number' && Number.isFinite(speed.max) && speed.max > 0) {
+      return speed.max
+    }
+  }
+
+  if (typeof speed.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0) {
+    return speed.avg
+  }
 
   if (validCoreSpeeds.length) {
     const sum = validCoreSpeeds.reduce((acc, val) => acc + val, 0)

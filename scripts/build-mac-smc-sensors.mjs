@@ -51,6 +51,25 @@ if ((helperResult.status ?? 1) !== 0) {
   process.exit(helperResult.status ?? 1)
 }
 
+const menubarSource = resolve('native/macos-menubar-helper/main.m')
+const menubarOutput = resolve('vendor/macos/hwinfox-menubar-helper')
+if (existsSync(menubarSource)) {
+  const menubarResult = runClang([
+    menubarSource,
+    '-Wall',
+    '-Wextra',
+    '-O2',
+    '-framework',
+    'Cocoa',
+    '-o',
+    menubarOutput,
+  ])
+
+  if ((menubarResult.status ?? 1) !== 0) {
+    process.exit(menubarResult.status ?? 1)
+  }
+}
+
 if (!existsSync(nativePackageSource)) {
   console.error('macos-temperature-sensor is not installed. Please run npm install on macOS/Apple Silicon first.')
   process.exit(1)

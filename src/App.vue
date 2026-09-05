@@ -125,6 +125,51 @@ const {
   },
 })
 
+const macMenubarSettings = ref<MacMenubarSettingsData>({
+  enabled: false,
+  showTemp: true,
+  showLoad: true,
+  showIcon: true,
+})
+const macMenubarActionLoading = ref(false)
+
+async function refreshMacMenubarSettings() {
+  if (sensorEnhancementPlatform.value !== 'macos' || typeof window === 'undefined' || !window.services?.getMacMenubarSettings) {
+    return
+  }
+  try {
+    const settings = await window.services.getMacMenubarSettings()
+    if (settings) {
+      macMenubarSettings.value = settings
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function toggleMacMenubarState() {
+  if (macMenubarActionLoading.value || typeof window === 'undefined' || !window.services?.updateMacMenubarSettings) {
+    return
+  }
+  macMenubarActionLoading.value = true
+  try {
+    const next = await window.services.updateMacMenubarSettings({
+      enabled: !macMenubarSettings.value.enabled,
+    })
+    macMenubarSettings.value = next
+  } catch {
+    // ignore
+  } finally {
+    macMenubarActionLoading.value = false
+  }
+}
+
+watch(sensorEnhancementPlatform, (platform) => {
+  if (platform === 'macos') {
+    refreshMacMenubarSettings()
+  }
+}, { immediate: true })
+
 function syncBodyMode() {
   document.body.classList.toggle('watch-window-body', isWatchPage.value)
 }
@@ -601,6 +646,15 @@ onUnmounted(() => {
                   @click="openProcessorSensorDetails()"
                 >
                   查看详情
+                </button>
+                <button
+                  v-if="sensorEnhancementPlatform === 'macos'"
+                  type="button"
+                  class="sensor-menu-action"
+                  :disabled="macMenubarActionLoading"
+                  @click="toggleMacMenubarState()"
+                >
+                  {{ macMenubarSettings.enabled ? '关闭菜单栏常驻' : '开启菜单栏常驻' }}
                 </button>
                 <button
                   v-if="sensorEnhancementStatus === 'error' || (sensorEnhancementPlatform === 'windows' && sensorSettings.enhancedSensorEnabled)"

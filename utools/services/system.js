@@ -12,6 +12,13 @@ import {
   startWindowsSensorHelper,
   stopWindowsSensorHelper,
 } from './windowsSensorHelper'
+import {
+  configureMacMenubarContext,
+  getMacMenubarStatus,
+  startMacMenubarHelper,
+  stopMacMenubarHelper,
+  updateMacMenubarTelemetry,
+} from './macMenubarHelper'
 
 const execFileAsync = promisify(execFile)
 const {
@@ -36,10 +43,17 @@ const HARDWARE_SENSOR_SETTINGS_STORAGE_KEY = 'hardwareSensorSettings'
 const MONITORING_REFRESH_SETTINGS_STORAGE_KEY = 'monitoringRefreshSettings'
 const FLOATING_MONITOR_SETTINGS_STORAGE_KEY = 'floatingMonitorSettings'
 const APP_THEME_SETTINGS_STORAGE_KEY = 'appThemeSettings'
+const MACOS_MENUBAR_SETTINGS_STORAGE_KEY = 'macosMenubarSettings'
 const DEFAULT_HARDWARE_SENSOR_SETTINGS = {
   enhancedSensorEnabled: false,
   openHardwareMonitorAutoStart: false,
   openHardwareMonitorPort: 18085,
+}
+const DEFAULT_MACOS_MENUBAR_SETTINGS = {
+  enabled: false,
+  showTemp: true,
+  showLoad: true,
+  showIcon: true,
 }
 const DEFAULT_MONITORING_REFRESH_SETTINGS = {
   profile: 'balanced',
@@ -213,6 +227,10 @@ export function configureSystemServiceContext({ pluginRoot, utools } = {}) {
     ? path.resolve(pluginRoot)
     : ''
   configuredUtoolsRuntime = utools
+  configureMacMenubarContext({ pluginRoot: configuredPluginRoot })
+  if (isMacOS() && getMacMenubarSettings().enabled) {
+    startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
+  }
 }
 
 function normalizeJsonArray(value) {
@@ -863,6 +881,42 @@ function writeAppThemeSettingsRaw(value) {
   }
 }
 
+function readMacMenubarSettingsRaw() {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.getItem) {
+    return storage.getItem(MACOS_MENUBAR_SETTINGS_STORAGE_KEY)
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const value = localStorage.getItem(MACOS_MENUBAR_SETTINGS_STORAGE_KEY)
+      return value ? JSON.parse(value) : null
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+function writeMacMenubarSettingsRaw(value) {
+  const storage = getHardwareSensorSettingsStorage()
+
+  if (storage?.setItem) {
+    storage.setItem(MACOS_MENUBAR_SETTINGS_STORAGE_KEY, value)
+    return
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MACOS_MENUBAR_SETTINGS_STORAGE_KEY, JSON.stringify(value))
+    } catch {
+      // ignore storage fallback failures
+    }
+  }
+}
+
 function normalizeHardwareSensorSettings(input) {
   const portCandidate = Number(input?.openHardwareMonitorPort)
   const port = Number.isInteger(portCandidate) && portCandidate >= 1 && portCandidate <= 65535
@@ -932,6 +986,76 @@ function getFloatingMonitorSettings() {
 
 function getAppThemeSettings() {
   return normalizeAppThemeSettings(readAppThemeSettingsRaw() || {})
+}
+
+function normalizeMacMenubarSettings(input) {
+  return {
+    enabled: Boolean(input?.enabled),
+    showTemp: input?.showTemp !== false,
+    showLoad: input?.showLoad !== false,
+    showIcon: input?.showIcon !== false,
+  }
+}
+
+export function getMacMenubarSettings() {
+  if (!isMacOS()) {
+    return normalizeMacMenubarSettings(DEFAULT_MACOS_MENUBAR_SETTINGS)
+  }
+
+  return normalizeMacMenubarSettings({
+    ...DEFAULT_MACOS_MENUBAR_SETTINGS,
+    ...(readMacMenubarSettingsRaw() || {}),
+  })
+}
+
+let lastKnownCpuTemp = null
+let lastKnownCpuLoad = null
+let lastKnownCpuSpeed = null
+let lastMenubarPushAt = 0
+
+export function syncMacMenubarTelemetry() {
+  if (!isMacOS()) return
+  const settings = getMacMenubarSettings()
+  if (!settings.enabled) return
+
+  const now = Date.now()
+  if (now - lastMenubarPushAt < 800) {
+    return
+  }
+  lastMenubarPushAt = now
+
+  if (!getMacMenubarStatus().running) {
+    startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
+  }
+
+  updateMacMenubarTelemetry({
+    temp: lastKnownCpuTemp,
+    load: lastKnownCpuLoad,
+    speed: lastKnownCpuSpeed,
+    showIcon: settings.showIcon,
+    showTemp: settings.showTemp,
+    showLoad: settings.showLoad,
+  })
+}
+
+export async function updateMacMenubarSettings(patch = {}) {
+  const next = normalizeMacMenubarSettings({
+    ...getMacMenubarSettings(),
+    ...(patch || {}),
+  })
+
+  writeMacMenubarSettingsRaw(next)
+
+  if (isMacOS()) {
+    if (next.enabled) {
+      startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
+      syncMacMenubarTelemetry()
+    } else {
+      stopMacMenubarHelper()
+    }
+  }
+
+  return next
 }
 
 async function stopPluginManagedOpenHardwareMonitor() {
@@ -3111,12 +3235,18 @@ async function getCpuTemperature() {
     }
 
     if (systemInfoValue.value !== null) {
+      if (isMacOS()) {
+        lastKnownCpuTemp = systemInfoValue.value
+        syncMacMenubarTelemetry()
+      }
       return buildCpuTemperatureResult(temperature, 'systeminformation', systemInfoValue.sensorName, systemInfoValue.value)
     }
 
     if (isMacOS()) {
       macTemperature = readMacSmcCpuTemperature({ pluginRoot: configuredPluginRoot }) || readMacCpuTemperature({ pluginRoot: configuredPluginRoot })
       if (macTemperature?.value !== null && macTemperature?.value !== undefined) {
+        lastKnownCpuTemp = macTemperature.value
+        syncMacMenubarTelemetry()
         return buildCpuTemperatureResult(
           macTemperature,
           macTemperature.source,
@@ -3575,11 +3705,18 @@ async function getGpuInfo() {
 }
 
 async function getCurrentLoadSnapshot() {
-  return readCachedServiceValue(
+  const current = await readCachedServiceValue(
     'currentLoadSnapshot',
     2000,
     () => readSystemInfo('currentLoadSnapshot', emptyCurrentLoadData, () => si.currentLoad())
   )
+
+  if (isMacOS() && typeof current?.currentLoad === 'number') {
+    lastKnownCpuLoad = Math.round(current.currentLoad)
+    syncMacMenubarTelemetry()
+  }
+
+  return current
 }
 
 function normalizeRateValue(value) {
@@ -3878,6 +4015,16 @@ export const systemService = {
 
   uninstallMacPowermetricsHelper,
 
+  getMacMenubarSettings: () => getMacMenubarSettings(),
+
+  updateMacMenubarSettings: async (patch) => updateMacMenubarSettings(patch),
+
+  getMacMenubarStatus: () => getMacMenubarStatus(),
+
+  startMacMenubarHelper: () => startMacMenubarHelper({ pluginRoot: configuredPluginRoot }),
+
+  stopMacMenubarHelper: () => stopMacMenubarHelper(),
+
   getCpuInfo: () =>
     readCachedServiceValue(
       'cpuInfo',
@@ -3940,11 +4087,15 @@ export const systemService = {
         if (isMacOS()) {
           const helperCpuSpeed = await readMacPowermetricsHelperCpuSpeed()
           if (hasCpuSpeedValue(helperCpuSpeed)) {
+            lastKnownCpuSpeed = helperCpuSpeed.max || helperCpuSpeed.avg
+            syncMacMenubarTelemetry()
             return helperCpuSpeed
           }
 
           const macCpuSpeed = readMacPowermetricsCpuSpeed()
           if (hasCpuSpeedValue(macCpuSpeed)) {
+            lastKnownCpuSpeed = macCpuSpeed.max || macCpuSpeed.avg
+            syncMacMenubarTelemetry()
             return macCpuSpeed
           }
 
@@ -3952,6 +4103,8 @@ export const systemService = {
             ? macCpuSpeed
             : helperCpuSpeed || macCpuSpeed
           const systemInfoSpeed = await readSystemInfo('cpuCurrentSpeed', fallback, () => si.cpuCurrentSpeed())
+          lastKnownCpuSpeed = systemInfoSpeed.max || systemInfoSpeed.avg
+          syncMacMenubarTelemetry()
           return {
             ...systemInfoSpeed,
             source: 'systeminformation',

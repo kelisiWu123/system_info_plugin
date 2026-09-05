@@ -745,7 +745,7 @@ const monitorCards = computed<MonitorCard[]>(() => [
     footerLeft: `来源 ${currentSpeedSourceLabel.value}`,
     footerRight: currentSpeedValue.value === null && !metricHistory.speed.length
       ? '暂无采样'
-      : (currentPeakSpeedValue.value && currentPeakSpeedValue.value > (currentSpeedValue.value || 0)
+      : (isWindowsPlatform.value && currentPeakSpeedValue.value && currentPeakSpeedValue.value > (currentSpeedValue.value || 0)
         ? `单核最高 ${formatFrequency(currentPeakSpeedValue.value)}`
         : `峰值 ${formatFrequency(getHistoryMax(metricHistory.speed, currentSpeedValue.value || 0))}`),
   },
@@ -803,7 +803,7 @@ const allCoreRows = computed<CoreRow[]>(() => {
 
   return Array.from({ length: total }, (_, index) => {
     let coreLoad: number | null = null
-    if (loadCores.length === total * 2) {
+    if (!isMacPlatform.value && loadCores.length === total * 2) {
       const t1 = safeNumber(loadCores[index * 2]?.load)
       const t2 = safeNumber(loadCores[index * 2 + 1]?.load)
       if (t1 !== null && t2 !== null) {

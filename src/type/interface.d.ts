@@ -305,6 +305,17 @@ declare global {
     reason?: string
     suggestion?: string
   }
+  interface MacMenubarSettingsData {
+    enabled: boolean
+    showTemp: boolean
+    showLoad: boolean
+    showIcon: boolean
+  }
+  interface MacMenubarStatusData {
+    running: boolean
+    supported: boolean
+    pid?: number | null
+  }
   interface CpuPowerData {
     value: number | null
     source: 'powermetrics' | 'OpenHardwareMonitor' | 'unsupported'
@@ -385,6 +396,11 @@ declare global {
       getMacPowermetricsHelperStatus: () => Promise<MacPowermetricsHelperStatusData>
       installMacPowermetricsHelper: () => Promise<MacPowermetricsHelperStatusData>
       uninstallMacPowermetricsHelper: () => Promise<MacPowermetricsHelperStatusData>
+      getMacMenubarSettings: () => Promise<MacMenubarSettingsData>
+      updateMacMenubarSettings: (patch: Partial<MacMenubarSettingsData>) => Promise<MacMenubarSettingsData>
+      getMacMenubarStatus: () => Promise<MacMenubarStatusData>
+      startMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean; pid?: number | null }>
+      stopMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean }>
       getCpuInfo: () => Promise<CpuData | undefined>
       getCpuFullLoad: () => Promise<number>
       getCpuTemperature: () => Promise<CpuTemperatureData | undefined>
