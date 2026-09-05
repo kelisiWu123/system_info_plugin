@@ -7,7 +7,7 @@ import {
   processorHardwareStore,
   refreshProcessorHardwareDynamicMetrics,
 } from '../../composables/useProcessorHardwareData'
-import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz } from '../../utils'
+import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz, getPeakCpuCurrentSpeedGHz } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 import { getServiceErrorDescription } from '../../utils/serviceReader'
@@ -204,9 +204,16 @@ function formatSyncTime(value?: number) {
 
 function formatCacheSize(value: number) {
   if (!value) return '--'
-  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
-  if (value >= 1024) return `${(value / 1024).toFixed(1)} MB`
-  return `${value} KB`
+  const bytes = value < 1024 ? value * 1024 : value
+  if (bytes >= 1024 * 1024) {
+    const mb = bytes / (1024 * 1024)
+    return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`
+  }
+  if (bytes >= 1024) {
+    const kb = bytes / 1024
+    return `${Number.isInteger(kb) ? kb : kb.toFixed(1)} KB`
+  }
+  return `${bytes} B`
 }
 
 function formatFrequency(value: number | null, digits = 2) {
@@ -498,6 +505,10 @@ const currentSpeedValue = computed(() => {
   const value = getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
   return value > 0 ? value : null
 })
+const currentPeakSpeedValue = computed(() => {
+  const value = getPeakCpuCurrentSpeedGHz(cpuCurrentSpeed.value)
+  return value > 0 ? value : null
+})
 const currentSpeedMax = computed(() => safeNumber(cpuCurrentSpeed.value.max) || safeNumber(cpuData.value?.speedMax) || 0)
 const currentSpeedSourceLabel = computed(() => formatCpuSpeedSource(cpuCurrentSpeed.value))
 const currentSpeedDiagnostics = computed(() => cpuCurrentSpeed.value.frequencyDiagnostics || null)
@@ -734,7 +745,9 @@ const monitorCards = computed<MonitorCard[]>(() => [
     footerLeft: `来源 ${currentSpeedSourceLabel.value}`,
     footerRight: currentSpeedValue.value === null && !metricHistory.speed.length
       ? '暂无采样'
-      : `峰值 ${formatFrequency(getHistoryMax(metricHistory.speed, currentSpeedValue.value || 0))}`,
+      : (currentPeakSpeedValue.value && currentPeakSpeedValue.value > (currentSpeedValue.value || 0)
+        ? `单核最高 ${formatFrequency(currentPeakSpeedValue.value)}`
+        : `峰值 ${formatFrequency(getHistoryMax(metricHistory.speed, currentSpeedValue.value || 0))}`),
   },
   processorAuxDisplayMode.value === 'fan'
     ? {
@@ -788,14 +801,29 @@ const allCoreRows = computed<CoreRow[]>(() => {
     0
   )
 
-  return Array.from({ length: total }, (_, index) => ({
-    id: `core-${index}`,
-    label: `${coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency)} ${index + 1}`,
-    type: coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency),
-    speed: safeNumber(speedCores[index]) ?? null,
-    load: safeNumber(loadCores[index]?.load),
-    temperature: safeNumber(temperatureCores[index]) ?? cpuTemperatureValue.value,
-  }))
+  return Array.from({ length: total }, (_, index) => {
+    let coreLoad: number | null = null
+    if (loadCores.length === total * 2) {
+      const t1 = safeNumber(loadCores[index * 2]?.load)
+      const t2 = safeNumber(loadCores[index * 2 + 1]?.load)
+      if (t1 !== null && t2 !== null) {
+        coreLoad = Math.round(((t1 + t2) / 2) * 10) / 10
+      } else {
+        coreLoad = t1 ?? t2
+      }
+    } else {
+      coreLoad = safeNumber(loadCores[index]?.load)
+    }
+
+    return {
+      id: `core-${index}`,
+      label: `${coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency)} ${index + 1}`,
+      type: coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency),
+      speed: safeNumber(speedCores[index]) ?? null,
+      load: coreLoad,
+      temperature: safeNumber(temperatureCores[index]) ?? cpuTemperatureValue.value,
+    }
+  })
 })
 
 const performanceCoreRows = computed(() => allCoreRows.value.filter((item) => item.type === 'P-Core'))

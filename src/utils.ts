@@ -74,12 +74,35 @@ function formatDisplayResolution(display?: DisplayData): string {
 function getDisplayCpuCurrentSpeedGHz(speed?: CpuCurrentSpeedData | null): number {
   if (!speed) return 0
 
+  if (typeof speed.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0) {
+    return speed.avg
+  }
+
+  const validCoreSpeeds = Array.isArray(speed.cores)
+    ? speed.cores.filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    : []
+
+  if (validCoreSpeeds.length) {
+    const sum = validCoreSpeeds.reduce((acc, val) => acc + val, 0)
+    return Math.round((sum / validCoreSpeeds.length) * 100) / 100
+  }
+
+  return 0
+}
+
+function getPeakCpuCurrentSpeedGHz(speed?: CpuCurrentSpeedData | null): number {
+  if (!speed) return 0
+
   const validCoreSpeeds = Array.isArray(speed.cores)
     ? speed.cores.filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
     : []
 
   if (validCoreSpeeds.length) {
     return Math.max(...validCoreSpeeds)
+  }
+
+  if (typeof speed.max === 'number' && Number.isFinite(speed.max) && speed.max > 0) {
+    return speed.max
   }
 
   return typeof speed.avg === 'number' && Number.isFinite(speed.avg) && speed.avg > 0 ? speed.avg : 0
@@ -463,6 +486,7 @@ export {
   clampPercent,
   formatDisplayResolution,
   getDisplayCpuCurrentSpeedGHz,
+  getPeakCpuCurrentSpeedGHz,
   getInstalledMemoryBytes,
   getDisplayMemoryCapacityBytes,
   getDisplayMemoryCapacityLabel,

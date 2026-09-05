@@ -1055,6 +1055,86 @@ async function queryWmiSensors(namespace, sensorType) {
   }
 }
 
+export async function queryWindowsCpuHardwareDetails() {
+  if (!isWindows()) return null
+  const script = 'Get-CimInstance Win32_Processor | Select-Object -First 1 SocketDesignation, VirtualizationFirmwareEnabled, L2CacheSize, L3CacheSize | ConvertTo-Json -Compress'
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      windowsHide: true,
+      timeout: 5000,
+    })
+    const text = stdout.trim()
+    if (!text) return null
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+export function normalizeWindowsCpuInfo(info, winDetails) {
+  if (!info || typeof info !== 'object') return info
+
+  const normalized = { ...info }
+
+  if (winDetails && typeof winDetails === 'object') {
+    if (typeof winDetails.VirtualizationFirmwareEnabled === 'boolean') {
+      normalized.virtualization = Boolean(normalized.virtualization || winDetails.VirtualizationFirmwareEnabled)
+    }
+
+    const socketStr = typeof normalized.socket === 'string' ? normalized.socket.trim() : ''
+    if (!socketStr || socketStr.toLowerCase() === 'unknown') {
+      if (typeof winDetails.SocketDesignation === 'string') {
+        const designation = winDetails.SocketDesignation.trim()
+        if (designation && designation.toLowerCase() !== 'unknown') {
+          normalized.socket = designation
+        }
+      }
+    }
+  }
+
+  if (normalized.cache && typeof normalized.cache === 'object') {
+    const cache = { ...normalized.cache }
+    // systeminformation Win32_CacheMemory bug: unified L1 size is in KB instead of Bytes
+    if (typeof cache.l1d === 'number' && cache.l1d > 0 && cache.l1d < 16384) {
+      cache.l1d *= 1024
+    }
+    if (typeof cache.l1i === 'number' && cache.l1i > 0 && cache.l1i < 16384) {
+      cache.l1i *= 1024
+    }
+    if ((!cache.l2 || cache.l2 <= 0) && winDetails?.L2CacheSize) {
+      cache.l2 = winDetails.L2CacheSize * 1024
+    }
+    if ((!cache.l3 || cache.l3 <= 0) && winDetails?.L3CacheSize) {
+      cache.l3 = winDetails.L3CacheSize * 1024
+    }
+    normalized.cache = cache
+  }
+
+  if (
+    normalized.efficiencyCores === 0
+    && typeof normalized.performanceCores === 'number'
+    && typeof normalized.physicalCores === 'number'
+    && normalized.performanceCores > normalized.physicalCores
+    && normalized.physicalCores > 0
+  ) {
+    normalized.performanceCores = 0
+  }
+
+  return normalized
+}
+
+export async function readCpuInfo() {
+  if (isWindows()) {
+    const [info, winDetails] = await Promise.all([
+      si.cpu(),
+      queryWindowsCpuHardwareDetails(),
+    ])
+    return normalizeWindowsCpuInfo(info, winDetails)
+  }
+  return si.cpu()
+}
+
+
 const CPU_SENSOR_EXCLUSION_TERMS = [
   'gpu',
   'tmpin',
@@ -2727,7 +2807,7 @@ async function openOpenHardwareMonitorDirectory() {
   }
 }
 
-async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
+async function getHardwareMonitorCpuTemperatureFromNamespace(namespace, cpuInfo) {
   if (typeof process === 'undefined' || process.platform !== 'win32') return undefined
 
   const sensors = (await queryHardwareMonitorSensors(namespace, 'Temperature')).filter(isCpuSensor)
@@ -2736,7 +2816,38 @@ async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
 
   const mainSensor = pickBestCpuTemperatureSensor(sensors)
   const coreSensors = sensors.filter((sensor) => /core\s*#?\d+/.test(normalizeSensorText(sensor)))
-  const coreValues = coreSensors.map((sensor) => toValidCpuTemperature(sensor.value)).filter((value) => value !== null)
+  let coreValues = coreSensors.map((sensor) => toValidCpuTemperature(sensor.value)).filter((value) => value !== null)
+
+  if (!coreValues.length) {
+    const ccdSensors = sensors
+      .filter((sensor) => /ccd\s*#?\d+/i.test(normalizeSensorText(sensor)))
+      .sort((a, b) => {
+        const numA = Number.parseInt((a.name.match(/\d+/) || [0])[0], 10)
+        const numB = Number.parseInt((b.name.match(/\d+/) || [0])[0], 10)
+        return numA - numB
+      })
+
+    if (ccdSensors.length) {
+      const physicalCores = typeof cpuInfo?.physicalCores === 'number' && cpuInfo.physicalCores > 0
+        ? cpuInfo.physicalCores
+        : 0
+      if (physicalCores > 0) {
+        const coresPerCcd = Math.max(1, Math.floor(physicalCores / ccdSensors.length))
+        coreValues = ccdSensors.flatMap((ccd, idx) => {
+          const val = toValidCpuTemperature(ccd.value)
+          const count = idx === ccdSensors.length - 1
+            ? physicalCores - coresPerCcd * (ccdSensors.length - 1)
+            : coresPerCcd
+          return Array(Math.max(1, count)).fill(val)
+        }).filter((value) => value !== null)
+      } else {
+        coreValues = ccdSensors
+          .map((sensor) => toValidCpuTemperature(sensor.value))
+          .filter((value) => value !== null)
+      }
+    }
+  }
+
   const allValues = sensors.map((sensor) => toValidCpuTemperature(sensor.value)).filter((value) => value !== null)
 
   return buildCpuTemperatureResult(
@@ -2761,8 +2872,8 @@ async function getHardwareMonitorCpuTemperatureFromNamespace(namespace) {
   )
 }
 
-async function getHardwareMonitorCpuTemperature() {
-  return getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
+async function getHardwareMonitorCpuTemperature(cpuInfo) {
+  return getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE, cpuInfo)
 }
 
 async function getHardwareMonitorCpuPower() {
@@ -2973,8 +3084,15 @@ async function getCpuTemperature() {
     const sensorSettings = getHardwareSensorSettings()
     const enhancedSensorEnabled = isWindows() && sensorSettings.enhancedSensorEnabled
     let macTemperature
+    const cpuInfo = isWindows()
+      ? await readCachedServiceValue(
+        'cpuInfo',
+        30000,
+        () => readSystemInfo('cpu', undefined, () => readCpuInfo())
+      )
+      : undefined
     const openTemperature = enhancedSensorEnabled
-      ? await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
+      ? await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE, cpuInfo)
       : undefined
 
     // Once Windows sensor enhancement is enabled, keep the source stable and
@@ -2986,7 +3104,7 @@ async function getCpuTemperature() {
     }
 
     if (enhancedSensorEnabled && (await getWindowsSensorHelperStatus())?.running) {
-      const retriedOpenTemperature = await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE)
+      const retriedOpenTemperature = await getHardwareMonitorCpuTemperatureFromNamespace(OPEN_HARDWARE_MONITOR_WMI_NAMESPACE, cpuInfo)
       if (retriedOpenTemperature && retriedOpenTemperature.value !== null) {
         return retriedOpenTemperature
       }
@@ -3764,7 +3882,7 @@ export const systemService = {
     readCachedServiceValue(
       'cpuInfo',
       30000,
-      () => readSystemInfo('cpu', undefined, () => si.cpu())
+      () => readSystemInfo('cpu', undefined, () => readCpuInfo())
     ),
 
   getCpuFullLoad: () =>
@@ -3851,7 +3969,7 @@ export const systemService = {
           ? await readCachedServiceValue(
             'cpuInfo',
             30000,
-            () => readSystemInfo('cpu', undefined, () => si.cpu())
+            () => readSystemInfo('cpu', undefined, () => readCpuInfo())
           )
           : undefined
 
