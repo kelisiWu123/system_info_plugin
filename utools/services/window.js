@@ -112,6 +112,11 @@ function requestCurrentWindowActivation() {
     // BrowserWindow focus below remains the authoritative path when available.
   }
 
+  if (typeof runtimeUtools.sendToParent === 'function') {
+    runtimeUtools.sendToParent('focus-window')
+    return
+  }
+
   if (parentWindowId) {
     try {
       ipcRenderer.sendTo(parentWindowId, 'focus-window')
@@ -264,6 +269,7 @@ function buildChildWindowOptions(fileName, height, width, backgroundColor) {
     maximizable: !isWatchWindow,
     resizable: !isWatchWindow,
     fullscreenable: !isWatchWindow,
+    closable: true,
     transparent: isWatchWindow,
     frame: false,
     alwaysOnTop: isWatchWindow,
@@ -315,6 +321,8 @@ function activateChildWindow(childWindow) {
 
 function bindChildWindowEvents(childWindow, singletonKey, singletonToken) {
   const childWindowId = childWindow.webContents.id
+  let closeCheckInterval
+  let cleanedUp = false
 
   const handleAlwaysOnTop = (event, { flag }) => {
     if (event.senderId === childWindowId && !childWindow.isDestroyed()) {
@@ -365,7 +373,10 @@ function bindChildWindowEvents(childWindow, singletonKey, singletonToken) {
   ipcRenderer.on('toggle-maximize-window', handleToggleMaximizeWindow)
   ipcRenderer.on('resize-window', handleResizeWindow)
 
-  childWindow.on('closed', () => {
+  const cleanup = () => {
+    if (cleanedUp) return
+    cleanedUp = true
+    clearInterval(closeCheckInterval)
     removeWindowSingletonRecord(singletonKey, singletonToken)
     ipcRenderer.removeListener('alwaysOnTop', handleAlwaysOnTop)
     ipcRenderer.removeListener('close-window', handleCloseWindow)
@@ -373,55 +384,66 @@ function bindChildWindowEvents(childWindow, singletonKey, singletonToken) {
     ipcRenderer.removeListener('minimize-window', handleMinimizeWindow)
     ipcRenderer.removeListener('toggle-maximize-window', handleToggleMaximizeWindow)
     ipcRenderer.removeListener('resize-window', handleResizeWindow)
-  })
+  }
+
+  // uTools returns a BrowserWindow proxy without Electron instance events.
+  // Observe disposal in the owning preload so native closes/crashes also clean up.
+  if (typeof childWindow.on === 'function') {
+    childWindow.on('closed', cleanup)
+  } else {
+    closeCheckInterval = setInterval(() => {
+      try {
+        if (childWindow.isDestroyed()) cleanup()
+      } catch {
+        // The host no longer has the window represented by this proxy.
+        cleanup()
+      }
+    }, 500)
+    closeCheckInterval.unref?.()
+  }
+}
+
+function sendCurrentWindowAction(parentChannel, mainAction, payload) {
+  if (typeof runtimeUtools.sendToParent === 'function') {
+    runtimeUtools.sendToParent(parentChannel, payload)
+    return
+  }
+
+  if (parentWindowId) {
+    ipcRenderer.sendTo(parentWindowId, parentChannel, payload)
+    return
+  }
+
+  ipcRenderer.send('window-action', mainAction, payload)
 }
 
 export const windowService = {
   getWinId: () => (parentWindowId ? String(parentWindowId) : undefined),
 
   alwaysOnTop: (flag) => {
-    if (parentWindowId) {
-      ipcRenderer.sendTo(parentWindowId, 'alwaysOnTop', { flag })
-      return
-    }
-
-    ipcRenderer.send('window-action', 'always-on-top', { flag })
+    sendCurrentWindowAction('alwaysOnTop', 'always-on-top', { flag })
   },
 
   closeWindow: () => {
-    if (parentWindowId) {
-      ipcRenderer.sendTo(parentWindowId, 'close-window')
+    // Self-close works even before init arrives or after the parent disappears.
+    if (runtimeUtools.getWindowType?.() === 'browser') {
+      globalThis.close()
       return
     }
 
-    ipcRenderer.send('window-action', 'close')
+    sendCurrentWindowAction('close-window', 'close')
   },
 
   minimizeWindow: () => {
-    if (parentWindowId) {
-      ipcRenderer.sendTo(parentWindowId, 'minimize-window')
-      return
-    }
-
-    ipcRenderer.send('window-action', 'minimize')
+    sendCurrentWindowAction('minimize-window', 'minimize')
   },
 
   toggleMaximizeWindow: () => {
-    if (parentWindowId) {
-      ipcRenderer.sendTo(parentWindowId, 'toggle-maximize-window')
-      return
-    }
-
-    ipcRenderer.send('window-action', 'toggle-maximize')
+    sendCurrentWindowAction('toggle-maximize-window', 'toggle-maximize')
   },
 
   resizeWindow: (width, height) => {
-    if (parentWindowId) {
-      ipcRenderer.sendTo(parentWindowId, 'resize-window', { width, height })
-      return
-    }
-
-    ipcRenderer.send('window-action', 'resize', { width, height })
+    sendCurrentWindowAction('resize-window', 'resize', { width, height })
   },
 
   createWindow: async (fileName, height = 300, width = 300, backgroundColor = 0.3) => {
@@ -468,6 +490,7 @@ export const windowService = {
             windowUrl,
             {
               ...childWindowConfig.options,
+              closeable: true,
               webPreferences: {
                 preload: 'preload.js',
                 devTools: true,
@@ -491,7 +514,7 @@ export const windowService = {
                 }
 
                 bindChildWindowEvents(childWindow, singletonKey, singletonClaim.token)
-                ipcRenderer.sendTo(childWindowId, 'init', { singletonKey })
+                childWindow.webContents.send('init', { singletonKey })
                 publishWindowSingleton(singletonKey, singletonClaim.token, childWindowId)
 
                 if (isWatchWindow) {
