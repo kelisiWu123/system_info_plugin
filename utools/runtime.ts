@@ -4,6 +4,8 @@ export interface UtoolsRuntimeLike {
   isDev: () => boolean
   outPlugin: () => void
   createBrowserWindow?: (...args: any[]) => any
+  sendToParent?: (channel: string, ...args: unknown[]) => void
+  getWindowType?: () => 'main' | 'detach' | 'browser'
   shellOpenPath?: (targetPath: string) => void
   getPath?: (name: string) => string
   dbStorage?: {
@@ -40,6 +42,9 @@ export function resolveUtoolsRuntime(
 
   return {
     ...runtime,
+    createBrowserWindow: runtime.createBrowserWindow?.bind(runtime),
+    sendToParent: runtime.sendToParent?.bind(runtime),
+    getWindowType: runtime.getWindowType?.bind(runtime),
     isDev: typeof runtime.isDev === 'function' ? runtime.isDev.bind(runtime) : () => true,
     outPlugin: typeof runtime.outPlugin === 'function' ? runtime.outPlugin.bind(runtime) : () => undefined,
   }
