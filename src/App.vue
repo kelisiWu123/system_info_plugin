@@ -11,6 +11,7 @@ import {
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ThemeControl from './components/common/ThemeControl.vue'
 import MenubarSettings from './components/MenubarSettings/index.vue'
+import CpuCoresWatchView from './components/Watch/CpuCoresWatchView.vue'
 import { overviewHardwareStore } from './composables/useOverviewHardwareData'
 import { useSensorEnhancementController } from './composables/useSensorEnhancementController'
 import { resolveDevPageCopyTarget } from './utils/devPageCopy'
@@ -84,6 +85,7 @@ const hasExplicitPageRoute = computed(() => Boolean(currentHash.value.replace(/^
 const initialFloatingMode = computed(() => resolveInitialFloatingMode(currentHash.value))
 const initialFloatingEntry = computed(() => resolveInitialFloatingEntry(currentHash.value))
 const isWatchPage = computed(() => currentPage.value === 'watch')
+const isCpuCoresWatchPage = computed(() => currentPage.value === 'cpuCoresWatch')
 const isMonitorPage = computed(() => currentPage.value === 'monitor')
 const isDeviceSpecsPage = computed(() => currentPage.value === 'deviceSpecs')
 const isMenubarSettingsPage = computed(() => currentPage.value === 'menubarSettings')
@@ -510,6 +512,10 @@ onUnmounted(() => {
     <Watch :active="true" :initial-floating-mode="initialFloatingMode" :initial-floating-entry="initialFloatingEntry" />
   </div>
 
+  <div v-else-if="isCpuCoresWatchPage" class="watch-stage">
+    <CpuCoresWatchView :active="true" />
+  </div>
+
   <div v-else-if="isMonitorPage" class="monitor-dashboard-stage">
     <div class="window-titlebar standalone-titlebar">
       <div class="window-titlebar__brand standalone-titlebar__brand">
@@ -850,7 +856,14 @@ onUnmounted(() => {
 }
 
 .device-specs-stage,
-.monitor-dashboard-stage,
+.monitor-dashboard-stage {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+  height: 100%;
+  width: 100%;
+  background: var(--app-background);
+}
+
 .menubar-settings-stage {
   display: grid;
   grid-template-rows: 44px minmax(0, 1fr);

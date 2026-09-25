@@ -20,6 +20,16 @@ if (typeof runtimeUtools.onPluginOut === 'function') {
   })
 }
 
+if (typeof systemService.setWindowsTrayCommandHandler === 'function') {
+  systemService.setWindowsTrayCommandHandler((command) => {
+    if (command?.action === 'openPreset' && command.preset) {
+      void openPresetWindow(command.preset)
+    } else if (command?.action === 'exitTray') {
+      void systemService.updateMacMenubarSettings?.({ enabled: false })
+    }
+  })
+}
+
 const windowPresets = {
   a_watch: {
     prod: { height: 398, width: 432, backgroundColor: 0 },
@@ -45,6 +55,15 @@ const windowPresets = {
     prod: { height: 680, width: 620, backgroundColor: 1 },
     dev: { height: 720, width: 660, backgroundColor: 1 },
   },
+  a_watch_cpu_cores: {
+    prod: { height: 400, width: 360, backgroundColor: 0 },
+    dev: { height: 420, width: 380, backgroundColor: 0 },
+  },
+}
+
+window.services = {
+  ...systemService,
+  ...windowService,
 }
 
 async function openPresetWindow(name) {
@@ -61,13 +80,14 @@ async function openPresetWindow(name) {
   } finally {
     // Hide the launcher context after the independent window is ready. Killing
     // the plugin here would also destroy the newly created BrowserWindow.
-    runtimeUtools.outPlugin()
+    if (typeof runtimeUtools.getWindowType === 'function') {
+      if (runtimeUtools.getWindowType() !== 'browser') {
+        runtimeUtools.outPlugin()
+      }
+    } else {
+      runtimeUtools.outPlugin()
+    }
   }
-}
-
-window.services = {
-  ...systemService,
-  ...windowService,
 }
 
 window.exports = {
@@ -99,6 +119,12 @@ window.exports = {
     mode: 'none',
     args: {
       enter: () => openPresetWindow('a_menubar_settings'),
+    },
+  },
+  hardwareWatchCpuCores: {
+    mode: 'none',
+    args: {
+      enter: () => openPresetWindow('a_watch_cpu_cores'),
     },
   },
 }

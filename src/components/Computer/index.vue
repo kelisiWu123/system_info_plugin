@@ -831,18 +831,26 @@ useActivePageLifecycle(
 }
 
 .overview-progress__dot {
-  width: 7px;
-  height: 7px;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
+  border: 2px solid rgba(69, 181, 255, 0.2);
+  border-top-color: var(--accent-blue);
   border-radius: 50%;
-  background: var(--accent-blue);
-  box-shadow: 0 0 0 4px rgba(43, 114, 255, 0.12);
-  animation: overview-progress-pulse 1.2s ease-in-out infinite;
+  animation: overview-progress-spin 0.8s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
 }
 
-@keyframes overview-progress-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
+@keyframes overview-progress-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 :deep([id^='section-']) {
@@ -865,8 +873,10 @@ useActivePageLifecycle(
 }
 
 .summary-card {
+  min-width: 0;
   min-height: 172px;
   padding: var(--surface-padding);
+  overflow: hidden;
 }
 
 .summary-card__icon {
@@ -894,6 +904,8 @@ useActivePageLifecycle(
   font-size: 18px;
   font-weight: 700;
   line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .summary-card__line {
@@ -901,6 +913,8 @@ useActivePageLifecycle(
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .diagnostics-panel,
@@ -1016,12 +1030,16 @@ useActivePageLifecycle(
   color: var(--text-secondary);
   font-size: 14px;
   font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .diagnostics-card__line {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .detail-grid {

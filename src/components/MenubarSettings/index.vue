@@ -26,15 +26,22 @@ interface MetricDefinition {
   icon: unknown
 }
 
-const metricDefinitions: MetricDefinition[] = [
-  { key: 'cpuTemperature', label: 'CPU 温度', description: '在菜单栏显示处理器温度', icon: Thermometer },
-  { key: 'cpuLoad', label: 'CPU 负载', description: '在菜单栏显示处理器实时负载', icon: Cpu },
-  { key: 'cpuFrequency', label: 'CPU 频率', description: '在菜单栏显示当前处理器频率', icon: Speed },
-  { key: 'fanSpeed', label: '风扇转速', description: '在菜单栏显示 CPU 风扇转速', icon: DashboardOne },
-  { key: 'memoryUsage', label: '内存使用率', description: '在菜单栏显示已使用内存百分比', icon: Memory },
-  { key: 'diskIo', label: '磁盘 IO', description: '在菜单栏同时显示磁盘读取和写入速度', icon: HardDisk },
-  { key: 'networkIo', label: '网络 IO', description: '在菜单栏同时显示网络下行和上行速度', icon: NetworkTree },
-]
+const isMacOS = computed(() => platform.value === 'macos')
+const isWindows = computed(() => platform.value === 'windows')
+const isSupportedPlatform = computed(() => isMacOS.value || isWindows.value)
+
+const metricDefinitions = computed<MetricDefinition[]>(() => {
+  const isMac = isMacOS.value
+  return [
+    { key: 'cpuTemperature', label: 'CPU 温度', description: isMac ? '在菜单栏显示处理器温度' : '在任务栏托盘徽标与悬浮提示中显示温度', icon: Thermometer },
+    { key: 'cpuLoad', label: 'CPU 负载', description: isMac ? '在菜单栏显示处理器实时负载' : '在任务栏托盘悬浮提示中显示实时负载', icon: Cpu },
+    { key: 'cpuFrequency', label: 'CPU 频率', description: isMac ? '在菜单栏显示当前处理器频率' : '在任务栏托盘悬浮提示中显示处理器实时频率', icon: Speed },
+    { key: 'fanSpeed', label: '风扇转速', description: isMac ? '在菜单栏显示 CPU 风扇转速' : '在任务栏托盘悬浮提示中显示风扇转速', icon: DashboardOne },
+    { key: 'memoryUsage', label: '内存使用率', description: isMac ? '在菜单栏显示已使用内存百分比' : '在任务栏托盘悬浮提示中显示内存百分比与用量', icon: Memory },
+    { key: 'diskIo', label: '磁盘 IO', description: isMac ? '在菜单栏同时显示磁盘读取和写入速度' : '在任务栏托盘悬浮提示中显示磁盘读写速度', icon: HardDisk },
+    { key: 'networkIo', label: '网络 IO', description: isMac ? '在菜单栏同时显示网络下行和上行速度' : '在任务栏托盘悬浮提示中显示网络实时网速', icon: NetworkTree },
+  ]
+})
 
 const defaultSettings: MacMenubarSettingsData = {
   enabled: false,
@@ -59,9 +66,8 @@ const loadError = ref('')
 const saveError = ref('')
 const platform = ref<SensorEnhancementPlatform>('unsupported')
 
-const isMacOS = computed(() => platform.value === 'macos')
-const enabledMetricCount = computed(() => metricDefinitions.filter((item) => settings.value.metrics[item.key]).length)
-const selectedMetricLabels = computed(() => metricDefinitions
+const enabledMetricCount = computed(() => metricDefinitions.value.filter((item) => settings.value.metrics[item.key]).length)
+const selectedMetricLabels = computed(() => metricDefinitions.value
   .filter((item) => settings.value.metrics[item.key])
   .map((item) => item.label))
 
@@ -92,7 +98,7 @@ async function loadSettings() {
     platform.value = getSensorEnhancementPlatform(osInfo)
     settings.value = normalizeSettings(storedSettings)
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : '读取菜单栏设置失败'
+    loadError.value = error instanceof Error ? error.message : '读取设置失败'
   } finally {
     loading.value = false
   }
@@ -106,11 +112,11 @@ async function applySettings(patch: MacMenubarSettingsPatch) {
   try {
     const next = await window.services.updateMacMenubarSettings(patch)
     settings.value = normalizeSettings(next)
-    if (settings.value.enabled && isMacOS.value && enabledMetricCount.value > 0) {
+    if (settings.value.enabled && isSupportedPlatform.value && enabledMetricCount.value > 0) {
       void window.services.refreshMacMenubarTelemetry()
     }
   } catch (error) {
-    saveError.value = error instanceof Error ? error.message : '保存菜单栏设置失败'
+    saveError.value = error instanceof Error ? error.message : '保存设置失败'
   } finally {
     saving.value = false
   }
@@ -133,7 +139,7 @@ function toggleMetric(key: MetricKey) {
 
 onMounted(async () => {
   await loadSettings()
-  if (settings.value.enabled && isMacOS.value && enabledMetricCount.value > 0) {
+  if (settings.value.enabled && isSupportedPlatform.value && enabledMetricCount.value > 0) {
     void window.services.refreshMacMenubarTelemetry()
   }
 })
@@ -146,15 +152,15 @@ onMounted(async () => {
         <Cpu theme="outline" size="24" fill="currentColor" :strokeWidth="3" />
       </div>
       <div>
-        <p class="menubar-settings__eyebrow">HWInfoX · macOS</p>
-        <h1 id="menubar-settings-title">菜单栏显示设置</h1>
-        <p>每个指标都会独立出现在 macOS 顶部菜单栏，可按需组合。</p>
+        <p class="menubar-settings__eyebrow">{{ isMacOS ? 'HWInfoX · macOS' : 'HWInfoX · Windows' }}</p>
+        <h1 id="menubar-settings-title">{{ isMacOS ? '菜单栏显示设置' : '系统托盘显示设置' }}</h1>
+        <p>{{ isMacOS ? '每个指标都会独立出现在 macOS 顶部菜单栏，可按需组合。' : 'Windows 任务栏托盘将常驻单个核心温度徽标，其余各项指标在鼠标悬浮时以多行状态卡片实时展示。' }}</p>
       </div>
     </header>
 
     <div v-if="loading" class="menubar-settings__state" role="status" aria-live="polite">
       <span class="menubar-settings__spinner" aria-hidden="true" />
-      正在读取菜单栏设置…
+      正在读取设置…
     </div>
 
     <div v-else-if="loadError" class="menubar-settings__state menubar-settings__state--error" role="alert">
@@ -163,17 +169,17 @@ onMounted(async () => {
       <button type="button" class="menubar-settings__retry" @click="loadSettings">重试</button>
     </div>
 
-    <div v-else-if="!isMacOS" class="menubar-settings__state" role="status">
-      <strong>当前平台不支持 macOS 菜单栏 helper</strong>
-      <span>这组设置只会在 macOS 上启动菜单栏监控。</span>
+    <div v-else-if="!isSupportedPlatform" class="menubar-settings__state" role="status">
+      <strong>当前平台暂不支持状态栏/托盘常驻</strong>
+      <span>此功能支持 macOS 菜单栏与 Windows 系统托盘。</span>
     </div>
 
     <template v-else>
       <section class="menubar-settings__panel menubar-settings__master-panel">
         <div class="menubar-settings__panel-copy">
-          <span class="menubar-settings__panel-label">菜单栏监控</span>
+          <span class="menubar-settings__panel-label">{{ isMacOS ? '菜单栏监控' : '系统托盘监控' }}</span>
           <strong>{{ settings.enabled ? '已启用' : '已关闭' }}</strong>
-          <p>启用后，选中的指标会立即创建为独立菜单栏项目。</p>
+          <p>{{ isMacOS ? '启用后，选中的指标会立即创建为独立菜单栏项目。' : '启用后，系统托盘将常驻核心硬件状态徽标，鼠标悬浮即可查看全部硬件详情。' }}</p>
         </div>
         <button
           type="button"
@@ -192,7 +198,7 @@ onMounted(async () => {
         <div class="menubar-settings__section-heading">
           <div>
             <span class="menubar-settings__panel-label">显示选项</span>
-            <p>图标使用 macOS 原生 SF Symbol，自动适配深浅色模式。</p>
+            <p>{{ isMacOS ? '图标使用 macOS 原生 SF Symbol，自动适配深浅色模式。' : '托盘图标使用紧凑硬件字形，自动适配任务栏深浅主题。' }}</p>
           </div>
         </div>
         <button
@@ -217,9 +223,9 @@ onMounted(async () => {
       <section class="menubar-settings__panel">
         <div class="menubar-settings__section-heading">
           <div>
-            <span class="menubar-settings__panel-label">独立指标</span>
+            <span class="menubar-settings__panel-label">{{ isMacOS ? '独立指标' : '悬浮提示包含指标' }}</span>
             <strong>{{ enabledMetricCount }} / {{ metricDefinitions.length }} 项已选择</strong>
-            <p>每一项都会生成一个独立的菜单栏 status item。</p>
+            <p>{{ isMacOS ? '每一项都会生成一个独立的菜单栏 status item。' : '选中的指标将汇总在鼠标悬浮托盘时的多行实时状态提示中。' }}</p>
           </div>
         </div>
 
@@ -249,13 +255,34 @@ onMounted(async () => {
 
       <section class="menubar-settings__preview" aria-live="polite">
         <div class="menubar-settings__preview-heading">
-          <span>当前菜单栏预览</span>
+          <span>{{ isMacOS ? '当前菜单栏预览' : '托盘与悬浮提示预览' }}</span>
           <small>{{ settings.enabled ? '实时生效' : '启用总开关后生效' }}</small>
         </div>
-        <div v-if="selectedMetricLabels.length" class="menubar-settings__preview-items">
-          <span v-for="label in selectedMetricLabels" :key="label">{{ label }}</span>
-        </div>
-        <p v-else>尚未选择指标。开启总开关前，请至少选择一项。</p>
+
+        <template v-if="isMacOS">
+          <div v-if="selectedMetricLabels.length" class="menubar-settings__preview-items">
+            <span v-for="label in selectedMetricLabels" :key="label">{{ label }}</span>
+          </div>
+          <p v-else>尚未选择指标。开启总开关前，请至少选择一项。</p>
+        </template>
+
+        <template v-else>
+          <div class="menubar-settings__win-preview">
+            <div class="menubar-settings__win-tray">
+              <span class="menubar-settings__win-badge">63°</span>
+              <small>常驻托盘徽标</small>
+            </div>
+            <div class="menubar-settings__win-tooltip">
+              <div class="menubar-settings__win-tooltip-title">HWInfoX 硬件监控</div>
+              <div class="menubar-settings__win-tooltip-lines">
+                <div>CPU: 63°C | 占用: 24% | 4.8GHz</div>
+                <div>内存: 51% (16.2 / 32.0 GB)</div>
+                <div v-if="settings.metrics.fanSpeed">风扇: 1850 RPM</div>
+                <div v-if="settings.metrics.networkIo">网速: 下 2.4 MB/s  上 380 KB/s</div>
+              </div>
+            </div>
+          </div>
+        </template>
       </section>
 
       <p v-if="saveError" class="menubar-settings__error" role="alert">{{ saveError }}</p>
@@ -635,16 +662,87 @@ onMounted(async () => {
 }
 
 .menubar-settings__spinner {
+  display: inline-block;
+  box-sizing: border-box;
   width: 24px;
   height: 24px;
-  border: 2px solid color-mix(in srgb, var(--accent-blue) 20%, transparent);
+  border: 2.5px solid rgba(69, 181, 255, 0.2);
   border-top-color: var(--accent-blue);
   border-radius: 50%;
   animation: menubar-settings-spin 0.8s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
 }
 
 @keyframes menubar-settings-spin {
-  to { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.menubar-settings__win-preview {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.menubar-settings__win-tray {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.menubar-settings__win-badge {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  background: rgba(14, 20, 28, 0.92);
+  border: 1.8px solid rgba(78, 201, 240, 0.7);
+  color: #4ec9f0;
+  font-family: 'Bahnschrift', 'Segoe UI', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.menubar-settings__win-tray small {
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
+.menubar-settings__win-tooltip {
+  min-width: 250px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--control-border);
+  background: rgba(20, 26, 36, 0.95);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.menubar-settings__win-tooltip-title {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--control-border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.menubar-settings__win-tooltip-lines {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: 'Consolas', 'Segoe UI Mono', monospace;
+  line-height: 1.4;
 }
 
 @media (max-width: 680px) {

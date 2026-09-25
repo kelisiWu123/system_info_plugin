@@ -20,6 +20,14 @@ import {
   stopMacMenubarHelper,
   updateMacMenubarTelemetry,
 } from './macMenubarHelper'
+import {
+  configureWindowsTrayContext,
+  getWindowsTrayStatus,
+  setWindowsTrayCommandHandler,
+  startWindowsTrayHelper,
+  stopWindowsTrayHelper,
+  updateWindowsTrayTelemetry,
+} from './windowsTrayHelper'
 
 const execFileAsync = promisify(execFile)
 const {
@@ -160,6 +168,8 @@ let openHardwareMonitorManagedPid = null
 let openHardwareMonitorKnownRunning = false
 let configuredPluginRoot = ''
 let configuredUtoolsRuntime
+let cachedWindowsGpuControllers = null
+let cachedWindowsGpuControllersAt = 0
 const runtimeServiceCache = new Map()
 const runtimeServicePromiseCache = new Map()
 const runtimeServiceCacheRevision = new Map()
@@ -184,6 +194,10 @@ function getRuntimeServiceCacheRevision(cacheKey) {
 function invalidateRuntimeServiceCache(...cacheKeyInputs) {
   const cacheKeys = cacheKeyInputs.flat().filter((cacheKey) => typeof cacheKey === 'string' && cacheKey)
   for (const cacheKey of cacheKeys) {
+    if (cacheKey === 'gpuInfo' || cacheKey === 'staticGpuInfo') {
+      cachedWindowsGpuControllers = null
+      cachedWindowsGpuControllersAt = 0
+    }
     runtimeServiceCacheRevision.set(cacheKey, getRuntimeServiceCacheRevision(cacheKey) + 1)
     runtimeServiceCache.delete(cacheKey)
     runtimeServicePromiseCache.delete(cacheKey)
@@ -256,9 +270,11 @@ export function configureSystemServiceContext({ pluginRoot, utools } = {}) {
     : ''
   configuredUtoolsRuntime = utools
   configureMacMenubarContext({ pluginRoot: configuredPluginRoot })
+  configureWindowsTrayContext({ pluginRoot: configuredPluginRoot })
   clearMacMenubarRuntimeStopSignal()
+  clearWindowsTrayRuntimeStopSignal()
   const menubarSettings = getMacMenubarSettings()
-  if (isMacOS() && menubarSettings.enabled && hasEnabledMacMenubarMetric(menubarSettings)) {
+  if ((isMacOS() || isWindows()) && menubarSettings.enabled && hasEnabledMacMenubarMetric(menubarSettings)) {
     startMacMenubarTelemetryScheduler()
   }
 }
@@ -1046,7 +1062,7 @@ function normalizeMacMenubarSettings(input) {
 }
 
 export function getMacMenubarSettings() {
-  if (!isMacOS()) {
+  if (!isMacOS() && !isWindows()) {
     return normalizeMacMenubarSettings(DEFAULT_MACOS_MENUBAR_SETTINGS)
   }
 
@@ -1158,6 +1174,54 @@ function clearMacMenubarRuntimeStopSignal() {
   }
 }
 
+const WINDOWS_TRAY_STATE_DIRECTORY = path.join(os.tmpdir(), 'system-info-plugin', 'windows-tray')
+const WINDOWS_TRAY_RUNTIME_STOP_PATH = path.join(WINDOWS_TRAY_STATE_DIRECTORY, 'runtime-stop.json')
+
+function isWindowsTrayRuntimeStopSignaled() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(WINDOWS_TRAY_RUNTIME_STOP_PATH, 'utf8'))
+    return Boolean(parsed && Number(parsed.stoppedAt) > 0)
+  } catch {
+    return false
+  }
+}
+
+function clearWindowsTrayRuntimeStopSignal() {
+  try {
+    fs.unlinkSync(WINDOWS_TRAY_RUNTIME_STOP_PATH)
+  } catch {
+    // The signal is optional and may not exist on the first launch.
+  }
+}
+
+function writeWindowsTrayRuntimeStopSignal() {
+  const temporaryPath = `${WINDOWS_TRAY_RUNTIME_STOP_PATH}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+
+  try {
+    fs.mkdirSync(WINDOWS_TRAY_STATE_DIRECTORY, { recursive: true })
+    fs.writeFileSync(temporaryPath, JSON.stringify({
+      pid: process.pid,
+      stoppedAt: Date.now(),
+      reason: 'utools-plugin-out',
+    }), 'utf8')
+    fs.renameSync(temporaryPath, WINDOWS_TRAY_RUNTIME_STOP_PATH)
+    return true
+  } catch {
+    try {
+      fs.unlinkSync(temporaryPath)
+    } catch {
+      // Ignore cleanup errors.
+    }
+    return false
+  }
+}
+
+function isTrayRuntimeStopSignaled() {
+  if (isMacOS()) return isMacMenubarRuntimeStopSignaled()
+  if (isWindows()) return isWindowsTrayRuntimeStopSignaled()
+  return true
+}
+
 function releaseMacMenubarTelemetryScheduler() {
   const token = macMenubarTelemetrySchedulerToken
   macMenubarTelemetrySchedulerToken = ''
@@ -1228,7 +1292,7 @@ function tryAcquireMacMenubarTelemetryScheduler() {
 
 async function runMacMenubarTelemetrySchedulerTick() {
   const settings = getMacMenubarSettings()
-  if (!isMacOS() || isMacMenubarRuntimeStopSignaled() || !settings.enabled || !hasEnabledMacMenubarMetric(settings)) {
+  if ((!isMacOS() && !isWindows()) || isTrayRuntimeStopSignaled() || !settings.enabled || !hasEnabledMacMenubarMetric(settings)) {
     releaseMacMenubarTelemetryScheduler()
     return
   }
@@ -1237,7 +1301,7 @@ async function runMacMenubarTelemetrySchedulerTick() {
 }
 
 function startMacMenubarTelemetryScheduler() {
-  if (!isMacOS() || macMenubarTelemetrySchedulerTimer) return
+  if ((!isMacOS() && !isWindows()) || macMenubarTelemetrySchedulerTimer) return
 
   macMenubarTelemetrySchedulerTimer = setInterval(() => {
     void runMacMenubarTelemetrySchedulerTick()
@@ -1259,7 +1323,7 @@ export function syncMacMenubarTelemetry(snapshot) {
   // publish a complete batch; a page's partial cache must never replace it.
   if (!snapshot || !macMenubarTelemetrySchedulerToken
     || readMacMenubarSchedulerRecord()?.token !== macMenubarTelemetrySchedulerToken) return
-  if (!isMacOS() || isMacMenubarRuntimeStopSignaled()) return
+  if ((!isMacOS() && !isWindows()) || isTrayRuntimeStopSignaled()) return
   const settings = getMacMenubarSettings()
   if (!settings.enabled || !hasEnabledMacMenubarMetric(settings)) return
 
@@ -1269,21 +1333,33 @@ export function syncMacMenubarTelemetry(snapshot) {
   }
   lastMenubarPushAt = now
 
-  if (!getMacMenubarStatus().running) {
-    startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
+  if (isMacOS()) {
+    if (!getMacMenubarStatus().running) {
+      startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
+    }
+    updateMacMenubarTelemetry({
+      ...snapshot,
+      showIcon: settings.showIcon,
+      showTemp: settings.showTemp,
+      showLoad: settings.showLoad,
+      metrics: settings.metrics,
+    })
+  } else if (isWindows()) {
+    if (!getWindowsTrayStatus().running) {
+      startWindowsTrayHelper({ pluginRoot: configuredPluginRoot })
+    }
+    updateWindowsTrayTelemetry({
+      ...snapshot,
+      showIcon: settings.showIcon,
+      showTemp: settings.showTemp,
+      showLoad: settings.showLoad,
+      metrics: settings.metrics,
+    })
   }
-
-  updateMacMenubarTelemetry({
-    ...snapshot,
-    showIcon: settings.showIcon,
-    showTemp: settings.showTemp,
-    showLoad: settings.showLoad,
-    metrics: settings.metrics,
-  })
 }
 
 export async function refreshMacMenubarTelemetry() {
-  if (!isMacOS() || isMacMenubarRuntimeStopSignaled()) return
+  if ((!isMacOS() && !isWindows()) || isTrayRuntimeStopSignaled()) return
 
   const settings = getMacMenubarSettings()
   if (!settings.enabled || !hasEnabledMacMenubarMetric(settings)) return
@@ -1337,15 +1413,17 @@ export async function updateMacMenubarSettings(patch = {}) {
 
   writeMacMenubarSettingsRaw(next)
 
-  if (isMacOS()) {
+  if (isMacOS() || isWindows()) {
     if (next.enabled && hasEnabledMacMenubarMetric(next)) {
       clearMacMenubarRuntimeStopSignal()
+      clearWindowsTrayRuntimeStopSignal()
       lastMenubarPushAt = 0
       startMacMenubarTelemetryScheduler()
       void refreshMacMenubarTelemetry()
     } else {
       stopMacMenubarTelemetryScheduler()
-      stopMacMenubarHelper()
+      if (isMacOS()) stopMacMenubarHelper()
+      if (isWindows()) stopWindowsTrayHelper()
     }
   }
 
@@ -1356,9 +1434,13 @@ export function stopMacMenubarRuntime() {
   if (isMacOS()) {
     writeMacMenubarRuntimeStopSignal()
     stopMacMenubarTelemetryScheduler()
+    return stopMacMenubarHelper()
+  } else if (isWindows()) {
+    writeWindowsTrayRuntimeStopSignal()
+    stopMacMenubarTelemetryScheduler()
+    return stopWindowsTrayHelper()
   }
-
-  return stopMacMenubarHelper()
+  return { ok: true, running: false }
 }
 
 async function stopPluginManagedOpenHardwareMonitor() {
@@ -3857,12 +3939,178 @@ function deriveGpuIdleResidency(idleResidencyGpu, utilizationGpu) {
   return Math.round((100 - normalizedUtilization) * 10) / 10
 }
 
+export function parseWindowsGpuControllers(rawItems) {
+  if (!rawItems) return []
+  const items = normalizeJsonArray(rawItems)
+
+  return items
+    .filter((item) => {
+      const pnp = String(item?.PNPDeviceID || '')
+      const name = String(item?.Name || '').toLowerCase()
+      if (!pnp.toUpperCase().startsWith('PCI')) return false
+      if (
+        name.includes('virtual display') ||
+        name.includes('spacedesk') ||
+        name.includes('iddcx') ||
+        name.includes('gameviewer') ||
+        name.includes('oray')
+      ) {
+        return false
+      }
+      return true
+    })
+    .map((item) => {
+      const pnp = String(item.PNPDeviceID || '')
+      const pnpMatch = pnp.match(/PCI\\(VEN_[0-9A-F]{4})&(DEV_[0-9A-F]{4})(?:&(SUBSYS_[0-9A-F]{8}))?(?:&(REV_[0-9A-F]{2}))?/i)
+      let vendorId = ''
+      let deviceId = ''
+      let subDeviceId = null
+      if (pnpMatch) {
+        vendorId = pnpMatch[1].replace(/VEN_/i, '').toLowerCase()
+        deviceId = pnpMatch[2].replace(/DEV_/i, '').toLowerCase()
+        if (pnpMatch[3]) {
+          subDeviceId = pnpMatch[3].replace(/SUBSYS_/i, '').toLowerCase()
+        }
+      }
+
+      let vendor = item.AdapterCompatibility || ''
+      const name = item.Name || ''
+      if (/NVIDIA/i.test(vendor) || /NVIDIA/i.test(name)) {
+        vendor = 'NVIDIA'
+      } else if (/AMD|Advanced Micro Devices|ATI/i.test(vendor) || /AMD|Radeon/i.test(name)) {
+        vendor = 'AMD'
+      } else if (/Intel/i.test(vendor) || /Intel/i.test(name)) {
+        vendor = 'Intel'
+      }
+
+      const ramBytes = typeof item.AdapterRAM === 'number' && Number.isFinite(item.AdapterRAM) ? item.AdapterRAM : 0
+      const vramMb = Math.round(ramBytes / (1024 * 1024))
+
+      return {
+        vendor,
+        model: name,
+        bus: 'PCI',
+        vram: vramMb > 0 ? vramMb : 0,
+        vramDynamic: item.VideoMemoryType === 2 && vramMb <= 512,
+        subDeviceId: subDeviceId ? (subDeviceId.startsWith('0x') ? subDeviceId : `0x${subDeviceId.toUpperCase()}`) : undefined,
+        driverVersion: item.DriverVersion || '',
+        name,
+        vendorId,
+        deviceId,
+      }
+    })
+}
+
+export async function queryWindowsGpuControllers(forceFresh = false) {
+  if (!isWindows()) return []
+  const now = Date.now()
+  if (!forceFresh && cachedWindowsGpuControllers && (now - cachedWindowsGpuControllersAt < 60000)) {
+    return cachedWindowsGpuControllers
+  }
+
+  const script = `
+$memMap = @{}
+Get-ItemProperty 'HKLM:\\SYSTEM\\ControlSet001\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\*' -ErrorAction SilentlyContinue | Where-Object MatchingDeviceId | ForEach-Object {
+    $devId = $_.MatchingDeviceId.ToUpper()
+    $size = $_.'HardwareInformation.qwMemorySize'
+    if ($size) { $memMap[$devId] = $size }
+}
+$controllers = try { Get-CimInstance Win32_VideoController -ErrorAction Stop } catch { Get-WmiObject Win32_VideoController -ErrorAction SilentlyContinue }
+$controllers | ForEach-Object {
+    $pnp = $_.PNPDeviceID
+    $ram = $_.AdapterRAM
+    if ($pnp -and $pnp.StartsWith('PCI')) {
+        foreach ($k in $memMap.Keys) {
+            if ($pnp.ToUpper().Contains($k)) {
+                $ram = $memMap[$k]
+                break
+            }
+        }
+    }
+    [PSCustomObject]@{
+        Name = $_.Name
+        AdapterCompatibility = $_.AdapterCompatibility
+        DriverVersion = $_.DriverVersion
+        PNPDeviceID = $pnp
+        AdapterRAM = $ram
+        VideoMemoryType = $_.VideoMemoryType
+        VideoProcessor = $_.VideoProcessor
+    }
+} | ConvertTo-Json -Compress
+`.trim()
+
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { windowsHide: true, timeout: 5000 }
+    )
+    const text = stdout.trim()
+    if (!text) return []
+    const parsed = parseWindowsGpuControllers(JSON.parse(text))
+    if (parsed.length > 0) {
+      cachedWindowsGpuControllers = parsed
+      cachedWindowsGpuControllersAt = now
+    }
+    return parsed
+  } catch (error) {
+    console.warn('[system-info] queryWindowsGpuControllers failed', error)
+    return []
+  }
+}
+
+async function queryWindowsNvidiaTelemetry() {
+  const opts = [
+    '--query-gpu=pci.sub_device_id,name,pci.bus_id,fan.speed,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,clocks.gr,clocks.mem,driver_version',
+    '--format=csv,noheader,nounits',
+  ]
+  try {
+    const { stdout } = await execFileAsync('nvidia-smi', opts, { windowsHide: true, timeout: 2000 })
+    const lines = stdout.trim().split('\n').filter(Boolean)
+    return lines.map((line) => {
+      const parts = line.split(', ').map((p) => p.trim())
+      const safeNum = (v) => {
+        const n = Number(v)
+        return Number.isFinite(n) ? n : null
+      }
+      return {
+        subDeviceId: parts[0] || undefined,
+        name: parts[1] || '',
+        pciBus: parts[2] || '',
+        fanSpeed: safeNum(parts[3]),
+        memoryTotal: safeNum(parts[4]),
+        memoryUsed: safeNum(parts[5]),
+        memoryFree: safeNum(parts[6]),
+        utilizationGpu: safeNum(parts[7]),
+        utilizationMemory: safeNum(parts[8]),
+        temperatureGpu: safeNum(parts[9]),
+        powerDraw: safeNum(parts[10]),
+        powerLimit: safeNum(parts[11]),
+        clockCore: safeNum(parts[12]),
+        clockMemory: safeNum(parts[13]),
+        driverVersion: parts[14] || '',
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
 async function readStaticGpuInfo() {
   return readSystemInfo('graphicsStatic', [], async () => {
-    const graphics = await si.graphics()
+    let controllers = []
+    if (isWindows()) {
+      controllers = await queryWindowsGpuControllers()
+    }
+
+    if (!controllers || controllers.length === 0) {
+      const graphics = await si.graphics()
+      controllers = graphics.controllers || []
+    }
+
     const isMacOS = typeof process !== 'undefined' && process.platform === 'darwin'
 
-    return graphics.controllers
+    return controllers
       .filter((controller) => isLikelyGpuController(controller, isMacOS))
       .map((controller) => ({
         ...normalizeGpuControllerIdentity(controller),
@@ -3890,8 +4138,25 @@ async function readStaticGpuInfo() {
 
 async function readGpuInfo() {
   return readSystemInfo('graphics', [], async () => {
-    const graphics = await si.graphics()
     const isMacOS = typeof process !== 'undefined' && process.platform === 'darwin'
+    const isWin = isWindows()
+
+    let controllers = []
+    let nvidiaTelemetry = []
+    if (isWin) {
+      const [winControllers, winNvidia] = await Promise.all([
+        queryWindowsGpuControllers(),
+        queryWindowsNvidiaTelemetry(),
+      ])
+      controllers = winControllers
+      nvidiaTelemetry = winNvidia
+    }
+
+    if (!controllers || controllers.length === 0) {
+      const graphics = await si.graphics()
+      controllers = graphics.controllers || []
+    }
+
     const helperGpuTelemetry = isMacOS ? await readMacPowermetricsHelperGpuTelemetry() : undefined
     const nativeMacGpuTemperature = isMacOS ? readMacGpuTemperature({ pluginRoot: configuredPluginRoot }) : undefined
     const smcMacGpuTemperature = isMacOS ? readMacSmcGpuTemperature({ pluginRoot: configuredPluginRoot }) : undefined
@@ -3903,12 +4168,23 @@ async function readGpuInfo() {
       : undefined
     const fallbackTelemetry = isMacOS ? undefined : await getHardwareMonitorGpuTelemetry()
 
-    return graphics.controllers
+    return controllers
       .filter((controller) => isLikelyGpuController(controller, isMacOS))
       .map((controller) => {
+        const matchingNvidia = isWin && nvidiaTelemetry.length > 0 && /nvidia/i.test(controller.vendor || controller.name || controller.model)
+          ? nvidiaTelemetry.find((t) => {
+              if (controller.subDeviceId && t.subDeviceId) {
+                const s1 = String(controller.subDeviceId).replace(/^0x/i, '').toLowerCase()
+                const s2 = String(t.subDeviceId).replace(/^0x/i, '').toLowerCase()
+                if (s1 === s2) return true
+              }
+              return true
+            }) || nvidiaTelemetry[0]
+          : undefined
+
         const utilizationGpu = isMacOS
           ? helperGpuTelemetry?.utilizationGpu ?? controller.utilizationGpu ?? null
-          : controller.utilizationGpu ?? fallbackTelemetry?.utilizationGpu ?? null
+          : matchingNvidia?.utilizationGpu ?? controller.utilizationGpu ?? fallbackTelemetry?.utilizationGpu ?? null
         const idleResidencyGpu = deriveGpuIdleResidency(
           isMacOS
             ? helperGpuTelemetry?.idleResidencyGpu ?? controller.idleResidencyGpu ?? null
@@ -3933,27 +4209,40 @@ async function readGpuInfo() {
           )
         )
 
+        const hasNvidiaTelemetry = Boolean(
+          matchingNvidia && (
+            typeof matchingNvidia.utilizationGpu === 'number'
+            || typeof matchingNvidia.temperatureGpu === 'number'
+            || typeof matchingNvidia.powerDraw === 'number'
+          )
+        )
+
         return {
           ...normalizeGpuControllerIdentity(controller),
+          driverVersion: matchingNvidia?.driverVersion || controller.driverVersion,
+          pciBus: matchingNvidia?.pciBus || controller.pciBus,
+          memoryTotal: matchingNvidia?.memoryTotal ?? controller.memoryTotal ?? controller.vram,
+          memoryUsed: matchingNvidia?.memoryUsed ?? controller.memoryUsed ?? null,
+          memoryFree: matchingNvidia?.memoryFree ?? controller.memoryFree ?? null,
           utilizationGpu,
           idleResidencyGpu,
-          utilizationMemory: controller.utilizationMemory ?? null,
+          utilizationMemory: matchingNvidia?.utilizationMemory ?? controller.utilizationMemory ?? null,
           temperatureGpu: isMacOS
             ? controller.temperatureGpu ?? macGpuTemperature?.temperatureGpu ?? null
-            : controller.temperatureGpu ?? fallbackTelemetry?.temperatureGpu ?? null,
+            : matchingNvidia?.temperatureGpu ?? controller.temperatureGpu ?? fallbackTelemetry?.temperatureGpu ?? null,
           gpuCoreTemperatures: isMacOS
             ? macGpuTemperature?.gpuCoreTemperatures ?? []
             : [],
           temperatureMemory: controller.temperatureMemory ?? null,
           powerDraw: isMacOS
             ? helperGpuTelemetry?.powerDraw ?? controller.powerDraw ?? null
-            : controller.powerDraw ?? fallbackTelemetry?.powerDraw ?? null,
-          powerLimit: controller.powerLimit ?? null,
+            : matchingNvidia?.powerDraw ?? controller.powerDraw ?? fallbackTelemetry?.powerDraw ?? null,
+          powerLimit: matchingNvidia?.powerLimit ?? controller.powerLimit ?? null,
           clockCore: isMacOS
             ? helperGpuTelemetry?.clockCore ?? controller.clockCore ?? null
-            : controller.clockCore ?? null,
-          clockMemory: controller.clockMemory ?? null,
-          fanSpeed: controller.fanSpeed ?? null,
+            : matchingNvidia?.clockCore ?? controller.clockCore ?? null,
+          clockMemory: matchingNvidia?.clockMemory ?? controller.clockMemory ?? null,
+          fanSpeed: matchingNvidia?.fanSpeed ?? controller.fanSpeed ?? null,
           helper: isMacOS ? helperHasTelemetry : false,
           telemetrySource: isMacOS
             ? helperHasTelemetry
@@ -3966,21 +4255,23 @@ async function readGpuInfo() {
                 )
                 ? 'systeminformation'
                 : undefined
-            : fallbackTelemetry && (
-                typeof fallbackTelemetry.utilizationGpu === 'number'
-                || typeof fallbackTelemetry.powerDraw === 'number'
-              ) && (
-                controller.utilizationGpu == null
-                || controller.powerDraw == null
-              )
-              ? 'OpenHardwareMonitor'
-              : (
-                  typeof controller.utilizationGpu === 'number'
-                  || typeof controller.clockCore === 'number'
-                  || typeof controller.powerDraw === 'number'
+            : hasNvidiaTelemetry
+              ? 'systeminformation'
+              : fallbackTelemetry && (
+                  typeof fallbackTelemetry.utilizationGpu === 'number'
+                  || typeof fallbackTelemetry.powerDraw === 'number'
+                ) && (
+                  controller.utilizationGpu == null
+                  || controller.powerDraw == null
                 )
-                ? 'systeminformation'
-                : undefined,
+                ? 'OpenHardwareMonitor'
+                : (
+                    typeof controller.utilizationGpu === 'number'
+                    || typeof controller.clockCore === 'number'
+                    || typeof controller.powerDraw === 'number'
+                  )
+                  ? 'systeminformation'
+                  : undefined,
           temperatureSource: isMacOS
             ? systemInformationHasTemperature
               ? 'systeminformation'
@@ -3989,11 +4280,13 @@ async function readGpuInfo() {
                   ? 'apple-smc'
                   : 'macos-temperature-sensor'
                 : undefined
-            : fallbackTelemetry && typeof fallbackTelemetry.temperatureGpu === 'number' && controller.temperatureGpu == null
-              ? 'OpenHardwareMonitor'
-              : typeof controller.temperatureGpu === 'number'
-                ? 'systeminformation'
-                : undefined,
+            : hasNvidiaTelemetry && typeof matchingNvidia.temperatureGpu === 'number'
+              ? 'systeminformation'
+              : fallbackTelemetry && typeof fallbackTelemetry.temperatureGpu === 'number' && controller.temperatureGpu == null
+                ? 'OpenHardwareMonitor'
+                : typeof controller.temperatureGpu === 'number'
+                  ? 'systeminformation'
+                  : undefined,
           nativeTemperatureErrorCode: isMacOS ? macGpuTemperatureFallback?.nativeTemperatureErrorCode : undefined,
           nativeTemperatureReason: isMacOS ? macGpuTemperatureFallback?.nativeTemperatureReason : undefined,
           nativeTemperatureMessage: isMacOS ? macGpuTemperatureFallback?.nativeTemperatureMessage : undefined,
@@ -4346,11 +4639,25 @@ export const systemService = {
 
   refreshMacMenubarTelemetry: () => refreshMacMenubarTelemetry(),
 
-  getMacMenubarStatus: () => getMacMenubarStatus(),
+  getMacMenubarStatus: () => {
+    if (isMacOS()) return getMacMenubarStatus()
+    if (isWindows()) return getWindowsTrayStatus()
+    return { running: false, supported: false }
+  },
 
-  startMacMenubarHelper: () => startMacMenubarHelper({ pluginRoot: configuredPluginRoot }),
+  startMacMenubarHelper: () => {
+    if (isMacOS()) return startMacMenubarHelper({ pluginRoot: configuredPluginRoot })
+    if (isWindows()) return startWindowsTrayHelper({ pluginRoot: configuredPluginRoot })
+    return { ok: false, running: false }
+  },
 
-  stopMacMenubarHelper: () => stopMacMenubarHelper(),
+  stopMacMenubarHelper: () => {
+    if (isMacOS()) return stopMacMenubarHelper()
+    if (isWindows()) return stopWindowsTrayHelper()
+    return { ok: true, running: false }
+  },
+
+  setWindowsTrayCommandHandler: (handler) => setWindowsTrayCommandHandler(handler),
 
   stopMacMenubarRuntime: () => stopMacMenubarRuntime(),
 

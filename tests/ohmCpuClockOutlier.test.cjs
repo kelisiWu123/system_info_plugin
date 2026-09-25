@@ -4,6 +4,7 @@ const path = require('node:path')
 const test = require('node:test')
 const ts = require('typescript')
 const nodeUtil = require('node:util')
+const os = require('node:os')
 
 function loadWindowsSystemServiceWithClockSensors(
   clockSensors,
@@ -51,6 +52,18 @@ function loadWindowsSystemServiceWithClockSensors(
       return { execFile }
     }
 
+    if (id === 'node:path' || id === 'path') {
+      return { default: path, ...path }
+    }
+
+    if (id === 'node:fs' || id === 'fs') {
+      return { default: fs, ...fs }
+    }
+
+    if (id === 'node:os' || id === 'os') {
+      return { default: os, ...os }
+    }
+
     if (id === 'node:util') {
       return fakeUtil
     }
@@ -81,6 +94,10 @@ function loadWindowsSystemServiceWithClockSensors(
         startWindowsSensorHelper: async () => ({ started: false, running: helperClockSensors.length > 0 }),
         stopWindowsSensorHelper: async () => false,
       }
+    }
+
+    if (id === './macMenubarHelper' || id === './windowsTrayHelper') {
+      return {}
     }
 
     return require(id)

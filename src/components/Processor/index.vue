@@ -621,7 +621,7 @@ const healthState = computed(() => {
   if (temperature === null && !cpuLoadTelemetryAvailable.value) {
     return {
       title: '实时数据待补齐',
-      subtitle: '当前尚未拿到 CPU 温度或负载遥测',
+      subtitle: '当前尚未拿到 CPU 温度或负载数据',
       accent: 'var(--text-subtle)',
     }
   }
@@ -1594,7 +1594,8 @@ onUnmounted(() => {
           <p v-if="sensorEnhancementSuggestion" class="sensor-enhancement-hint">建议：{{ sensorEnhancementSuggestion }}</p>
 
           <div v-if="windowsSensorDiagnosticsLoading" class="sensor-diagnostic-alert sensor-diagnostic-alert--loading">
-            正在读取 helper 原始 snapshot 与 CPU 传感器分布...
+            <span class="sensor-diagnostic-spinner" aria-hidden="true"></span>
+            <span>正在读取 helper 原始 snapshot 与 CPU 传感器分布...</span>
           </div>
           <div v-else-if="shouldShowWindowsSensorDiagnostics" class="sensor-diagnostic-alert">
             <div class="sensor-diagnostic-alert__head">
@@ -2301,10 +2302,36 @@ onUnmounted(() => {
 }
 
 .sensor-diagnostic-alert--loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border-color: var(--control-active-border);
   background: var(--state-info-bg);
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.sensor-diagnostic-spinner {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(69, 181, 255, 0.22);
+  border-top-color: var(--accent-cyan, #6bc2ff);
+  border-radius: 50%;
+  animation: sensor-diagnostic-spin 0.8s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+@keyframes sensor-diagnostic-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .sensor-diagnostic-alert__head {

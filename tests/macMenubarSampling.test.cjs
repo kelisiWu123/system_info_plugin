@@ -47,7 +47,13 @@ test('preload handles plugin termination in every window type while opening a pa
 
 function createHarness(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hwinfox-sampling-test-'))
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  t.after(() => {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    } catch {
+      // ignore cleanup error on Windows temp
+    }
+  })
   const alive = new Set()
   const writes = []
   const starts = []
@@ -65,6 +71,7 @@ function createHarness(t) {
       if (id === 'systeminformation') return { default: {} }
       if (id === './macSensors.cjs') return { default: {} }
       if (id === './windowsSensorHelper') return {}
+      if (id === './windowsTrayHelper') return {}
       if (id === './macMenubarHelper') return {
         getMacMenubarStatus: () => ({ running }),
         startMacMenubarHelper: () => { running = true; starts.push(pid) },

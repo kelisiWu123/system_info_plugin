@@ -19,6 +19,7 @@ test('every plugin feature has a preload export, window preset, hash route, and 
     { code: 'hardwareWatchSuperLite', preset: 'a_watch_super_lite', hash: 'floatingMode=super-lite&entry=hardwareWatchSuperLite', entry: "['a_watch_super_lite', 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite']" },
     { code: 'hardwareSpecsLite', preset: 'a_specs_lite', hash: 'deviceSpecs', entry: "['a_specs_lite', 'deviceSpecs']" },
     { code: 'hardwareMenubarSettings', preset: 'a_menubar_settings', hash: 'menubarSettings', entry: "['a_menubar_settings', 'menubarSettings']" },
+    { code: 'hardwareWatchCpuCores', preset: 'a_watch_cpu_cores', hash: 'cpuCoresWatch', entry: "['a_watch_cpu_cores', 'cpuCoresWatch']" },
   ]
 
   assert.deepEqual(plugin.features.map((feature) => feature.code), entries.map((entry) => entry.code))

@@ -834,16 +834,21 @@ useActivePageLifecycle(
   display: flex;
   flex-direction: column;
   gap: 5px;
+  min-width: 0;
 
   strong {
     color: var(--text-primary);
     font-size: 15px;
     font-weight: 700;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   span {
     color: var(--text-muted);
     font-size: 12px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 
@@ -940,6 +945,7 @@ useActivePageLifecycle(
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 
   span {
     color: var(--text-muted);
@@ -951,6 +957,8 @@ useActivePageLifecycle(
     font-size: 15px;
     font-weight: 600;
     line-height: 1.45;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 

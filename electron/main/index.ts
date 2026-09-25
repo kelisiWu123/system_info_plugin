@@ -124,6 +124,8 @@ function normalizeChildWindowOptions(arg: unknown) {
         transparent: Boolean(options.transparent),
         frame: options.frame,
         alwaysOnTop: Boolean(options.alwaysOnTop),
+        ...(Number.isFinite(rawOptions.x) ? { x: Math.round(Number(rawOptions.x)) } : {}),
+        ...(Number.isFinite(rawOptions.y) ? { y: Math.round(Number(rawOptions.y)) } : {}),
         webPreferences: {
             preload,
             nodeIntegration: true,
@@ -154,10 +156,17 @@ function createMainWindow() {
     })
 
     loadWindow(win, 'computer')
+    win.show()
+    win.focus()
 
     if (url) { // electron-vite-vue#298
         win.webContents.openDevTools({ mode: 'detach' })
     }
+
+    // Pipe renderer console messages to terminal stdout
+    win.webContents.on('console-message', (_event, _level, message, _line, _sourceId) => {
+        console.log(`[Renderer Log] ${message}`)
+    })
 
     // Test actively push message to the Electron-Renderer
     win.webContents.on('did-finish-load', () => {

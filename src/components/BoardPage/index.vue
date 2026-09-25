@@ -763,6 +763,8 @@ useActivePageLifecycle(
 }
 
 .hero-card__title {
+  min-width: 0;
+
   h2 {
     margin: 0;
     color: var(--text-primary);
@@ -770,12 +772,16 @@ useActivePageLifecycle(
     font-weight: 700;
     letter-spacing: -0.03em;
     line-height: 1.2;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   p {
     margin: 0;
     color: var(--text-muted);
     font-size: 14px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 
@@ -790,6 +796,7 @@ useActivePageLifecycle(
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   padding: 14px 12px 10px 0;
   border-bottom: 1px solid rgba(86, 101, 126, 0.12);
 
@@ -802,6 +809,8 @@ useActivePageLifecycle(
     color: var(--text-primary);
     font-size: 15px;
     font-weight: 700;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 
@@ -904,6 +913,8 @@ useActivePageLifecycle(
     color: var(--text-secondary);
     font-size: 14px;
     font-weight: 700;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   em {
@@ -911,6 +922,8 @@ useActivePageLifecycle(
     color: var(--text-muted);
     font-style: normal;
     font-size: 12px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 

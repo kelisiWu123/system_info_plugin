@@ -727,7 +727,7 @@ useActivePageLifecycle(
       v-if="loading"
       variant="loading"
       title="正在同步显卡数据"
-      description="正在读取 GPU、显示器、驱动与实时遥测信息。"
+      description="正在读取 GPU、显示器、驱动与实时监控信息。"
       action-label="重试该模块"
       @retry="retryGraphicsPage"
     />

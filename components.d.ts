@@ -10,6 +10,7 @@ declare module 'vue' {
     Bar: typeof import('./src/components/Bar/index.vue')['default']
     BoardPage: typeof import('./src/components/BoardPage/index.vue')['default']
     Computer: typeof import('./src/components/Computer/index.vue')['default']
+    CpuCoresWatchView: typeof import('./src/components/Watch/CpuCoresWatchView.vue')['default']
     DeviceSpecsLite: typeof import('./src/components/DeviceSpecsLite/index.vue')['default']
     GraphicsPage: typeof import('./src/components/GraphicsPage/index.vue')['default']
     MemoryPage: typeof import('./src/components/MemoryPage/index.vue')['default']

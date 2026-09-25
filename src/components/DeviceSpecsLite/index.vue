@@ -831,11 +831,26 @@ onUnmounted(() => {
 }
 
 .spec-loading-status__pulse {
-  width: 7px;
-  height: 7px;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(69, 181, 255, 0.2);
+  border-top-color: var(--accent-blue);
   border-radius: 50%;
-  background: var(--accent-blue);
-  box-shadow: 0 0 0 4px var(--state-info-bg);
+  animation: spec-loading-spin 0.8s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+@keyframes spec-loading-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .spec-action {
@@ -889,11 +904,17 @@ onUnmounted(() => {
 }
 
 .spec-action--refreshing svg {
+  display: inline-block;
+  transform-origin: center center;
+  will-change: transform;
   animation: spec-action-spin 0.8s linear infinite;
 }
 
 @keyframes spec-action-spin {
-  to {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
     transform: rotate(360deg);
   }
 }
@@ -1034,6 +1055,8 @@ onUnmounted(() => {
   line-height: 1.38;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .core-spec-card__facts {

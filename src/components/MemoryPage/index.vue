@@ -818,7 +818,7 @@ useActivePageLifecycle(
 .slot-table__head,
 .slot-table__row {
   display: grid;
-  grid-template-columns: 1fr 0.8fr 1.2fr 1.4fr 0.8fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.8fr);
   gap: 12px;
   align-items: center;
 }
@@ -837,12 +837,16 @@ useActivePageLifecycle(
   span {
     color: var(--text-secondary);
     font-size: 13px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   strong {
     color: var(--text-primary);
     font-size: 13px;
     font-weight: 600;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 

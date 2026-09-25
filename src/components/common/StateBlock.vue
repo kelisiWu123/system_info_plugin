@@ -85,12 +85,18 @@ defineEmits<{
 }
 
 .state-block__spinner {
-  width: 18px;
-  height: 18px;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
   border: 2px solid color-mix(in srgb, currentColor 18%, transparent);
-  border-top-color: currentColor;
+  border: 2.5px solid rgba(107, 194, 255, 0.22);
+  border-top-color: var(--accent-cyan, #6bc2ff);
   border-radius: 50%;
+  -webkit-animation: state-block-spin 0.8s linear infinite;
   animation: state-block-spin 0.8s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
 }
 
 .state-block__copy {
@@ -127,8 +133,24 @@ defineEmits<{
   opacity: 0.62;
 }
 
+@-webkit-keyframes state-block-spin {
+  0% {
+    -webkit-transform: rotate(0deg);
+    transform: rotate(0deg);
+  }
+  100% {
+    -webkit-transform: rotate(360deg);
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes state-block-spin {
-  to {
+  0% {
+    -webkit-transform: rotate(0deg);
+    transform: rotate(0deg);
+  }
+  100% {
+    -webkit-transform: rotate(360deg);
     transform: rotate(360deg);
   }
 }

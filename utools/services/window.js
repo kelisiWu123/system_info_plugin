@@ -20,7 +20,7 @@ function isDevMode() {
 }
 
 function isWatchWindowName(fileName) {
-  return ['a_watch', 'watch', 'a_watch_super_lite'].includes(fileName)
+  return ['a_watch', 'watch', 'a_watch_super_lite'].includes(fileName) || fileName === 'a_watch_cpu_cores'
 }
 
 function getWindowSingletonKey(fileName) {
@@ -232,6 +232,7 @@ function getInitialOpaqueWindowBackgroundColor() {
 
 function getWindowHash(fileName) {
   if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
+  if (fileName === 'a_watch_cpu_cores') return 'cpuCoresWatch'
   if (fileName === 'a_monitor') return 'monitor'
   if (fileName === 'a_specs_lite') return 'deviceSpecs'
   if (fileName === 'a_menubar_settings') return 'menubarSettings'
@@ -240,6 +241,7 @@ function getWindowHash(fileName) {
 
 function getProductionWindowUrl(fileName) {
   if (fileName === 'a_watch_super_lite') return 'a_watch_super_lite/index.html'
+  if (fileName === 'a_watch_cpu_cores') return 'a_watch_cpu_cores/index.html'
   if (fileName === 'a_monitor') return 'a_monitor/index.html'
   if (fileName === 'a_specs_lite') return 'a_specs_lite/index.html'
   if (fileName === 'a_menubar_settings') return 'a_menubar_settings/index.html'
@@ -255,10 +257,10 @@ function getDevServerUrl() {
   return (configuredUrl || 'http://localhost:9000').replace(/\/+$/, '')
 }
 
-function buildChildWindowOptions(fileName, height, width, backgroundColor) {
+function buildChildWindowOptions(fileName, height, width, backgroundColor, extraOptions = {}) {
   const isWatchWindow = isWatchWindowName(fileName)
 
-  return {
+  const options = {
     title: fileName === 'a_menubar_settings' ? '菜单栏显示设置' : 'system info',
     height,
     width,
@@ -276,13 +278,22 @@ function buildChildWindowOptions(fileName, height, width, backgroundColor) {
     frame: false,
     alwaysOnTop: isWatchWindow,
   }
+
+  if (Number.isFinite(extraOptions?.x)) {
+    options.x = Math.round(Number(extraOptions.x))
+  }
+  if (Number.isFinite(extraOptions?.y)) {
+    options.y = Math.round(Number(extraOptions.y))
+  }
+
+  return options
 }
 
-function buildChildWindowConfig(fileName, height, width, backgroundColor) {
+function buildChildWindowConfig(fileName, height, width, backgroundColor, extraOptions = {}) {
   return {
     singletonKey: getWindowSingletonKey(fileName),
     hash: getWindowHash(fileName),
-    options: buildChildWindowOptions(fileName, height, width, backgroundColor),
+    options: buildChildWindowOptions(fileName, height, width, backgroundColor, extraOptions),
   }
 }
 
@@ -405,6 +416,37 @@ function bindChildWindowEvents(childWindow, singletonKey, singletonToken) {
   }
 }
 
+function getCurrentWindowSingletonKey() {
+  if (currentWindowSingletonKey) return currentWindowSingletonKey
+  try {
+    const href = String(globalThis?.location?.href || '')
+    if (href.includes('a_watch_super_lite') || href.includes('floatingMode=super-lite') || href.includes('hardwareWatchSuperLite')) {
+      return 'a_watch_super_lite'
+    }
+    if (href.includes('a_watch_cpu_cores') || href.includes('cpuCoresWatch')) {
+      return 'a_watch_cpu_cores'
+    }
+    if (href.includes('a_watch') || href.includes('watch.html') || href.includes('#watch')) {
+      return 'a_watch'
+    }
+    if (href.includes('a_monitor') || href.includes('monitor')) {
+      return 'a_monitor'
+    }
+    if (href.includes('a_specs_lite') || href.includes('deviceSpecs')) {
+      return 'a_specs_lite'
+    }
+    if (href.includes('a_menubar_settings') || href.includes('menubarSettings')) {
+      return 'a_menubar_settings'
+    }
+    if (href.includes('a_computer') || href.includes('computer')) {
+      return 'a_computer'
+    }
+  } catch {
+    // fallback
+  }
+  return 'window'
+}
+
 function sendCurrentWindowAction(parentChannel, mainAction, payload) {
   if (typeof runtimeUtools.sendToParent === 'function') {
     runtimeUtools.sendToParent(parentChannel, payload)
@@ -416,7 +458,84 @@ function sendCurrentWindowAction(parentChannel, mainAction, payload) {
     return
   }
 
+  if (mainAction === 'resize') {
+    const { width, height } = payload || {}
+    ipcRenderer.send('window-action', 'resize', { width, height })
+    return
+  }
+
+  if (mainAction === 'close') {
+    ipcRenderer.send('window-action', 'close')
+    return
+  }
+
+  if (mainAction === 'always-on-top') {
+    const { flag } = payload || {}
+    ipcRenderer.send('window-action', 'always-on-top', { flag })
+    return
+  }
+
   ipcRenderer.send('window-action', mainAction, payload)
+}
+
+function calculateHandoffPosition(targetWidth, targetHeight) {
+  try {
+    const currentX = globalThis.screenX ?? globalThis.screenLeft
+    const currentY = globalThis.screenY ?? globalThis.screenTop
+    if (!Number.isFinite(currentX) || !Number.isFinite(currentY)) {
+      return {}
+    }
+
+    const currentWidth = globalThis.outerWidth || (targetWidth === 432 ? 200 : 432)
+    const currentHeight = globalThis.outerHeight || (targetHeight === 398 ? 200 : 398)
+
+    const screenObj = globalThis.screen
+    const availLeft = Number.isFinite(screenObj?.availLeft) ? screenObj.availLeft : 0
+    const availTop = Number.isFinite(screenObj?.availTop) ? screenObj.availTop : 0
+    const availWidth = Number.isFinite(screenObj?.availWidth) && screenObj.availWidth > 0
+      ? screenObj.availWidth
+      : (screenObj?.width || 1920)
+    const availHeight = Number.isFinite(screenObj?.availHeight) && screenObj.availHeight > 0
+      ? screenObj.availHeight
+      : (screenObj?.height || 1080)
+
+    const isWithinReportedScreen = (
+      currentX >= availLeft - 100 &&
+      currentX <= availLeft + availWidth + 100 &&
+      currentY >= availTop - 100 &&
+      currentY <= availTop + availHeight + 100
+    )
+
+    if (!isWithinReportedScreen) {
+      return {
+        x: Math.round(currentX),
+        y: Math.round(currentY),
+      }
+    }
+
+    const distLeft = currentX - availLeft
+    const distRight = (availLeft + availWidth) - (currentX + currentWidth)
+    const distTop = currentY - availTop
+    const distBottom = (availTop + availHeight) - (currentY + currentHeight)
+
+    let targetX = distRight < distLeft
+      ? (currentX + currentWidth - targetWidth)
+      : currentX
+
+    let targetY = distBottom < distTop
+      ? (currentY + currentHeight - targetHeight)
+      : currentY
+
+    targetX = Math.max(availLeft, Math.min(availLeft + availWidth - targetWidth, targetX))
+    targetY = Math.max(availTop, Math.min(availTop + availHeight - targetHeight, targetY))
+
+    return {
+      x: Math.round(targetX),
+      y: Math.round(targetY),
+    }
+  } catch {
+    return {}
+  }
 }
 
 export const windowService = {
@@ -445,12 +564,41 @@ export const windowService = {
   },
 
   resizeWindow: (width, height) => {
+    if (typeof runtimeUtools.createBrowserWindow === 'function') {
+      const currentKey = getCurrentWindowSingletonKey()
+      if (currentKey === 'a_watch_super_lite' && width >= 400) {
+        const position = calculateHandoffPosition(432, 398)
+        void (async () => {
+          try {
+            await windowService.createWindow('a_watch', 398, 432, 0, position)
+            windowService.closeWindow()
+          } catch (e) {
+            console.error('切换标准监控窗口失败:', e)
+          }
+        })()
+        return
+      }
+
+      if (currentKey === 'a_watch' && width <= 250) {
+        const position = calculateHandoffPosition(200, 200)
+        void (async () => {
+          try {
+            await windowService.createWindow('a_watch_super_lite', 200, 200, 0, position)
+            windowService.closeWindow()
+          } catch (e) {
+            console.error('切换超轻量监控窗口失败:', e)
+          }
+        })()
+        return
+      }
+    }
+
     sendCurrentWindowAction('resize-window', 'resize', { width, height })
   },
 
-  createWindow: async (fileName, height = 300, width = 300, backgroundColor = 0.3) => {
+  createWindow: async (fileName, height = 300, width = 300, backgroundColor = 0.3, extraOptions = {}) => {
     const isWatchWindow = isWatchWindowName(fileName)
-    const childWindowConfig = buildChildWindowConfig(fileName, height, width, backgroundColor)
+    const childWindowConfig = buildChildWindowConfig(fileName, height, width, backgroundColor, extraOptions)
     const singletonKey = childWindowConfig.singletonKey
     const windowHash = childWindowConfig.hash
     const windowUrl = runtimeUtools.isDev()
@@ -518,6 +666,14 @@ export const windowService = {
                 bindChildWindowEvents(childWindow, singletonKey, singletonClaim.token)
                 childWindow.webContents.send('init', { singletonKey })
                 publishWindowSingleton(singletonKey, singletonClaim.token, childWindowId)
+
+                if (Number.isFinite(childWindowConfig.options.x) && Number.isFinite(childWindowConfig.options.y)) {
+                  try {
+                    childWindow.setPosition?.(childWindowConfig.options.x, childWindowConfig.options.y)
+                  } catch {
+                    // Ignore if setPosition is not exposed on proxy
+                  }
+                }
 
                 if (isWatchWindow) {
                   childWindow.setAlwaysOnTop?.(true)

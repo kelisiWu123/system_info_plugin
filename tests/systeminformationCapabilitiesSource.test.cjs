@@ -12,7 +12,7 @@ test('systeminformation is upgraded to the 5.33 stable line', () => {
   const installed = JSON.parse(readProjectFile('node_modules/systeminformation/package.json'))
 
   assert.match(pkg.dependencies.systeminformation, /^\^5\.33\./)
-  assert.equal(installed.version, '5.33.1')
+  assert.equal(installed.version, '5.33.13')
 })
 
 test('storage page consumes fs and disk IO telemetry from systeminformation', () => {

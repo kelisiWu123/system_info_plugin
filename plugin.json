@@ -52,7 +52,16 @@
 				"托盘设置",
 				"硬件托盘"
 			]
+		},
+		{
+			"code": "hardwareWatchCpuCores",
+			"explain": "CPU 核心监控",
+			"cmds": [
+				"CPU核心监控",
+				"核心监控",
+				"CPU核心",
+				"CPU核心浮窗"
+			]
 		}
-
 	]
 }

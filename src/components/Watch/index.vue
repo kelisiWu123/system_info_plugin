@@ -99,6 +99,17 @@ const memoryLayout = ref<MemoLayoutData[]>([])
 const pinned = ref(true)
 const monitorMode = ref<'overview' | 'cpu' | 'gpu'>('overview')
 const floatingMode = ref<FloatingMonitorMode>(props.initialFloatingMode || 'standard')
+const isHandoffSwitching = ref(false)
+
+const effectiveFloatingMode = computed<FloatingMonitorMode>(() => {
+  if (props.initialFloatingEntry === 'hardwareWatchSuperLite') {
+    return 'super-lite'
+  }
+  if (props.initialFloatingEntry === 'hardwareWatch') {
+    return 'standard'
+  }
+  return floatingMode.value
+})
 
 const history = reactive({
   cpu: [] as number[],
@@ -837,6 +848,9 @@ function applyFloatingMode(mode: FloatingMonitorMode, persist = true) {
 }
 
 function switchFloatingMode(mode: FloatingMonitorMode) {
+  if (isHandoffSwitching.value) return
+  isHandoffSwitching.value = true
+
   applyFloatingMode(mode)
 
   const needsImmediateThroughputRefresh = mode === 'super-lite' || monitorMode.value === 'overview'
@@ -926,9 +940,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="watch-container" :data-floating-mode="floatingMode">
+  <div class="watch-container" :data-floating-mode="effectiveFloatingMode">
     <SuperLiteMonitorView
-      v-if="floatingMode === 'super-lite'"
+      v-if="effectiveFloatingMode === 'super-lite'"
       :status="superLiteStatus"
       :metrics="superLiteMetrics"
       :throughput="superLiteThroughput"
@@ -1217,6 +1231,7 @@ onUnmounted(() => {
 .watch-container {
   height: 100%;
   width: 100%;
+  overflow: hidden;
   background: transparent;
 }
 
@@ -1224,6 +1239,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 408px;
+  min-height: 374px;
+  overflow: hidden;
   box-sizing: border-box;
   gap: 8px;
   padding: 10px 12px 8px;

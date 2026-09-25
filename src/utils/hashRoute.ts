@@ -1,4 +1,4 @@
-export type PageName = 'computer' | 'watch' | 'monitor' | 'deviceSpecs' | 'menubarSettings'
+export type PageName = 'computer' | 'watch' | 'monitor' | 'deviceSpecs' | 'menubarSettings' | 'cpuCoresWatch'
 export type FloatingMonitorMode = 'standard' | 'super-lite'
 export type FloatingMonitorEntry = 'hardwareWatch' | 'hardwareWatchSuperLite' | 'unknown'
 
@@ -18,6 +18,7 @@ export function resolvePageName(hash: string): PageName {
   if (pageName === 'monitor') return 'monitor'
   if (pageName === 'deviceSpecs') return 'deviceSpecs'
   if (pageName === 'menubarSettings') return 'menubarSettings'
+  if (pageName === 'cpuCoresWatch') return 'cpuCoresWatch'
   return 'computer'
 }
 
