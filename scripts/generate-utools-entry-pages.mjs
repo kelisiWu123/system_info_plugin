@@ -46,6 +46,7 @@ for (const [entryName, pageName] of [
   ['a_watch', 'watch?floatingMode=standard&entry=hardwareWatch'],
   ['a_watch_super_lite', 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'],
   ['a_watch_cpu_cores', 'cpuCoresWatch'],
+  ['a_watch_cpu_cores_super_lite', 'cpuCoresWatch?floatingMode=super-lite&entry=hardwareWatchCpuCoresSuperLite'],
 ]) {
   const entryDir = join(distDir, entryName)
   rmSync(entryDir, { recursive: true, force: true })

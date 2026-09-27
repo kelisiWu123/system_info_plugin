@@ -7,12 +7,44 @@ import {
   processorHardwareStore,
 } from '../../composables/useProcessorHardwareData'
 import { getCpuHybridCoreCounts, getProcessorDisplayCoreCount } from '../../utils/processor'
+import CpuCoresSuperLiteView from './CpuCoresSuperLiteView.vue'
 
 defineProps<{
   active?: boolean
 }>()
 
+export type CpuCoresViewMode = 'standard' | 'super-lite'
+
+function getInitialViewMode(): CpuCoresViewMode {
+  try {
+    const hash = window.location.hash || ''
+    if (hash.includes('floatingMode=super-lite') || hash.includes('hardwareWatchCpuCoresSuperLite')) {
+      return 'super-lite'
+    }
+    const saved = localStorage.getItem('cpu_cores_watch_mode')
+    if (saved === 'super-lite' || saved === 'standard') {
+      return saved
+    }
+  } catch {}
+  return 'standard'
+}
+
 const pinned = ref(true)
+const viewMode = ref<CpuCoresViewMode>(getInitialViewMode())
+
+function switchMode(mode: CpuCoresViewMode) {
+  if (viewMode.value === mode) return
+  viewMode.value = mode
+  try {
+    localStorage.setItem('cpu_cores_watch_mode', mode)
+  } catch {}
+
+  if (mode === 'super-lite') {
+    window.services?.resizeWindow?.(200, 200)
+  } else {
+    window.services?.resizeWindow?.(360, 400)
+  }
+}
 
 const {
   cpuData,
@@ -24,6 +56,9 @@ const {
 
 onMounted(() => {
   window.services?.alwaysOnTop?.(pinned.value)
+  if (viewMode.value === 'super-lite') {
+    window.services?.resizeWindow?.(200, 200)
+  }
   void activateProcessorHardwareStore()
 })
 
@@ -45,7 +80,12 @@ const displayPhysicalCoreCount = computed(() =>
   getProcessorDisplayCoreCount(cpuData.value, cpuCurrentSpeed.value, cpuLoadData.value)
 )
 
-function coreTypeLabel(index: number, total: number, performanceCores?: number, efficiencyCores?: number) {
+function coreTypeLabel(
+  index: number,
+  total: number,
+  performanceCores?: number,
+  efficiencyCores?: number
+): 'P-Core' | 'E-Core' | 'Core' {
   if (performanceCores && efficiencyCores && total === performanceCores + efficiencyCores) {
     return index < performanceCores ? 'P-Core' : 'E-Core'
   }
@@ -166,7 +206,21 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
 </script>
 
 <template>
-  <div class="cpu-cores-watch">
+  <CpuCoresSuperLiteView
+    v-if="viewMode === 'super-lite'"
+    :core-rows="allCoreRows"
+    :avg-speed-ghz="avgSpeedGhz"
+    :total-load-percent="totalLoadPercent"
+    :package-temp="packageTempNum"
+    :cpu-brand="cpuBrandShort"
+    :hybrid-counts="cpuHybridCoreCounts"
+    :loading="loading"
+    :pinned="pinned"
+    @toggle-pin="togglePin"
+    @close-window="closeWindow"
+    @switch-standard="switchMode('standard')"
+  />
+  <div v-else class="cpu-cores-watch">
     <header class="cpu-cores-watch__header">
       <div class="cpu-cores-watch__brand">
         <div class="cpu-cores-watch__icon">
@@ -183,6 +237,15 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
       </div>
 
       <div class="cpu-cores-watch__actions">
+        <button
+          type="button"
+          class="window-action-btn window-action-btn--mode"
+          title="切换到超轻量模式"
+          aria-label="切换到超轻量模式"
+          @click="switchMode('super-lite')"
+        >
+          轻量
+        </button>
         <button
           type="button"
           :class="['window-action-btn', { 'window-action-btn--active': pinned }]"
@@ -383,6 +446,14 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   &--active {
     background: rgba(107, 194, 255, 0.18);
     color: var(--accent-cyan);
+  }
+
+  &--mode {
+    width: auto;
+    height: 20px;
+    padding: 0 6px;
+    font-size: 11px;
+    font-weight: 600;
   }
 
   &--close:hover {

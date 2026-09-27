@@ -59,6 +59,10 @@ const windowPresets = {
     prod: { height: 400, width: 360, backgroundColor: 0 },
     dev: { height: 420, width: 380, backgroundColor: 0 },
   },
+  a_watch_cpu_cores_super_lite: {
+    prod: { height: 200, width: 200, backgroundColor: 0 },
+    dev: { height: 200, width: 200, backgroundColor: 0 },
+  },
 }
 
 window.services = {
@@ -125,6 +129,12 @@ window.exports = {
     mode: 'none',
     args: {
       enter: () => openPresetWindow('a_watch_cpu_cores'),
+    },
+  },
+  hardwareWatchCpuCoresSuperLite: {
+    mode: 'none',
+    args: {
+      enter: () => openPresetWindow('a_watch_cpu_cores_super_lite'),
     },
   },
 }

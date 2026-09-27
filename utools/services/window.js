@@ -20,7 +20,9 @@ function isDevMode() {
 }
 
 function isWatchWindowName(fileName) {
-  return ['a_watch', 'watch', 'a_watch_super_lite'].includes(fileName) || fileName === 'a_watch_cpu_cores'
+  return ['a_watch', 'watch', 'a_watch_super_lite'].includes(fileName)
+    || fileName === 'a_watch_cpu_cores'
+    || fileName === 'a_watch_cpu_cores_super_lite'
 }
 
 function getWindowSingletonKey(fileName) {
@@ -232,6 +234,7 @@ function getInitialOpaqueWindowBackgroundColor() {
 
 function getWindowHash(fileName) {
   if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
+  if (fileName === 'a_watch_cpu_cores_super_lite') return 'cpuCoresWatch?floatingMode=super-lite&entry=hardwareWatchCpuCoresSuperLite'
   if (fileName === 'a_watch_cpu_cores') return 'cpuCoresWatch'
   if (fileName === 'a_monitor') return 'monitor'
   if (fileName === 'a_specs_lite') return 'deviceSpecs'
@@ -241,6 +244,7 @@ function getWindowHash(fileName) {
 
 function getProductionWindowUrl(fileName) {
   if (fileName === 'a_watch_super_lite') return 'a_watch_super_lite/index.html'
+  if (fileName === 'a_watch_cpu_cores_super_lite') return 'a_watch_cpu_cores_super_lite/index.html'
   if (fileName === 'a_watch_cpu_cores') return 'a_watch_cpu_cores/index.html'
   if (fileName === 'a_monitor') return 'a_monitor/index.html'
   if (fileName === 'a_specs_lite') return 'a_specs_lite/index.html'
@@ -422,6 +426,9 @@ function getCurrentWindowSingletonKey() {
     const href = String(globalThis?.location?.href || '')
     if (href.includes('a_watch_super_lite') || href.includes('floatingMode=super-lite') || href.includes('hardwareWatchSuperLite')) {
       return 'a_watch_super_lite'
+    }
+    if (href.includes('a_watch_cpu_cores_super_lite') || href.includes('hardwareWatchCpuCoresSuperLite')) {
+      return 'a_watch_cpu_cores_super_lite'
     }
     if (href.includes('a_watch_cpu_cores') || href.includes('cpuCoresWatch')) {
       return 'a_watch_cpu_cores'

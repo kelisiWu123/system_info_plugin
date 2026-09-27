@@ -62,6 +62,16 @@
 				"CPU核心",
 				"CPU核心浮窗"
 			]
+		},
+		{
+			"code": "hardwareWatchCpuCoresSuperLite",
+			"explain": "超轻量 CPU 核心监控",
+			"cmds": [
+				"超轻量核心监控",
+				"轻量核心监控",
+				"CPU轻量核心",
+				"核心轻量监控"
+			]
 		}
 	]
 }

@@ -184,7 +184,7 @@ watch(sensorEnhancementPlatform, (platform) => {
 }, { immediate: true })
 
 function syncBodyMode() {
-  document.body.classList.toggle('watch-window-body', isWatchPage.value)
+  document.body.classList.toggle('watch-window-body', isWatchPage.value || isCpuCoresWatchPage.value)
 }
 
 function syncDocumentTitle() {
@@ -194,6 +194,10 @@ function syncDocumentTitle() {
       : initialFloatingEntry.value === 'hardwareWatch'
         ? '标准监控浮窗'
         : '监控浮窗预览'
+    : isCpuCoresWatchPage.value
+      ? initialFloatingMode.value === 'super-lite'
+        ? '超轻量 CPU 核心监控'
+        : 'CPU 核心监控'
     : isMonitorPage.value
       ? '硬件监控'
       : isDeviceSpecsPage.value

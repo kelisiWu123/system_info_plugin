@@ -1,6 +1,11 @@
 export type PageName = 'computer' | 'watch' | 'monitor' | 'deviceSpecs' | 'menubarSettings' | 'cpuCoresWatch'
 export type FloatingMonitorMode = 'standard' | 'super-lite'
-export type FloatingMonitorEntry = 'hardwareWatch' | 'hardwareWatchSuperLite' | 'unknown'
+export type FloatingMonitorEntry =
+  | 'hardwareWatch'
+  | 'hardwareWatchSuperLite'
+  | 'hardwareWatchCpuCores'
+  | 'hardwareWatchCpuCoresSuperLite'
+  | 'unknown'
 
 export function getHashRoute(hash: string) {
   const normalized = hash.replace(/^#\/?/, '')
@@ -24,7 +29,9 @@ export function resolvePageName(hash: string): PageName {
 
 export function resolveInitialFloatingMode(hash: string): FloatingMonitorMode {
   const query = getHashRoute(hash).query
-  return query.get('floatingMode') === 'super-lite' || query.get('entry') === 'hardwareWatchSuperLite'
+  return query.get('floatingMode') === 'super-lite'
+    || query.get('entry') === 'hardwareWatchSuperLite'
+    || query.get('entry') === 'hardwareWatchCpuCoresSuperLite'
     ? 'super-lite'
     : 'standard'
 }
@@ -34,5 +41,7 @@ export function resolveInitialFloatingEntry(hash: string): FloatingMonitorEntry 
 
   if (entry === 'hardwareWatch') return 'hardwareWatch'
   if (entry === 'hardwareWatchSuperLite') return 'hardwareWatchSuperLite'
+  if (entry === 'hardwareWatchCpuCores') return 'hardwareWatchCpuCores'
+  if (entry === 'hardwareWatchCpuCoresSuperLite') return 'hardwareWatchCpuCoresSuperLite'
   return 'unknown'
 }
