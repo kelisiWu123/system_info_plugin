@@ -424,14 +424,14 @@ function getCurrentWindowSingletonKey() {
   if (currentWindowSingletonKey) return currentWindowSingletonKey
   try {
     const href = String(globalThis?.location?.href || '')
-    if (href.includes('a_watch_super_lite') || href.includes('floatingMode=super-lite') || href.includes('hardwareWatchSuperLite')) {
-      return 'a_watch_super_lite'
-    }
     if (href.includes('a_watch_cpu_cores_super_lite') || href.includes('hardwareWatchCpuCoresSuperLite')) {
       return 'a_watch_cpu_cores_super_lite'
     }
     if (href.includes('a_watch_cpu_cores') || href.includes('cpuCoresWatch')) {
       return 'a_watch_cpu_cores'
+    }
+    if (href.includes('a_watch_super_lite') || href.includes('hardwareWatchSuperLite') || (href.includes('watch') && href.includes('floatingMode=super-lite'))) {
+      return 'a_watch_super_lite'
     }
     if (href.includes('a_watch') || href.includes('watch.html') || href.includes('#watch')) {
       return 'a_watch'
@@ -493,8 +493,12 @@ function calculateHandoffPosition(targetWidth, targetHeight) {
       return {}
     }
 
-    const currentWidth = globalThis.outerWidth || (targetWidth === 432 ? 200 : 432)
-    const currentHeight = globalThis.outerHeight || (targetHeight === 398 ? 200 : 398)
+    const currentWidth = (Number.isFinite(globalThis.outerWidth) && globalThis.outerWidth > 0)
+      ? globalThis.outerWidth
+      : 200
+    const currentHeight = (Number.isFinite(globalThis.outerHeight) && globalThis.outerHeight > 0)
+      ? globalThis.outerHeight
+      : 200
 
     const screenObj = globalThis.screen
     const availLeft = Number.isFinite(screenObj?.availLeft) ? screenObj.availLeft : 0
@@ -574,10 +578,13 @@ export const windowService = {
     if (typeof runtimeUtools.createBrowserWindow === 'function') {
       const currentKey = getCurrentWindowSingletonKey()
       if (currentKey === 'a_watch_super_lite' && width >= 400) {
-        const position = calculateHandoffPosition(432, 398)
+        const isDev = runtimeUtools.isDev?.()
+        const targetWidth = isDev ? 456 : 432
+        const targetHeight = isDev ? 420 : 398
+        const position = calculateHandoffPosition(targetWidth, targetHeight)
         void (async () => {
           try {
-            await windowService.createWindow('a_watch', 398, 432, 0, position)
+            await windowService.createWindow('a_watch', targetHeight, targetWidth, 0, position)
             windowService.closeWindow()
           } catch (e) {
             console.error('切换标准监控窗口失败:', e)
@@ -594,6 +601,35 @@ export const windowService = {
             windowService.closeWindow()
           } catch (e) {
             console.error('切换超轻量监控窗口失败:', e)
+          }
+        })()
+        return
+      }
+
+      if (currentKey === 'a_watch_cpu_cores_super_lite' && width >= 300) {
+        const isDev = runtimeUtools.isDev?.()
+        const targetWidth = isDev ? 380 : 360
+        const targetHeight = isDev ? 420 : 400
+        const position = calculateHandoffPosition(targetWidth, targetHeight)
+        void (async () => {
+          try {
+            await windowService.createWindow('a_watch_cpu_cores', targetHeight, targetWidth, 0, position)
+            windowService.closeWindow()
+          } catch (e) {
+            console.error('切换标准CPU核心监控窗口失败:', e)
+          }
+        })()
+        return
+      }
+
+      if (currentKey === 'a_watch_cpu_cores' && width <= 250) {
+        const position = calculateHandoffPosition(200, 200)
+        void (async () => {
+          try {
+            await windowService.createWindow('a_watch_cpu_cores_super_lite', 200, 200, 0, position)
+            windowService.closeWindow()
+          } catch (e) {
+            console.error('切换超轻量CPU核心监控窗口失败:', e)
           }
         })()
         return

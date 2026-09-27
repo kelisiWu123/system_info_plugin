@@ -1,4 +1,15 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
+const props = withDefaults(defineProps<{
+  closeOnly?: boolean
+}>(), {
+  closeOnly: false,
+})
+
+const isUtools = typeof (window as any).utools !== 'undefined'
+const shouldHideMinMax = computed(() => props.closeOnly || isUtools)
+
 function minimizeWindow() {
   window.services.minimizeWindow?.()
 }
@@ -14,9 +25,26 @@ function closeWindow() {
 
 <template>
   <div class="window-controls">
-    <button type="button" class="control control--minimize" @click="minimizeWindow" aria-label="最小化窗口" />
-    <button type="button" class="control control--maximize" @click="toggleMaximizeWindow" aria-label="切换最大化窗口" />
-    <button type="button" class="control control--close" @click="closeWindow" aria-label="关闭窗口" />
+    <button
+      v-if="!shouldHideMinMax"
+      type="button"
+      class="control control--minimize"
+      @click="minimizeWindow"
+      aria-label="最小化窗口"
+    />
+    <button
+      v-if="!shouldHideMinMax"
+      type="button"
+      class="control control--maximize"
+      @click="toggleMaximizeWindow"
+      aria-label="切换最大化窗口"
+    />
+    <button
+      type="button"
+      class="control control--close"
+      @click="closeWindow"
+      aria-label="关闭窗口"
+    />
   </div>
 </template>
 

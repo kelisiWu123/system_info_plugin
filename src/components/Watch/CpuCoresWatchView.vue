@@ -9,17 +9,32 @@ import {
 import { getCpuHybridCoreCounts, getProcessorDisplayCoreCount } from '../../utils/processor'
 import CpuCoresSuperLiteView from './CpuCoresSuperLiteView.vue'
 
-defineProps<{
+const props = defineProps<{
   active?: boolean
+  initialFloatingMode?: CpuCoresViewMode
+  initialFloatingEntry?: string
 }>()
 
 export type CpuCoresViewMode = 'standard' | 'super-lite'
 
 function getInitialViewMode(): CpuCoresViewMode {
+  if (props.initialFloatingEntry === 'hardwareWatchCpuCoresSuperLite' || props.initialFloatingMode === 'super-lite') {
+    return 'super-lite'
+  }
+  if (props.initialFloatingEntry === 'hardwareWatchCpuCores' || props.initialFloatingMode === 'standard') {
+    return 'standard'
+  }
   try {
+    const path = window.location.pathname || ''
+    if (path.includes('a_watch_cpu_cores_super_lite')) return 'super-lite'
+    if (path.includes('a_watch_cpu_cores')) return 'standard'
+
     const hash = window.location.hash || ''
     if (hash.includes('floatingMode=super-lite') || hash.includes('hardwareWatchCpuCoresSuperLite')) {
       return 'super-lite'
+    }
+    if (hash.includes('floatingMode=standard') || hash.includes('hardwareWatchCpuCores')) {
+      return 'standard'
     }
     const saved = localStorage.getItem('cpu_cores_watch_mode')
     if (saved === 'super-lite' || saved === 'standard') {
@@ -31,10 +46,13 @@ function getInitialViewMode(): CpuCoresViewMode {
 
 const pinned = ref(true)
 const viewMode = ref<CpuCoresViewMode>(getInitialViewMode())
+const isHandoffSwitching = ref(false)
+const isUtools = typeof (window as any).utools !== 'undefined'
 
 function switchMode(mode: CpuCoresViewMode) {
-  if (viewMode.value === mode) return
-  viewMode.value = mode
+  if (isHandoffSwitching.value) return
+  isHandoffSwitching.value = true
+
   try {
     localStorage.setItem('cpu_cores_watch_mode', mode)
   } catch {}
@@ -43,6 +61,14 @@ function switchMode(mode: CpuCoresViewMode) {
     window.services?.resizeWindow?.(200, 200)
   } else {
     window.services?.resizeWindow?.(360, 400)
+  }
+
+  if (!isUtools) {
+    viewMode.value = mode
+  } else {
+    setTimeout(() => {
+      isHandoffSwitching.value = false
+    }, 2000)
   }
 }
 
@@ -56,9 +82,6 @@ const {
 
 onMounted(() => {
   window.services?.alwaysOnTop?.(pinned.value)
-  if (viewMode.value === 'super-lite') {
-    window.services?.resizeWindow?.(200, 200)
-  }
   void activateProcessorHardwareStore()
 })
 

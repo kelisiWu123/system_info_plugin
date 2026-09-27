@@ -517,7 +517,7 @@ onUnmounted(() => {
   </div>
 
   <div v-else-if="isCpuCoresWatchPage" class="watch-stage">
-    <CpuCoresWatchView :active="true" />
+    <CpuCoresWatchView :active="true" :initial-floating-mode="initialFloatingMode" :initial-floating-entry="initialFloatingEntry" />
   </div>
 
   <div v-else-if="isMonitorPage" class="monitor-dashboard-stage">
@@ -531,7 +531,7 @@ onUnmounted(() => {
 
       <div class="window-titlebar__actions standalone-titlebar__actions">
         <ThemeControl compact />
-        <Bar />
+        <Bar close-only />
       </div>
     </div>
 
@@ -551,7 +551,7 @@ onUnmounted(() => {
 
       <div class="window-titlebar__actions standalone-titlebar__actions">
         <ThemeControl compact />
-        <Bar />
+        <Bar close-only />
       </div>
     </div>
 
@@ -571,7 +571,7 @@ onUnmounted(() => {
 
       <div class="window-titlebar__actions standalone-titlebar__actions">
         <ThemeControl compact />
-        <Bar />
+        <Bar close-only />
       </div>
     </div>
 
