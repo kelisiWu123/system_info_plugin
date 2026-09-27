@@ -39,6 +39,7 @@ namespace HWInfoX.WindowsTrayHelper
         public bool showTemp { get; set; }
         public bool showLoad { get; set; }
         public MetricSettings metrics { get; set; }
+        public bool? stop { get; set; }
         public long updatedAt { get; set; }
     }
 
@@ -92,6 +93,7 @@ namespace HWInfoX.WindowsTrayHelper
 
         private readonly System.Windows.Forms.Timer _pollTimer;
         private readonly System.Windows.Forms.Timer _parentWatchTimer;
+        private FileSystemWatcher _telemetryWatcher;
         private readonly string _telemetryPath;
         private readonly string _commandPath;
         private readonly int _parentPid;
@@ -101,7 +103,9 @@ namespace HWInfoX.WindowsTrayHelper
         private ToolStripMenuItem _titleItem;
         private ToolStripMenuItem _cpuTempItem;
         private ToolStripMenuItem _cpuLoadItem;
+        private ToolStripMenuItem _cpuFreqItem;
         private ToolStripMenuItem _memItem;
+        private ToolStripMenuItem _diskItem;
         private ToolStripMenuItem _fanItem;
         private ToolStripMenuItem _netItem;
         private ToolStripSeparator _statsSeparator;
@@ -157,7 +161,7 @@ namespace HWInfoX.WindowsTrayHelper
             _trayIcon = new NotifyIcon
             {
                 Visible = true,
-                Text = null, // Completely disable native tooltip on hover
+                Text = "HWInfoX 硬件监控",
             };
 
             // Trigger exclusively on click - no hover popups
@@ -177,7 +181,41 @@ namespace HWInfoX.WindowsTrayHelper
                 _parentWatchTimer.Start();
             }
 
+            try
+            {
+                string dir = Path.GetDirectoryName(_telemetryPath);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    if (!Directory.Exists(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+                    _telemetryWatcher = new FileSystemWatcher(dir, Path.GetFileName(_telemetryPath));
+                    _telemetryWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size;
+                    _telemetryWatcher.Changed += OnTelemetryFileChanged;
+                    _telemetryWatcher.Created += OnTelemetryFileChanged;
+                    _telemetryWatcher.EnableRaisingEvents = true;
+                }
+            }
+            catch
+            {
+            }
+
             ProcessTelemetry();
+        }
+
+        private void OnTelemetryFileChanged(object sender, FileSystemEventArgs e)
+        {
+            if (_dummyForm != null && !_dummyForm.IsDisposed && _dummyForm.IsHandleCreated)
+            {
+                try
+                {
+                    _dummyForm.BeginInvoke(new Action(ProcessTelemetry));
+                }
+                catch
+                {
+                }
+            }
         }
 
         public static bool AcquireSingleInstance()
@@ -248,20 +286,33 @@ namespace HWInfoX.WindowsTrayHelper
             _cpuLoadItem.Click += (s, e) => OpenUtoolsPreset("a_monitor", "硬件监控");
             menu.Items.Add(_cpuLoadItem);
 
+            _cpuFreqItem = new ToolStripMenuItem("  CPU 频率:  --");
+            _cpuFreqItem.ForeColor = Color.FromArgb(250, 204, 21);
+            _cpuFreqItem.Visible = false;
+            _cpuFreqItem.Click += (s, e) => OpenUtoolsPreset("a_computer", "硬件信息");
+            menu.Items.Add(_cpuFreqItem);
+
             _memItem = new ToolStripMenuItem("  内存使用:  --");
             _memItem.ForeColor = Color.FromArgb(192, 132, 252);
             _memItem.Visible = false;
             _memItem.Click += (s, e) => OpenUtoolsPreset("a_computer", "硬件信息");
             menu.Items.Add(_memItem);
 
+            _diskItem = new ToolStripMenuItem("  磁盘读写:  --");
+            _diskItem.ForeColor = Color.FromArgb(244, 114, 182);
+            _diskItem.Visible = false;
+            _diskItem.Click += (s, e) => OpenUtoolsPreset("a_computer", "硬件信息");
+            menu.Items.Add(_diskItem);
+
             _fanItem = new ToolStripMenuItem("  风扇转速:  --");
             _fanItem.ForeColor = Color.FromArgb(45, 212, 191);
             _fanItem.Visible = false;
             menu.Items.Add(_fanItem);
 
-            _netItem = new ToolStripMenuItem("  网络速率:  --");
+            _netItem = new ToolStripMenuItem("  实时网速:  --");
             _netItem.ForeColor = Color.FromArgb(56, 189, 248);
             _netItem.Visible = false;
+            _netItem.Click += (s, e) => OpenUtoolsPreset("a_computer", "硬件信息");
             menu.Items.Add(_netItem);
 
             _statsSeparator = new ToolStripSeparator();
@@ -419,7 +470,7 @@ namespace HWInfoX.WindowsTrayHelper
             {
                 string json;
                 using (FileStream fs = new FileStream(_telemetryPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (StreamReader sr = new StreamReader(fs))
+                using (StreamReader sr = new StreamReader(fs, System.Text.Encoding.UTF8))
                 {
                     json = sr.ReadToEnd();
                 }
@@ -428,6 +479,16 @@ namespace HWInfoX.WindowsTrayHelper
 
                 TelemetryPayload data = _serializer.Deserialize<TelemetryPayload>(json);
                 if (data == null) return;
+
+                if (data.stop.HasValue && data.stop.Value)
+                {
+                    if (_trayIcon != null)
+                    {
+                        _trayIcon.Visible = false;
+                    }
+                    ExitThread();
+                    return;
+                }
 
                 if (data.updatedAt == _lastProcessedUpdatedAt)
                 {
@@ -470,86 +531,194 @@ namespace HWInfoX.WindowsTrayHelper
                     : l >= 60 ? Color.FromArgb(255, 189, 46)
                     : Color.FromArgb(46, 204, 113);
             }
+            else if (metrics.memoryUsage && data.memoryPercent.HasValue && data.memoryPercent.Value > 0)
+            {
+                int m = (int)Math.Round(data.memoryPercent.Value);
+                badgeText = m.ToString() + "%";
+                badgeColor = m >= 85 ? Color.FromArgb(255, 95, 87)
+                    : m >= 65 ? Color.FromArgb(255, 189, 46)
+                    : Color.FromArgb(192, 132, 252);
+            }
+            else if (metrics.cpuFrequency && data.speed.HasValue && data.speed.Value > 0)
+            {
+                badgeText = string.Format("{0:0.0}", data.speed.Value);
+                badgeColor = Color.FromArgb(250, 204, 21);
+            }
             else if (data.temp.HasValue && data.temp.Value > 0)
             {
                 int t = (int)Math.Round(data.temp.Value);
                 badgeText = t >= 100 ? t.ToString() : (t.ToString() + "°");
-                badgeColor = t >= 80 ? Color.FromArgb(255, 95, 87)
-                    : t >= 65 ? Color.FromArgb(255, 189, 46)
-                    : Color.FromArgb(78, 201, 240);
+                badgeColor = Color.FromArgb(78, 201, 240);
             }
 
             Icon icon = IconRenderer.CreateBadgeIcon(badgeText, badgeColor);
             UpdateTrayIcon(icon);
 
-            // 2. Update Context Menu rows
-            if (data.temp.HasValue && data.temp.Value > 0)
+            // 2. Tooltip on Hover
+            if (_trayIcon != null)
             {
-                double tempVal = data.temp.Value;
-                _cpuTempItem.Text = string.Format("  CPU 温度:  {0:0}°C", tempVal);
-                _cpuTempItem.ForeColor = tempVal >= 80 ? Color.FromArgb(255, 107, 107)
-                    : tempVal >= 65 ? Color.FromArgb(255, 169, 77)
-                    : Color.FromArgb(78, 201, 240);
+                List<string> tooltipParts = new List<string>();
+                if (metrics.cpuTemperature && data.temp.HasValue && data.temp.Value > 0)
+                    tooltipParts.Add(string.Format("CPU: {0:0}°C", data.temp.Value));
+                if (metrics.cpuLoad && data.load.HasValue && data.load.Value >= 0)
+                    tooltipParts.Add(string.Format("负载: {0:0}%", data.load.Value));
+                if (metrics.cpuFrequency && data.speed.HasValue && data.speed.Value > 0)
+                    tooltipParts.Add(string.Format("{0:0.0}GHz", data.speed.Value));
+                if (metrics.memoryUsage && data.memoryPercent.HasValue && data.memoryPercent.Value > 0)
+                    tooltipParts.Add(string.Format("内存: {0:0}%", data.memoryPercent.Value));
+                if (metrics.diskIo)
+                {
+                    double rSpd = data.diskReadBytesPerSec ?? 0;
+                    double wSpd = data.diskWriteBytesPerSec ?? 0;
+                    if (rSpd > 0 || wSpd > 0)
+                        tooltipParts.Add(string.Format("读写: {0}/{1}", FormatSpeed(rSpd), FormatSpeed(wSpd)));
+                }
+                if (metrics.networkIo)
+                {
+                    double dSpd = data.networkDownloadBytesPerSec ?? 0;
+                    double uSpd = data.networkUploadBytesPerSec ?? 0;
+                    if (dSpd > 0 || uSpd > 0)
+                        tooltipParts.Add(string.Format("网速: ↓{0} ↑{1}", FormatSpeed(dSpd), FormatSpeed(uSpd)));
+                }
+                string tooltip = tooltipParts.Count > 0 ? ("HWInfoX: " + string.Join(" | ", tooltipParts)) : "HWInfoX 硬件监控";
+                if (tooltip.Length >= 64) tooltip = tooltip.Substring(0, 63);
+                _trayIcon.Text = tooltip;
+            }
+
+            // 3. Context Menu rows
+            bool hasVisibleMetric = false;
+
+            if (metrics.cpuTemperature)
+            {
+                if (data.temp.HasValue && data.temp.Value > 0)
+                {
+                    double tempVal = data.temp.Value;
+                    _cpuTempItem.Text = string.Format("  CPU 温度:  {0:0}°C", tempVal);
+                    _cpuTempItem.ForeColor = tempVal >= 80 ? Color.FromArgb(255, 107, 107)
+                        : tempVal >= 65 ? Color.FromArgb(255, 169, 77)
+                        : Color.FromArgb(78, 201, 240);
+                }
+                else
+                {
+                    _cpuTempItem.Text = "  CPU 温度:  --";
+                    _cpuTempItem.ForeColor = Color.FromArgb(148, 163, 184);
+                }
                 _cpuTempItem.Visible = true;
+                hasVisibleMetric = true;
             }
             else
             {
                 _cpuTempItem.Visible = false;
             }
 
-            if (data.load.HasValue && data.load.Value >= 0)
+            if (metrics.cpuLoad)
             {
-                string speedStr = (data.speed.HasValue && data.speed.Value > 0)
-                    ? string.Format("  ({0:0.0} GHz)", data.speed.Value)
-                    : "";
-                _cpuLoadItem.Text = string.Format("  CPU 占用:  {0:0}%{1}", data.load.Value, speedStr);
+                if (data.load.HasValue && data.load.Value >= 0)
+                {
+                    _cpuLoadItem.Text = string.Format("  CPU 占用:  {0:0}%", data.load.Value);
+                }
+                else
+                {
+                    _cpuLoadItem.Text = "  CPU 占用:  --";
+                }
                 _cpuLoadItem.Visible = true;
+                hasVisibleMetric = true;
             }
             else
             {
                 _cpuLoadItem.Visible = false;
             }
 
-            if (metrics.memoryUsage && data.memoryPercent.HasValue && data.memoryPercent.Value > 0)
+            if (metrics.cpuFrequency)
             {
-                double usedGb = (data.memoryUsedBytes ?? 0) / (1024.0 * 1024.0 * 1024.0);
-                double totalGb = (data.memoryTotalBytes ?? 0) / (1024.0 * 1024.0 * 1024.0);
-                if (usedGb > 0 && totalGb > 0)
+                if (data.speed.HasValue && data.speed.Value > 0)
                 {
-                    _memItem.Text = string.Format("  内存使用:  {0:0}%  ({1:0.0} / {2:0.0} GB)", data.memoryPercent.Value, usedGb, totalGb);
+                    _cpuFreqItem.Text = string.Format("  CPU 频率:  {0:0.0} GHz", data.speed.Value);
                 }
                 else
                 {
-                    _memItem.Text = string.Format("  内存使用:  {0:0}%", data.memoryPercent.Value);
+                    _cpuFreqItem.Text = "  CPU 频率:  --";
+                }
+                _cpuFreqItem.Visible = true;
+                hasVisibleMetric = true;
+            }
+            else
+            {
+                _cpuFreqItem.Visible = false;
+            }
+
+            if (metrics.memoryUsage)
+            {
+                if (data.memoryPercent.HasValue && data.memoryPercent.Value > 0)
+                {
+                    double usedGb = (data.memoryUsedBytes ?? 0) / (1024.0 * 1024.0 * 1024.0);
+                    double totalGb = (data.memoryTotalBytes ?? 0) / (1024.0 * 1024.0 * 1024.0);
+                    if (usedGb > 0 && totalGb > 0)
+                    {
+                        _memItem.Text = string.Format("  内存使用:  {0:0}%  ({1:0.0} / {2:0.0} GB)", data.memoryPercent.Value, usedGb, totalGb);
+                    }
+                    else
+                    {
+                        _memItem.Text = string.Format("  内存使用:  {0:0}%", data.memoryPercent.Value);
+                    }
+                }
+                else
+                {
+                    _memItem.Text = "  内存使用:  --";
                 }
                 _memItem.Visible = true;
+                hasVisibleMetric = true;
             }
             else
             {
                 _memItem.Visible = false;
             }
 
-            if (metrics.fanSpeed && data.fanSpeed.HasValue && data.fanSpeed.Value > 0)
+            if (metrics.diskIo)
             {
-                _fanItem.Text = string.Format("  风扇转速:  {0:0} RPM", data.fanSpeed.Value);
+                double readSpeed = data.diskReadBytesPerSec ?? 0;
+                double writeSpeed = data.diskWriteBytesPerSec ?? 0;
+                _diskItem.Text = string.Format("  磁盘读写:  R:{0}  W:{1}", FormatSpeed(readSpeed), FormatSpeed(writeSpeed));
+                _diskItem.Visible = true;
+                hasVisibleMetric = true;
+            }
+            else
+            {
+                _diskItem.Visible = false;
+            }
+
+            if (metrics.fanSpeed)
+            {
+                if (data.fanSpeed.HasValue && data.fanSpeed.Value > 0)
+                {
+                    _fanItem.Text = string.Format("  风扇转速:  {0:0} RPM", data.fanSpeed.Value);
+                }
+                else
+                {
+                    _fanItem.Text = "  风扇转速:  --";
+                }
                 _fanItem.Visible = true;
+                hasVisibleMetric = true;
             }
             else
             {
                 _fanItem.Visible = false;
             }
 
-            if (metrics.networkIo && ((data.networkDownloadBytesPerSec ?? 0) > 0 || (data.networkUploadBytesPerSec ?? 0) > 0))
+            if (metrics.networkIo)
             {
                 double downSpeed = data.networkDownloadBytesPerSec ?? 0;
                 double upSpeed = data.networkUploadBytesPerSec ?? 0;
                 _netItem.Text = string.Format("  实时网速:  ↓{0}  ↑{1}", FormatSpeed(downSpeed), FormatSpeed(upSpeed));
                 _netItem.Visible = true;
+                hasVisibleMetric = true;
             }
             else
             {
                 _netItem.Visible = false;
             }
+
+            _statsSeparator.Visible = hasVisibleMetric;
         }
 
         private void UpdateTrayIcon(Icon newIcon)
@@ -558,7 +727,7 @@ namespace HWInfoX.WindowsTrayHelper
             IntPtr newHIcon = newIcon.Handle;
             _trayIcon.Icon = newIcon;
 
-            if (_previousHIcon != IntPtr.Zero)
+            if (_previousHIcon != IntPtr.Zero && _previousHIcon != newHIcon)
             {
                 DestroyIcon(_previousHIcon);
             }
@@ -579,6 +748,12 @@ namespace HWInfoX.WindowsTrayHelper
         {
             if (disposing)
             {
+                if (_telemetryWatcher != null)
+                {
+                    _telemetryWatcher.EnableRaisingEvents = false;
+                    _telemetryWatcher.Dispose();
+                    _telemetryWatcher = null;
+                }
                 if (_pollTimer != null)
                 {
                     _pollTimer.Stop();

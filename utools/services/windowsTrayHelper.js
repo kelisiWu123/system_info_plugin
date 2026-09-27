@@ -375,24 +375,34 @@ export function stopWindowsTrayHelper() {
 
   if (Number.isInteger(helperPid) && helperPid > 0 && isProcessAlive(helperPid)) {
     try {
-      process.kill(helperPid, 'SIGTERM')
+      writeJsonAtomically(TRAY_TELEMETRY_PATH, {
+        stop: true,
+        updatedAt: Date.now(),
+      })
     } catch {
-      // Ignore process exit races.
     }
-  }
 
-  setTimeout(() => {
-    try {
-      if (proc && proc.exitCode === null && !proc.killed) {
-        proc.kill('SIGTERM')
+    setTimeout(() => {
+      try {
+        if (isProcessAlive(helperPid)) {
+          process.kill(helperPid, 'SIGTERM')
+        }
+      } catch {
+        // Ignore process exit races.
       }
-    } catch {
-      // Ignore kill error
-    }
-    if (!isProcessAlive(helperPid)) {
-      removeTrayOwnerRecord(owner?.token || '')
-    }
-  }, 200)
+      setTimeout(() => {
+        try {
+          if (proc && proc.exitCode === null && !proc.killed && isProcessAlive(helperPid)) {
+            proc.kill('SIGKILL')
+          }
+        } catch {
+        }
+        if (!isProcessAlive(helperPid)) {
+          removeTrayOwnerRecord(owner?.token || '')
+        }
+      }, 150)
+    }, 150)
+  }
 
   try {
     if (fs.existsSync(TRAY_COMMAND_PATH)) {

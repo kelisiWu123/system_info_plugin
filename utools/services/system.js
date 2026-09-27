@@ -1318,17 +1318,19 @@ function stopMacMenubarTelemetryScheduler() {
   releaseMacMenubarTelemetryScheduler()
 }
 
-export function syncMacMenubarTelemetry(snapshot) {
+export function syncMacMenubarTelemetry(snapshot, options = {}) {
   // Page readers call this without a snapshot. Only the elected sampler may
   // publish a complete batch; a page's partial cache must never replace it.
-  if (!snapshot || !macMenubarTelemetrySchedulerToken
-    || readMacMenubarSchedulerRecord()?.token !== macMenubarTelemetrySchedulerToken) return
-  if ((!isMacOS() && !isWindows()) || isTrayRuntimeStopSignaled()) return
+  const force = Boolean(options?.force)
+  if (!snapshot) return
+  if (!force && (!macMenubarTelemetrySchedulerToken
+    || readMacMenubarSchedulerRecord()?.token !== macMenubarTelemetrySchedulerToken)) return
+  if ((!isMacOS() && !isWindows()) || (!force && isTrayRuntimeStopSignaled())) return
   const settings = getMacMenubarSettings()
   if (!settings.enabled || !hasEnabledMacMenubarMetric(settings)) return
 
   const now = Date.now()
-  if (now - lastMenubarPushAt < 800) {
+  if (!force && now - lastMenubarPushAt < 800) {
     return
   }
   lastMenubarPushAt = now
@@ -1358,12 +1360,13 @@ export function syncMacMenubarTelemetry(snapshot) {
   }
 }
 
-export async function refreshMacMenubarTelemetry() {
-  if ((!isMacOS() && !isWindows()) || isTrayRuntimeStopSignaled()) return
+export async function refreshMacMenubarTelemetry(options = {}) {
+  const force = Boolean(options?.force)
+  if ((!isMacOS() && !isWindows()) || (!force && isTrayRuntimeStopSignaled())) return
 
   const settings = getMacMenubarSettings()
   if (!settings.enabled || !hasEnabledMacMenubarMetric(settings)) return
-  if (macMenubarTelemetryRefreshInFlight || !tryAcquireMacMenubarTelemetryScheduler()) return
+  if (macMenubarTelemetryRefreshInFlight || (!force && !tryAcquireMacMenubarTelemetryScheduler())) return
 
   macMenubarTelemetryRefreshInFlight = true
   try {
@@ -1393,7 +1396,7 @@ export async function refreshMacMenubarTelemetry() {
       if (result.status === 'fulfilled') Object.assign(snapshot, result.value)
     }
     lastMenubarPushAt = 0
-    syncMacMenubarTelemetry(snapshot)
+    syncMacMenubarTelemetry(snapshot, { force })
   } finally {
     macMenubarTelemetryRefreshInFlight = false
     writeMacMenubarSchedulerRecord()
@@ -1419,11 +1422,17 @@ export async function updateMacMenubarSettings(patch = {}) {
       clearWindowsTrayRuntimeStopSignal()
       lastMenubarPushAt = 0
       startMacMenubarTelemetryScheduler()
-      void refreshMacMenubarTelemetry()
+      void refreshMacMenubarTelemetry({ force: true })
     } else {
       stopMacMenubarTelemetryScheduler()
-      if (isMacOS()) stopMacMenubarHelper()
-      if (isWindows()) stopWindowsTrayHelper()
+      if (isMacOS()) {
+        writeMacMenubarRuntimeStopSignal()
+        stopMacMenubarHelper()
+      }
+      if (isWindows()) {
+        writeWindowsTrayRuntimeStopSignal()
+        stopWindowsTrayHelper()
+      }
     }
   }
 
@@ -4637,7 +4646,7 @@ export const systemService = {
 
   updateMacMenubarSettings: async (patch) => updateMacMenubarSettings(patch),
 
-  refreshMacMenubarTelemetry: () => refreshMacMenubarTelemetry(),
+  refreshMacMenubarTelemetry: (options) => refreshMacMenubarTelemetry(options),
 
   getMacMenubarStatus: () => {
     if (isMacOS()) return getMacMenubarStatus()

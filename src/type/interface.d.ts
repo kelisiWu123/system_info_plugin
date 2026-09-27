@@ -412,7 +412,7 @@ declare global {
       uninstallMacPowermetricsHelper: () => Promise<MacPowermetricsHelperStatusData>
       getMacMenubarSettings: () => Promise<MacMenubarSettingsData>
       updateMacMenubarSettings: (patch: MacMenubarSettingsPatch) => Promise<MacMenubarSettingsData>
-      refreshMacMenubarTelemetry: () => Promise<void>
+      refreshMacMenubarTelemetry: (options?: { force?: boolean }) => Promise<void>
       getMacMenubarStatus: () => Promise<MacMenubarStatusData>
       startMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean; pid?: number | null; shared?: boolean }>
       stopMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean }>

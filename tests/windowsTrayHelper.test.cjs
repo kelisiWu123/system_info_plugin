@@ -45,3 +45,25 @@ test('windows tray helper source code uses command dispatch and codepage 65001',
   const buildScript = fs.readFileSync(path.join(__dirname, '../scripts/build-windows-tray-helper.mjs'), 'utf8')
   assert.match(buildScript, /\/codepage:65001/)
 })
+
+test('windows tray helper source code implements all 7 metric items and respects settings toggles', () => {
+  const programCs = fs.readFileSync(path.join(__dirname, '../native/windows-tray-helper/Program.cs'), 'utf8')
+  assert.match(programCs, /_cpuTempItem/)
+  assert.match(programCs, /_cpuLoadItem/)
+  assert.match(programCs, /_cpuFreqItem/)
+  assert.match(programCs, /_memItem/)
+  assert.match(programCs, /_diskItem/)
+  assert.match(programCs, /_fanItem/)
+  assert.match(programCs, /_netItem/)
+
+  assert.match(programCs, /metrics\.cpuTemperature/)
+  assert.match(programCs, /metrics\.cpuLoad/)
+  assert.match(programCs, /metrics\.cpuFrequency/)
+  assert.match(programCs, /metrics\.memoryUsage/)
+  assert.match(programCs, /metrics\.diskIo/)
+  assert.match(programCs, /metrics\.fanSpeed/)
+  assert.match(programCs, /metrics\.networkIo/)
+
+  assert.match(programCs, /data\.stop\.HasValue && data\.stop\.Value/)
+  assert.match(programCs, /_telemetryWatcher/)
+})

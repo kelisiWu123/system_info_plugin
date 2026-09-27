@@ -113,7 +113,7 @@ async function applySettings(patch: MacMenubarSettingsPatch) {
     const next = await window.services.updateMacMenubarSettings(patch)
     settings.value = normalizeSettings(next)
     if (settings.value.enabled && isSupportedPlatform.value && enabledMetricCount.value > 0) {
-      void window.services.refreshMacMenubarTelemetry()
+      void window.services.refreshMacMenubarTelemetry({ force: true })
     }
   } catch (error) {
     saveError.value = error instanceof Error ? error.message : '保存设置失败'
@@ -140,7 +140,7 @@ function toggleMetric(key: MetricKey) {
 onMounted(async () => {
   await loadSettings()
   if (settings.value.enabled && isSupportedPlatform.value && enabledMetricCount.value > 0) {
-    void window.services.refreshMacMenubarTelemetry()
+    void window.services.refreshMacMenubarTelemetry({ force: true })
   }
 })
 </script>
@@ -154,7 +154,7 @@ onMounted(async () => {
       <div>
         <p class="menubar-settings__eyebrow">{{ isMacOS ? 'HWInfoX · macOS' : 'HWInfoX · Windows' }}</p>
         <h1 id="menubar-settings-title">{{ isMacOS ? '菜单栏显示设置' : '系统托盘显示设置' }}</h1>
-        <p>{{ isMacOS ? '每个指标都会独立出现在 macOS 顶部菜单栏，可按需组合。' : 'Windows 任务栏托盘将常驻单个核心温度徽标，其余各项指标在鼠标悬浮时以多行状态卡片实时展示。' }}</p>
+        <p>{{ isMacOS ? '每个指标都会独立出现在 macOS 顶部菜单栏，可按需组合。' : 'Windows 任务栏托盘将常驻核心指标徽标，鼠标悬停可预览简报，点击托盘图标可在菜单中查看完整实时硬件状态。' }}</p>
       </div>
     </header>
 
