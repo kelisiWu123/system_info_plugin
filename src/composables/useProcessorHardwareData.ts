@@ -3,6 +3,7 @@ import {
   appendMetricHistory,
   createMonitoringDiagnostics,
   getMonitoringRefreshIntervals,
+  type MonitoringRefreshProfile,
 } from '../utils/monitoring'
 import { getDisplayCpuCurrentSpeedGHz } from '../utils'
 import { bindMonitoringVisibilityListeners, resolveMonitoringBackgroundThrottled } from '../utils/monitoringVisibility'
@@ -152,8 +153,71 @@ async function retryMissingCpuVoltage(initial?: CpuVoltageData) {
   }
 }
 
+export interface ProcessorStoreActivationOptions {
+  profile?: MonitoringRefreshProfile
+  requireFocus?: boolean
+  disableBackgroundThrottle?: boolean
+}
+
+interface ProcessorSubscriberSession {
+  id: number
+  profile: MonitoringRefreshProfile
+  requireFocus: boolean
+  disableBackgroundThrottle: boolean
+}
+
+let nextSubscriberSessionId = 1
+const activeSubscriberSessions = new Map<number, ProcessorSubscriberSession>()
+
+function isWatchWindowContext(): boolean {
+  if (typeof window === 'undefined') return false
+  const hash = (window.location?.hash || '').toLowerCase()
+  const path = (window.location?.pathname || '').toLowerCase()
+  return hash.includes('watch') || hash.includes('cpucores') || path.includes('watch')
+}
+
+function getEffectiveMonitoringOptions(): {
+  profile: MonitoringRefreshProfile
+  requireFocus: boolean
+  disableBackgroundThrottle: boolean
+} {
+  const isWatch = isWatchWindowContext()
+
+  if (activeSubscriberSessions.size === 0) {
+    return {
+      profile: isWatch ? 'realtime' : 'balanced',
+      requireFocus: !isWatch,
+      disableBackgroundThrottle: false,
+    }
+  }
+
+  let profile: MonitoringRefreshProfile = isWatch ? 'realtime' : 'balanced'
+  let requireFocus = !isWatch
+  let disableBackgroundThrottle = false
+
+  for (const session of activeSubscriberSessions.values()) {
+    if (session.profile === 'realtime') {
+      profile = 'realtime'
+    }
+
+    if (!session.requireFocus) {
+      requireFocus = false
+    }
+
+    if (session.disableBackgroundThrottle) {
+      disableBackgroundThrottle = true
+    }
+  }
+
+  return { profile, requireFocus, disableBackgroundThrottle }
+}
+
 function getCurrentRefreshIntervals() {
-  return getMonitoringRefreshIntervals('balanced', backgroundThrottled.value)
+  const { profile } = getEffectiveMonitoringOptions()
+  if (profile === 'balanced') {
+    return getMonitoringRefreshIntervals('balanced', backgroundThrottled.value)
+  }
+  return getMonitoringRefreshIntervals(profile, backgroundThrottled.value)
 }
 
 function hasActiveRefreshIntervals() {
@@ -200,8 +264,18 @@ function restartPolling() {
   startPolling()
 }
 
+function computeProcessorBackgroundThrottled() {
+  const { requireFocus, disableBackgroundThrottle } = getEffectiveMonitoringOptions()
+  if (disableBackgroundThrottle) return false
+  return resolveMonitoringBackgroundThrottled(
+    true,
+    typeof document === 'undefined' ? undefined : document,
+    { requireFocus }
+  )
+}
+
 function updateBackgroundThrottled() {
-  const nextValue = resolveMonitoringBackgroundThrottled(true)
+  const nextValue = computeProcessorBackgroundThrottled()
   if (backgroundThrottled.value === nextValue) return
   backgroundThrottled.value = nextValue
   restartPolling()
@@ -209,7 +283,7 @@ function updateBackgroundThrottled() {
 
 function syncMonitoringVisibility() {
   visibilityListenersBound = bindMonitoringVisibilityListeners(visibilityListenersBound, updateBackgroundThrottled)
-  backgroundThrottled.value = resolveMonitoringBackgroundThrottled(true)
+  backgroundThrottled.value = computeProcessorBackgroundThrottled()
 }
 
 async function refreshProcessorDynamicMetrics(force = false) {
@@ -393,8 +467,18 @@ async function initProcessorHardwareData() {
   }
 }
 
-export async function activateProcessorHardwareStore() {
-  subscriberCount += 1
+export async function activateProcessorHardwareStore(options?: ProcessorStoreActivationOptions): Promise<() => void> {
+  const sessionId = nextSubscriberSessionId++
+  const isWatch = isWatchWindowContext()
+
+  activeSubscriberSessions.set(sessionId, {
+    id: sessionId,
+    profile: options?.profile || (isWatch ? 'realtime' : 'balanced'),
+    requireFocus: typeof options?.requireFocus === 'boolean' ? options.requireFocus : !isWatch,
+    disableBackgroundThrottle: Boolean(options?.disableBackgroundThrottle),
+  })
+
+  subscriberCount = activeSubscriberSessions.size
   diagnostics.markActivated(subscriberCount)
   syncMonitoringVisibility()
 
@@ -409,6 +493,10 @@ export async function activateProcessorHardwareStore() {
   }
 
   startPolling()
+
+  return () => {
+    deactivateProcessorHardwareStore(sessionId)
+  }
 }
 
 export async function refreshProcessorHardwareDynamicMetrics() {
@@ -430,8 +518,17 @@ export async function refreshProcessorHardwareData() {
   await refreshProcessorDynamicMetrics(true)
 }
 
-export function deactivateProcessorHardwareStore() {
-  subscriberCount = Math.max(0, subscriberCount - 1)
+export function deactivateProcessorHardwareStore(sessionId?: number) {
+  if (typeof sessionId === 'number') {
+    activeSubscriberSessions.delete(sessionId)
+  } else if (activeSubscriberSessions.size > 0) {
+    const lastKey = Array.from(activeSubscriberSessions.keys()).pop()
+    if (lastKey !== undefined) {
+      activeSubscriberSessions.delete(lastKey)
+    }
+  }
+
+  subscriberCount = activeSubscriberSessions.size
   diagnostics.markDeactivated(subscriberCount)
 
   if (subscriberCount <= 0) {
@@ -439,6 +536,7 @@ export function deactivateProcessorHardwareStore() {
     return
   }
 
+  syncMonitoringVisibility()
   restartPolling()
 }
 

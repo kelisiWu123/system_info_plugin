@@ -4312,7 +4312,7 @@ async function getGpuInfo() {
 async function getCurrentLoadSnapshot() {
   const current = await readCachedServiceValue(
     'currentLoadSnapshot',
-    2000,
+    1000,
     () => readSystemInfo('currentLoadSnapshot', emptyCurrentLoadData, () => si.currentLoad())
   )
 
@@ -4684,7 +4684,7 @@ export const systemService = {
   getCpuFullLoad: () =>
     readCachedServiceValue(
       'cpuFullLoad',
-      2000,
+      1000,
       async () => {
         const current = await getCurrentLoadSnapshot()
         return Math.round(current.currentLoad || 0)
@@ -4819,7 +4819,7 @@ export const systemService = {
   getCpuLoadData: () =>
     readCachedServiceValue(
       'cpuLoadData',
-      2000,
+      1000,
       async () => {
         const current = await getCurrentLoadSnapshot()
         return current || emptyCurrentLoadData

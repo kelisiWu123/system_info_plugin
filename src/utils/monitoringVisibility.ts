@@ -9,14 +9,20 @@ interface MonitoringWindowLike {
   addEventListener?: (event: 'focus' | 'blur', listener: () => void) => void
 }
 
+export interface MonitoringVisibilityOptions {
+  requireFocus?: boolean
+}
+
 export function resolveMonitoringBackgroundThrottled(
   backgroundThrottleEnabled: boolean,
-  doc: MonitoringDocumentLike | undefined = typeof document === 'undefined' ? undefined : document
+  doc: MonitoringDocumentLike | undefined = typeof document === 'undefined' ? undefined : document,
+  options?: MonitoringVisibilityOptions
 ) {
   if (!doc || !backgroundThrottleEnabled) return false
 
   const visible = !doc.hidden && doc.visibilityState !== 'hidden'
-  const focused = typeof doc.hasFocus === 'function' ? doc.hasFocus() : true
+  const requireFocus = options?.requireFocus ?? true
+  const focused = requireFocus && typeof doc.hasFocus === 'function' ? doc.hasFocus() : true
   return !(visible && focused)
 }
 

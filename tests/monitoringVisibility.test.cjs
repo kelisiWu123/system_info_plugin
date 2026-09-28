@@ -57,6 +57,22 @@ test('resolveMonitoringBackgroundThrottled detects hidden or unfocused documents
   }), false)
 })
 
+test('resolveMonitoringBackgroundThrottled allows unfocused documents when requireFocus is false', async () => {
+  const { resolveMonitoringBackgroundThrottled } = await loadMonitoringVisibility()
+
+  assert.equal(resolveMonitoringBackgroundThrottled(true, {
+    hidden: false,
+    visibilityState: 'visible',
+    hasFocus: () => false,
+  }, { requireFocus: false }), false)
+
+  assert.equal(resolveMonitoringBackgroundThrottled(true, {
+    hidden: true,
+    visibilityState: 'hidden',
+    hasFocus: () => false,
+  }, { requireFocus: false }), true)
+})
+
 test('bindMonitoringVisibilityListeners binds focus, blur, and visibilitychange only once', async () => {
   const { bindMonitoringVisibilityListeners } = await loadMonitoringVisibility()
   const calls = []

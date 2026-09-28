@@ -97,7 +97,7 @@ const {
 
 onMounted(() => {
   window.services?.alwaysOnTop?.(pinned.value)
-  void activateProcessorHardwareStore()
+  void activateProcessorHardwareStore({ profile: 'realtime', requireFocus: false })
   if (viewMode.value === 'game') {
     const isDev = Boolean((window as any).utools?.isDev?.())
     window.services?.resizeWindow?.(isDev ? 700 : 660, isDev ? 30 : 26)
@@ -165,6 +165,19 @@ const allCoreRows = computed(() => {
         coreLoad = Math.round(((t1 + t2) / 2) * 10) / 10
       } else {
         coreLoad = t1 ?? t2
+      }
+    } else if (perf && eff && loadCpus.length === perf * 2 + eff) {
+      if (index < perf) {
+        const t1 = typeof loadCpus[index * 2]?.load === 'number' ? loadCpus[index * 2].load : null
+        const t2 = typeof loadCpus[index * 2 + 1]?.load === 'number' ? loadCpus[index * 2 + 1].load : null
+        if (t1 !== null && t2 !== null) {
+          coreLoad = Math.round(((t1 + t2) / 2) * 10) / 10
+        } else {
+          coreLoad = t1 ?? t2
+        }
+      } else {
+        const threadIdx = perf * 2 + (index - perf)
+        coreLoad = typeof loadCpus[threadIdx]?.load === 'number' ? loadCpus[threadIdx].load : null
       }
     } else {
       coreLoad = typeof loadCpus[index]?.load === 'number' ? loadCpus[index].load : null

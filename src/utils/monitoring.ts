@@ -70,15 +70,15 @@ const PROFILE_INTERVALS: Record<MonitoringRefreshProfile, MonitoringRefreshInter
     time: 5000,
   },
   realtime: {
-    base: 2000,
-    cpuTemp: 3500,
-    cpuSpeed: 2000,
+    base: 1500,
+    cpuTemp: 3000,
+    cpuSpeed: 1500,
     cpuAux: 8000,
-    cpuLoadDetail: 2000,
-    gpu: 4000,
+    cpuLoadDetail: 1500,
+    gpu: 3000,
     memory: 2000,
-    disk: 4000,
-    time: 4000,
+    disk: 3000,
+    time: 3000,
   },
 }
 
