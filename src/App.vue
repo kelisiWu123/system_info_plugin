@@ -16,6 +16,7 @@ import { overviewHardwareStore } from './composables/useOverviewHardwareData'
 import { useSensorEnhancementController } from './composables/useSensorEnhancementController'
 import { resolveDevPageCopyTarget } from './utils/devPageCopy'
 import {
+  resolveInitialCpuCoresFloatingMode,
   resolveInitialFloatingEntry,
   resolveInitialFloatingMode,
   resolvePageName,
@@ -83,6 +84,7 @@ function syncHash() {
 const currentPage = computed<PageName>(() => resolvePageName(currentHash.value))
 const hasExplicitPageRoute = computed(() => Boolean(currentHash.value.replace(/^#\/?/, '').trim()))
 const initialFloatingMode = computed(() => resolveInitialFloatingMode(currentHash.value))
+const initialCpuCoresFloatingMode = computed(() => resolveInitialCpuCoresFloatingMode(currentHash.value))
 const initialFloatingEntry = computed(() => resolveInitialFloatingEntry(currentHash.value))
 const isWatchPage = computed(() => currentPage.value === 'watch')
 const isCpuCoresWatchPage = computed(() => currentPage.value === 'cpuCoresWatch')
@@ -517,7 +519,7 @@ onUnmounted(() => {
   </div>
 
   <div v-else-if="isCpuCoresWatchPage" class="watch-stage">
-    <CpuCoresWatchView :active="true" :initial-floating-mode="initialFloatingMode" :initial-floating-entry="initialFloatingEntry" />
+    <CpuCoresWatchView :active="true" :initial-floating-mode="initialCpuCoresFloatingMode" :initial-floating-entry="initialFloatingEntry" />
   </div>
 
   <div v-else-if="isMonitorPage" class="monitor-dashboard-stage">

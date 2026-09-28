@@ -328,9 +328,10 @@ export function startWindowsTrayHelper(options = {}) {
         HWINFOX_TRAY_PARENT_PID: String(getTrayHostPid()),
       },
       stdio: ['ignore', 'ignore', 'ignore'],
-      detached: false,
+      detached: true,
       windowsHide: false,
     })
+    child.unref?.()
 
     activeTrayOwnerToken = ownerClaim.token
     activeTrayProcess = child
@@ -392,8 +393,8 @@ export function stopWindowsTrayHelper() {
       }
       setTimeout(() => {
         try {
-          if (proc && proc.exitCode === null && !proc.killed && isProcessAlive(helperPid)) {
-            proc.kill('SIGKILL')
+          if (isProcessAlive(helperPid)) {
+            process.kill(helperPid, 'SIGKILL')
           }
         } catch {
         }

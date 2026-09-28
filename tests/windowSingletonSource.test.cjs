@@ -99,3 +99,15 @@ test('hardware, monitor, specs, menubar settings, standard watch, and super-lite
   assert.match(source, /return typeof fileName === 'string' && fileName\.trim\(\) \? fileName\.trim\(\) : 'window'/)
   assert.doesNotMatch(source, /a_watch_super_lite'\) return 'a_watch'/)
 })
+
+test('production windowUrl must be a clean relative file path without query or hash fragments', () => {
+  const source = readSource('utools/services/window.js')
+
+  assert.match(
+    source,
+    /const windowUrl = runtimeUtools\.isDev\(\)\s*\?\s*`\$\{getDevServerUrl\(\)\}\/index\.html#\$\{windowHash\}`\s*:\s*getProductionWindowUrl\(fileName\)/
+  )
+  assert.doesNotMatch(source, /getProductionWindowUrl\([^)]+\)\s*#/)
+  assert.doesNotMatch(source, /getProductionWindowUrl\([^)]+\)\s*\+/)
+})
+

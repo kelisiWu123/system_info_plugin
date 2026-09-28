@@ -26,6 +26,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'toggle-pin'): void
   (event: 'switch-standard'): void
+  (event: 'switch-game'): void
   (event: 'close-window'): void
 }>()
 
@@ -170,6 +171,15 @@ const footerRightText = computed(() => {
           @click="emit('switch-standard')"
         >
           标准
+        </button>
+        <button
+          type="button"
+          class="super-lite-mode-switch"
+          title="切换到游戏模式 (横条浮窗)"
+          aria-label="切换到游戏模式"
+          @click="emit('switch-game')"
+        >
+          游戏
         </button>
         <button
           type="button"

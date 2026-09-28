@@ -1,6 +1,6 @@
 import { getUtoolsPluginRoot, resolveUtoolsRuntime } from './runtime'
 import { configureSystemServiceContext, systemService } from './services/system'
-import { setupWindowBridge, windowService } from './services/window'
+import { setupWindowBridge, windowService, setMenubarSyncHandler } from './services/window'
 
 setupWindowBridge()
 
@@ -16,6 +16,11 @@ if (typeof runtimeUtools.onPluginOut === 'function') {
   runtimeUtools.onPluginOut((isKill) => {
     if (!isKill) return
 
+    const settings = systemService.getMacMenubarSettings?.()
+    if (settings?.enabled) {
+      return
+    }
+
     systemService.stopMacMenubarRuntime?.()
   })
 }
@@ -28,6 +33,32 @@ if (typeof systemService.setWindowsTrayCommandHandler === 'function') {
       void systemService.updateMacMenubarSettings?.({ enabled: false })
     }
   })
+
+  const initialSettings = systemService.getMacMenubarSettings?.()
+  if (initialSettings?.enabled) {
+    systemService.startMacMenubarTelemetryScheduler?.()
+  }
+}
+
+if (typeof setMenubarSyncHandler === 'function') {
+  setMenubarSyncHandler((reason) => {
+    const settings = systemService.getMacMenubarSettings?.()
+    if (settings?.enabled) {
+      systemService.startMacMenubarTelemetryScheduler?.()
+      void systemService.refreshMacMenubarTelemetry?.({ force: true })
+    } else if (reason === 'sync') {
+      systemService.stopMacMenubarTelemetryScheduler?.()
+    }
+  })
+}
+
+if (typeof systemService.updateMacMenubarSettings === 'function') {
+  const originalUpdateMacMenubarSettings = systemService.updateMacMenubarSettings
+  systemService.updateMacMenubarSettings = async (patch) => {
+    const result = await originalUpdateMacMenubarSettings(patch)
+    windowService.syncMenubarSettings?.()
+    return result
+  }
 }
 
 const windowPresets = {
@@ -71,7 +102,18 @@ window.services = {
 }
 
 async function openPresetWindow(name) {
-  const presetGroup = windowPresets[name] || {}
+  let presetGroup = windowPresets[name] || {}
+  if (name === 'a_watch_cpu_cores') {
+    try {
+      const savedMode = globalThis?.localStorage?.getItem?.('cpu_cores_watch_mode')
+      if (savedMode === 'game') {
+        presetGroup = {
+          prod: { height: 26, width: 660, backgroundColor: 0 },
+          dev: { height: 30, width: 700, backgroundColor: 0 },
+        }
+      }
+    } catch {}
+  }
   const preset = runtimeUtools.isDev() ? presetGroup.dev || presetGroup.prod : presetGroup.prod || presetGroup.dev
 
   try {

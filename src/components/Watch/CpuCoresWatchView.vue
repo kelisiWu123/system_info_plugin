@@ -8,6 +8,7 @@ import {
 } from '../../composables/useProcessorHardwareData'
 import { getCpuHybridCoreCounts, getProcessorDisplayCoreCount } from '../../utils/processor'
 import CpuCoresSuperLiteView from './CpuCoresSuperLiteView.vue'
+import CpuCoresGameView from './CpuCoresGameView.vue'
 
 const props = defineProps<{
   active?: boolean
@@ -15,39 +16,52 @@ const props = defineProps<{
   initialFloatingEntry?: string
 }>()
 
-export type CpuCoresViewMode = 'standard' | 'super-lite'
+export type CpuCoresViewMode = 'standard' | 'super-lite' | 'game'
 
 function getInitialViewMode(): CpuCoresViewMode {
+  // 1. 显式路由参数 / Prop 优先级最高
+  if (props.initialFloatingMode === 'game') {
+    return 'game'
+  }
   if (props.initialFloatingEntry === 'hardwareWatchCpuCoresSuperLite' || props.initialFloatingMode === 'super-lite') {
     return 'super-lite'
   }
-  if (props.initialFloatingEntry === 'hardwareWatchCpuCores' || props.initialFloatingMode === 'standard') {
+
+  const hash = window.location.hash || ''
+  if (hash.includes('floatingMode=game')) {
+    return 'game'
+  }
+  if (hash.includes('floatingMode=super-lite') || hash.includes('hardwareWatchCpuCoresSuperLite')) {
+    return 'super-lite'
+  }
+  if (hash.includes('floatingMode=standard')) {
     return 'standard'
   }
+
+  // 2. 本地持久化模式记忆 (用户主动选中的模式)
+  try {
+    const saved = localStorage.getItem('cpu_cores_watch_mode')
+    if (saved === 'game' || saved === 'standard') {
+      return saved as CpuCoresViewMode
+    }
+  } catch {}
+
+  // 3. 兜底判断路径或窗口当前实际尺寸
   try {
     const path = window.location.pathname || ''
     if (path.includes('a_watch_cpu_cores_super_lite')) return 'super-lite'
-    if (path.includes('a_watch_cpu_cores')) return 'standard'
 
-    const hash = window.location.hash || ''
-    if (hash.includes('floatingMode=super-lite') || hash.includes('hardwareWatchCpuCoresSuperLite')) {
-      return 'super-lite'
-    }
-    if (hash.includes('floatingMode=standard') || hash.includes('hardwareWatchCpuCores')) {
-      return 'standard'
-    }
-    const saved = localStorage.getItem('cpu_cores_watch_mode')
-    if (saved === 'super-lite' || saved === 'standard') {
-      return saved
+    if (window.innerWidth > 500 && window.innerHeight < 200) {
+      return 'game'
     }
   } catch {}
+
   return 'standard'
 }
 
 const pinned = ref(true)
 const viewMode = ref<CpuCoresViewMode>(getInitialViewMode())
 const isHandoffSwitching = ref(false)
-const isUtools = typeof (window as any).utools !== 'undefined'
 
 function switchMode(mode: CpuCoresViewMode) {
   if (isHandoffSwitching.value) return
@@ -57,19 +71,20 @@ function switchMode(mode: CpuCoresViewMode) {
     localStorage.setItem('cpu_cores_watch_mode', mode)
   } catch {}
 
+  viewMode.value = mode
+
   if (mode === 'super-lite') {
     window.services?.resizeWindow?.(200, 200)
+  } else if (mode === 'game') {
+    const isDev = Boolean((window as any).utools?.isDev?.())
+    window.services?.resizeWindow?.(isDev ? 700 : 660, isDev ? 30 : 26)
   } else {
     window.services?.resizeWindow?.(360, 400)
   }
 
-  if (!isUtools) {
-    viewMode.value = mode
-  } else {
-    setTimeout(() => {
-      isHandoffSwitching.value = false
-    }, 2000)
-  }
+  setTimeout(() => {
+    isHandoffSwitching.value = false
+  }, 400)
 }
 
 const {
@@ -83,6 +98,10 @@ const {
 onMounted(() => {
   window.services?.alwaysOnTop?.(pinned.value)
   void activateProcessorHardwareStore()
+  if (viewMode.value === 'game') {
+    const isDev = Boolean((window as any).utools?.isDev?.())
+    window.services?.resizeWindow?.(isDev ? 700 : 660, isDev ? 30 : 26)
+  }
 })
 
 onUnmounted(() => {
@@ -242,6 +261,20 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
     @toggle-pin="togglePin"
     @close-window="closeWindow"
     @switch-standard="switchMode('standard')"
+    @switch-game="switchMode('game')"
+  />
+  <CpuCoresGameView
+    v-else-if="viewMode === 'game'"
+    :core-rows="allCoreRows"
+    :avg-speed-ghz="avgSpeedGhz"
+    :total-load-percent="totalLoadPercent"
+    :package-temp="packageTempNum"
+    :cpu-brand="cpuBrandShort"
+    :hybrid-counts="cpuHybridCoreCounts"
+    :loading="loading"
+    :pinned="pinned"
+    @toggle-pin="togglePin"
+    @close-window="closeWindow"
   />
   <div v-else class="cpu-cores-watch">
     <header class="cpu-cores-watch__header">
@@ -268,6 +301,15 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
           @click="switchMode('super-lite')"
         >
           轻量
+        </button>
+        <button
+          type="button"
+          class="window-action-btn window-action-btn--mode"
+          title="切换到游戏模式 (横条浮窗)"
+          aria-label="切换到游戏模式"
+          @click="switchMode('game')"
+        >
+          游戏
         </button>
         <button
           type="button"

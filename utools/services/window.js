@@ -7,6 +7,11 @@ import { resolveUtoolsRuntime } from '../runtime'
 let parentWindowId
 let currentWindowSingletonKey
 let windowBridgeSetup = false
+let menubarSyncHandler = null
+
+export function setMenubarSyncHandler(handler) {
+  menubarSyncHandler = typeof handler === 'function' ? handler : null
+}
 const singletonActivationWaiters = new Map()
 const runtimeUtools = resolveUtoolsRuntime(typeof utools !== 'undefined' ? utools : undefined)
 const WINDOW_SINGLETON_DIRECTORY = path.join(os.tmpdir(), 'hwinfox-utools-window-singletons-v1')
@@ -232,10 +237,18 @@ function getInitialOpaqueWindowBackgroundColor() {
   }
 }
 
-function getWindowHash(fileName) {
+function getWindowHash(fileName, extraOptions = {}) {
   if (fileName === 'a_watch_super_lite') return 'watch?floatingMode=super-lite&entry=hardwareWatchSuperLite'
   if (fileName === 'a_watch_cpu_cores_super_lite') return 'cpuCoresWatch?floatingMode=super-lite&entry=hardwareWatchCpuCoresSuperLite'
-  if (fileName === 'a_watch_cpu_cores') return 'cpuCoresWatch'
+  if (fileName === 'a_watch_cpu_cores') {
+    if (extraOptions?.floatingMode === 'game') {
+      return 'cpuCoresWatch?floatingMode=game&entry=hardwareWatchCpuCores'
+    }
+    if (extraOptions?.floatingMode === 'standard') {
+      return 'cpuCoresWatch?floatingMode=standard&entry=hardwareWatchCpuCores'
+    }
+    return 'cpuCoresWatch'
+  }
   if (fileName === 'a_monitor') return 'monitor'
   if (fileName === 'a_specs_lite') return 'deviceSpecs'
   if (fileName === 'a_menubar_settings') return 'menubarSettings'
@@ -296,7 +309,7 @@ function buildChildWindowOptions(fileName, height, width, backgroundColor, extra
 function buildChildWindowConfig(fileName, height, width, backgroundColor, extraOptions = {}) {
   return {
     singletonKey: getWindowSingletonKey(fileName),
-    hash: getWindowHash(fileName),
+    hash: getWindowHash(fileName, extraOptions),
     options: buildChildWindowOptions(fileName, height, width, backgroundColor, extraOptions),
   }
 }
@@ -375,11 +388,47 @@ function bindChildWindowEvents(childWindow, singletonKey, singletonToken) {
     }
   }
 
-  const handleResizeWindow = (event, { width, height }) => {
+  const handleResizeWindow = (event, { width, height, x, y }) => {
     if (event.senderId === childWindowId && !childWindow.isDestroyed()) {
       if (Number.isFinite(width) && Number.isFinite(height)) {
-        childWindow.setContentSize(Math.round(width), Math.round(height))
+        const targetW = Math.round(width)
+        const targetH = Math.round(height)
+        try {
+          const wasResizable = childWindow.isResizable?.() ?? false
+          if (!wasResizable && typeof childWindow.setResizable === 'function') {
+            childWindow.setResizable(true)
+          }
+          if (Number.isFinite(x) && Number.isFinite(y) && typeof childWindow.setBounds === 'function') {
+            childWindow.setBounds({
+              x: Math.round(x),
+              y: Math.round(y),
+              width: targetW,
+              height: targetH,
+            })
+          } else if (typeof childWindow.setContentSize === 'function') {
+            childWindow.setContentSize(targetW, targetH)
+          } else if (typeof childWindow.setSize === 'function') {
+            childWindow.setSize(targetW, targetH)
+          }
+          if (typeof childWindow.getContentSize === 'function') {
+            const [curW, curH] = childWindow.getContentSize()
+            if (curW !== targetW || curH !== targetH) {
+              childWindow.setSize?.(targetW, targetH)
+            }
+          }
+          if (!wasResizable && typeof childWindow.setResizable === 'function') {
+            childWindow.setResizable(false)
+          }
+        } catch {
+          childWindow.setContentSize?.(targetW, targetH)
+        }
       }
+    }
+  }
+
+  const handleSyncMenubarSettings = (event) => {
+    if (event.senderId === childWindowId) {
+      menubarSyncHandler?.('sync')
     }
   }
 
@@ -389,6 +438,7 @@ function bindChildWindowEvents(childWindow, singletonKey, singletonToken) {
   ipcRenderer.on('minimize-window', handleMinimizeWindow)
   ipcRenderer.on('toggle-maximize-window', handleToggleMaximizeWindow)
   ipcRenderer.on('resize-window', handleResizeWindow)
+  ipcRenderer.on('sync-menubar-settings', handleSyncMenubarSettings)
 
   const cleanup = () => {
     if (cleanedUp) return
@@ -401,6 +451,8 @@ function bindChildWindowEvents(childWindow, singletonKey, singletonToken) {
     ipcRenderer.removeListener('minimize-window', handleMinimizeWindow)
     ipcRenderer.removeListener('toggle-maximize-window', handleToggleMaximizeWindow)
     ipcRenderer.removeListener('resize-window', handleResizeWindow)
+    ipcRenderer.removeListener('sync-menubar-settings', handleSyncMenubarSettings)
+    menubarSyncHandler?.('child-closed')
   }
 
   // uTools returns a BrowserWindow proxy without Electron instance events.
@@ -557,6 +609,7 @@ export const windowService = {
   },
 
   closeWindow: () => {
+    removeWindowSingletonRecord(getCurrentWindowSingletonKey())
     // Self-close works even before init arrives or after the parent disappears.
     if (runtimeUtools.getWindowType?.() === 'browser') {
       globalThis.close()
@@ -608,12 +661,17 @@ export const windowService = {
 
       if (currentKey === 'a_watch_cpu_cores_super_lite' && width >= 300) {
         const isDev = runtimeUtools.isDev?.()
-        const targetWidth = isDev ? 380 : 360
-        const targetHeight = isDev ? 420 : 400
+        const isGameMode = width > 500 || height < 200
+        const targetWidth = isGameMode ? width : (isDev ? 380 : 360)
+        const targetHeight = isGameMode ? height : (isDev ? 420 : 400)
         const position = calculateHandoffPosition(targetWidth, targetHeight)
         void (async () => {
           try {
-            await windowService.createWindow('a_watch_cpu_cores', targetHeight, targetWidth, 0, position)
+            removeWindowSingletonRecord('a_watch_cpu_cores')
+            await windowService.createWindow('a_watch_cpu_cores', targetHeight, targetWidth, 0, {
+              ...position,
+              floatingMode: isGameMode ? 'game' : 'standard',
+            })
             windowService.closeWindow()
           } catch (e) {
             console.error('切换标准CPU核心监控窗口失败:', e)
@@ -622,21 +680,25 @@ export const windowService = {
         return
       }
 
-      if (currentKey === 'a_watch_cpu_cores' && width <= 250) {
-        const position = calculateHandoffPosition(200, 200)
-        void (async () => {
-          try {
-            await windowService.createWindow('a_watch_cpu_cores_super_lite', 200, 200, 0, position)
-            windowService.closeWindow()
-          } catch (e) {
-            console.error('切换超轻量CPU核心监控窗口失败:', e)
-          }
-        })()
-        return
+      if (currentKey === 'a_watch_cpu_cores') {
+        if (width <= 250) {
+          const position = calculateHandoffPosition(200, 200)
+          void (async () => {
+            try {
+              removeWindowSingletonRecord('a_watch_cpu_cores_super_lite')
+              await windowService.createWindow('a_watch_cpu_cores_super_lite', 200, 200, 0, position)
+              windowService.closeWindow()
+            } catch (e) {
+              console.error('切换超轻量CPU核心监控窗口失败:', e)
+            }
+          })()
+          return
+        }
       }
     }
 
-    sendCurrentWindowAction('resize-window', 'resize', { width, height })
+    const position = calculateHandoffPosition(width, height)
+    sendCurrentWindowAction('resize-window', 'resize', { width, height, ...position })
   },
 
   createWindow: async (fileName, height = 300, width = 300, backgroundColor = 0.3, extraOptions = {}) => {
@@ -751,5 +813,9 @@ export const windowService = {
 
   creatSomething: (fileName, height, width, backgroundColor) => {
     return windowService.createWindow(fileName, height, width, backgroundColor)
+  },
+
+  syncMenubarSettings: () => {
+    sendCurrentWindowAction('sync-menubar-settings', 'sync-menubar-settings')
   },
 }

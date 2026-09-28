@@ -1,5 +1,6 @@
 export type PageName = 'computer' | 'watch' | 'monitor' | 'deviceSpecs' | 'menubarSettings' | 'cpuCoresWatch'
 export type FloatingMonitorMode = 'standard' | 'super-lite'
+export type CpuCoresFloatingMode = 'standard' | 'super-lite' | 'game'
 export type FloatingMonitorEntry =
   | 'hardwareWatch'
   | 'hardwareWatchSuperLite'
@@ -34,6 +35,19 @@ export function resolveInitialFloatingMode(hash: string): FloatingMonitorMode {
     || query.get('entry') === 'hardwareWatchCpuCoresSuperLite'
     ? 'super-lite'
     : 'standard'
+}
+
+export function resolveInitialCpuCoresFloatingMode(hash: string): CpuCoresFloatingMode {
+  const query = getHashRoute(hash).query
+  const mode = query.get('floatingMode')
+  if (mode === 'game') return 'game'
+  if (
+    mode === 'super-lite' ||
+    query.get('entry') === 'hardwareWatchCpuCoresSuperLite'
+  ) {
+    return 'super-lite'
+  }
+  return 'standard'
 }
 
 export function resolveInitialFloatingEntry(hash: string): FloatingMonitorEntry {

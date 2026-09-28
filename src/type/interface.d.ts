@@ -417,6 +417,9 @@ declare global {
       startMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean; pid?: number | null; shared?: boolean }>
       stopMacMenubarHelper: () => Promise<{ ok: boolean; running: boolean }>
       stopMacMenubarRuntime: () => Promise<{ ok: boolean; running: boolean }>
+      startMacMenubarTelemetryScheduler?: () => void
+      stopMacMenubarTelemetryScheduler?: () => void
+      syncMenubarSettings?: () => void
       getCpuInfo: () => Promise<CpuData | undefined>
       getCpuFullLoad: () => Promise<number>
       getCpuTemperature: () => Promise<CpuTemperatureData | undefined>

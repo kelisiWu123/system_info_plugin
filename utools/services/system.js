@@ -1279,7 +1279,7 @@ function tryAcquireMacMenubarTelemetryScheduler() {
 
       try {
         // The winner may still be publishing its first ownership record.
-        if (Date.now() - fs.statSync(MACOS_MENUBAR_SCHEDULER_LOCK_PATH).mtimeMs < MACOS_MENUBAR_SCHEDULER_STALE_MS) return false
+        if (!current && Date.now() - fs.statSync(MACOS_MENUBAR_SCHEDULER_LOCK_PATH).mtimeMs < MACOS_MENUBAR_SCHEDULER_STALE_MS) return false
         fs.unlinkSync(MACOS_MENUBAR_SCHEDULER_LOCK_PATH)
       } catch {
         return false
@@ -1300,7 +1300,7 @@ async function runMacMenubarTelemetrySchedulerTick() {
   await refreshMacMenubarTelemetry()
 }
 
-function startMacMenubarTelemetryScheduler() {
+export function startMacMenubarTelemetryScheduler() {
   if ((!isMacOS() && !isWindows()) || macMenubarTelemetrySchedulerTimer) return
 
   macMenubarTelemetrySchedulerTimer = setInterval(() => {
@@ -1310,7 +1310,7 @@ function startMacMenubarTelemetryScheduler() {
   void runMacMenubarTelemetrySchedulerTick()
 }
 
-function stopMacMenubarTelemetryScheduler() {
+export function stopMacMenubarTelemetryScheduler() {
   if (macMenubarTelemetrySchedulerTimer) {
     clearInterval(macMenubarTelemetrySchedulerTimer)
     macMenubarTelemetrySchedulerTimer = undefined
@@ -4667,6 +4667,10 @@ export const systemService = {
   },
 
   setWindowsTrayCommandHandler: (handler) => setWindowsTrayCommandHandler(handler),
+
+  startMacMenubarTelemetryScheduler: () => startMacMenubarTelemetryScheduler(),
+
+  stopMacMenubarTelemetryScheduler: () => stopMacMenubarTelemetryScheduler(),
 
   stopMacMenubarRuntime: () => stopMacMenubarRuntime(),
 
