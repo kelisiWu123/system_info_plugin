@@ -59,7 +59,7 @@ function closeWindow() {
   position: relative;
   width: 34px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--control-compact-radius);
   color: var(--text-muted);
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;

@@ -4,6 +4,7 @@ import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import { clampPercent, formatBytes, formatSpeed, getDisplayStorageVolumes, getPhysicalDiskLayout, getPhysicalDiskTotalBytes, hasDiskHealthTelemetry } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
+import HardwareIdentity from '../common/HardwareIdentity.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 import { getServiceErrorDescription } from '../../utils/serviceReader'
 
@@ -72,12 +73,12 @@ const selectedDiskId = ref('')
 const isDarwin = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
 
 const pageStateBlock = computed(() => {
-  if (fetchState.diskData.status === 'error' || fetchState.diskLayout.status === 'error') {
+  if (fetchState.diskData.status === 'error' || fetchState.diskLayout.status === 'error' || fetchState.storageIo.status === 'error') {
     return {
       variant: 'error' as const,
-      title: '存储数据读取失败',
+      title: diskData.value.length || diskLayoutData.value.length ? '部分数据暂未更新，保留上次读数' : '存储数据读取失败',
       description: getServiceErrorDescription(
-        fetchState.diskLayout.note || fetchState.diskData.note,
+        fetchState.diskLayout.note || fetchState.diskData.note || fetchState.storageIo.note,
         '读取物理磁盘或挂载卷信息时发生异常，可以重试该模块。'
       ),
       actionLabel: '重试该模块',
@@ -299,7 +300,7 @@ const overviewCards = computed<OverviewCard[]>(() => {
   const cards: OverviewCard[] = [
     {
       label: '设备数量',
-      value: `${physicalDisks.value.length}`,
+      value: fetchState.diskLayout.status === 'pending' ? '读取中' : `${physicalDisks.value.length}`,
       subvalue: `${volumeRows.value.length} 个挂载卷`,
       tone: 'blue',
     },
@@ -311,8 +312,8 @@ const overviewCards = computed<OverviewCard[]>(() => {
     },
     {
       label: '接口类型',
-      value: `${interfaceTypes.value.length || 0} 种`,
-      subvalue: interfaceTypes.value.join(' / ') || '--',
+      value: fetchState.diskLayout.status === 'pending' ? '读取中' : interfaceTypes.value.length ? `${interfaceTypes.value.length} 种` : '--',
+      subvalue: interfaceTypes.value.join(' / ') || '磁盘信息读取完成后显示',
       tone: 'amber',
     },
     {
@@ -456,7 +457,7 @@ useActivePageLifecycle(
 <template>
   <div class="storage-page">
     <StateBlock
-      v-if="loading"
+      v-if="loading && !diskData.length && !diskLayoutData.length"
       variant="loading"
       title="正在同步存储数据"
       description="正在读取物理磁盘、挂载卷、容量和健康状态信息。"
@@ -464,18 +465,18 @@ useActivePageLifecycle(
       @retry="retryStoragePage"
     />
 
-    <StateBlock
-      v-else-if="pageStateBlock"
-      :variant="pageStateBlock.variant"
-      :title="pageStateBlock.title"
-      :description="pageStateBlock.description"
-      :action-label="pageStateBlock.actionLabel"
-      @retry="retryStoragePage"
-    />
-
     <template v-else>
+      <StateBlock
+        v-if="pageStateBlock"
+        :variant="pageStateBlock.variant"
+        :title="pageStateBlock.title"
+        :description="pageStateBlock.description"
+        :action-label="pageStateBlock.actionLabel"
+        @retry="retryStoragePage"
+      />
+
       <section class="storage-section">
-        <div class="storage-section__header">
+        <div class="storage-section__header hardware-section-heading">
           <h2>存储概览</h2>
           <span>最近同步：{{ formatSyncTime(lastSyncedAt) }}</span>
         </div>
@@ -490,7 +491,7 @@ useActivePageLifecycle(
       </section>
 
       <section class="storage-section">
-        <div class="storage-section__header">
+        <div class="storage-section__header hardware-section-heading">
           <h2>存储设备列表</h2>
           <span>物理磁盘口径，不与卷占用做强匹配</span>
         </div>
@@ -524,15 +525,20 @@ useActivePageLifecycle(
           </button>
         </div>
 
-        <div v-else class="storage-empty storage-empty--inline">未识别到物理存储设备。</div>
+        <div v-else class="storage-empty storage-empty--inline">
+          {{ fetchState.diskLayout.status === 'pending' ? '正在读取物理磁盘信息…' : '未识别到物理存储设备。' }}
+        </div>
       </section>
 
       <section v-if="selectedDisk" class="storage-section storage-focus-card">
         <div class="storage-focus-card__main">
           <div class="storage-focus-card__title">
-            <div>
+            <div class="storage-focus-card__identity">
+              <HardwareIdentity kind="storage" />
+              <div>
               <h2>{{ selectedDisk.name }}</h2>
-              <p>{{ selectedDisk.type }} / {{ selectedDisk.interfaceType }} / {{ selectedDisk.protocol }}</p>
+              <p>{{ selectedDisk.type }} / {{ selectedDisk.interfaceType }}</p>
+              </div>
             </div>
             <div v-if="selectedDisk.healthText && selectedDisk.healthVariant" class="storage-focus-card__health">
               <span :class="['health-chip', `health-chip--${selectedDisk.healthVariant}`]">{{ selectedDisk.healthText }}</span>
@@ -557,12 +563,17 @@ useActivePageLifecycle(
         </div>
 
         <div class="storage-usage-panel">
-          <div class="storage-usage-ring" :style="selectedDiskRingStyle">
+          <div v-if="!isDarwin && selectedDiskMountedUsage" class="storage-usage-ring" :style="selectedDiskRingStyle">
             <div class="storage-usage-ring__inner">
               <span>{{ isDarwin ? '卷聚合' : selectedDiskMountedUsage ? '挂载卷已用' : '卷占用' }}</span>
               <strong>{{ isDarwin ? '暂不显示' : selectedDiskMountedUsage ? formatBytes(selectedDiskMountedUsage.used) : '--' }}</strong>
               <small>{{ isDarwin ? 'macOS' : selectedDiskMountedUsage ? formatPercent(selectedDiskMountedUsage.percent) : '未映射' }}</small>
             </div>
+          </div>
+
+          <div v-if="isDarwin || !selectedDiskMountedUsage" class="storage-usage-unavailable">
+            <strong>卷占用暂无对应读数</strong>
+            <p>{{ isDarwin ? 'macOS 未提供可靠的物理磁盘与挂载卷映射，请查看下方挂载卷信息。' : '当前磁盘未映射到挂载卷。' }}</p>
           </div>
 
           <div class="storage-usage-legend">
@@ -584,7 +595,7 @@ useActivePageLifecycle(
 
       <div class="storage-lower-grid">
         <section class="storage-section">
-          <div class="storage-section__header">
+          <div class="storage-section__header hardware-section-heading">
             <h2>挂载卷信息</h2>
             <span>系统卷口径</span>
           </div>
@@ -614,7 +625,7 @@ useActivePageLifecycle(
         </section>
 
         <section v-if="selectedDisk?.smartRows.length" class="storage-section">
-          <div class="storage-section__header">
+          <div class="storage-section__header hardware-section-heading">
             <h2>SMART 摘要</h2>
             <span>仅展示当前数据源实际提供的属性</span>
           </div>
@@ -643,7 +654,7 @@ useActivePageLifecycle(
 
       <div class="storage-bottom-grid">
         <section class="storage-section">
-          <div class="storage-section__header">
+          <div class="storage-section__header hardware-section-heading">
             <h2>控制器与卷汇总</h2>
             <span>按当前系统返回聚合</span>
           </div>
@@ -669,7 +680,7 @@ useActivePageLifecycle(
         </section>
 
         <section class="storage-section">
-          <div class="storage-section__header">
+          <div class="storage-section__header hardware-section-heading">
             <h2>功能支持</h2>
             <span>基于当前选中磁盘</span>
           </div>
@@ -737,8 +748,8 @@ useActivePageLifecycle(
   min-height: 110px;
   padding: 18px;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 14px;
-  background: var(--surface-section-background);
+  border-radius: var(--tile-radius);
+  background: var(--surface-soft-background);
 }
 
 .storage-overview-card__label {
@@ -748,7 +759,9 @@ useActivePageLifecycle(
 
 .storage-overview-card__value {
   color: var(--text-primary);
-  font-size: 30px;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   font-weight: 700;
   line-height: 1;
 }
@@ -781,10 +794,9 @@ useActivePageLifecycle(
   display: flex;
   flex-direction: column;
   gap: 0;
-  border: 1px solid rgba(65, 80, 102, 0.32);
-  border-radius: 14px;
+  border: 0;
   overflow: hidden;
-  background: var(--surface-section-background);
+  background: transparent;
 }
 
 .storage-device-row,
@@ -799,9 +811,9 @@ useActivePageLifecycle(
 
 .storage-device-row {
   width: 100%;
-  padding: 14px 16px;
+  padding: 10px 12px;
   border: 0;
-  border-top: 1px solid rgba(58, 72, 94, 0.26);
+  border-top: 1px solid var(--panel-border-soft);
   background: transparent;
   color: var(--text-secondary);
   text-align: left;
@@ -890,6 +902,21 @@ useActivePageLifecycle(
   gap: 20px;
 }
 
+.storage-focus-card__identity {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.storage-usage-unavailable {
+  padding: 16px;
+  border-radius: var(--tile-radius);
+  background: var(--surface-soft-background);
+}
+.storage-usage-unavailable strong { color: var(--text-muted); font-size: 14px; font-weight: 600; }
+.storage-usage-unavailable p { margin: 8px 0 0; color: var(--text-subtle); font-size: 12px; line-height: 1.6; }
+
 .storage-focus-card__main {
   display: flex;
   flex-direction: column;
@@ -902,7 +929,7 @@ useActivePageLifecycle(
   justify-content: space-between;
   gap: 16px;
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(64, 79, 101, 0.3);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   h2 {
     margin: 0;
@@ -1015,7 +1042,7 @@ useActivePageLifecycle(
     justify-content: space-between;
     gap: 12px;
     padding-bottom: 10px;
-    border-bottom: 1px solid rgba(59, 74, 96, 0.28);
+    border-bottom: 1px solid var(--panel-border-soft);
   }
 
   span {
@@ -1062,7 +1089,7 @@ useActivePageLifecycle(
 .storage-smart-row {
   color: var(--text-secondary);
   font-size: 13px;
-  border-top: 1px solid rgba(58, 72, 94, 0.26);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .storage-volume-row > *,
@@ -1139,7 +1166,7 @@ useActivePageLifecycle(
   justify-content: center;
   min-height: 180px;
   border: 1px dashed rgba(79, 97, 126, 0.42);
-  border-radius: 18px;
+  border-radius: var(--surface-radius);
   color: var(--text-muted);
   font-size: 14px;
   background: var(--surface-detail-background);

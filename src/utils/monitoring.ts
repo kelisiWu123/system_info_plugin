@@ -1,3 +1,4 @@
+import { isNewMetricSample } from './metricRefresh'
 import { reactive } from 'vue'
 import { clampPercent } from '../utils'
 
@@ -113,7 +114,8 @@ export function getMonitoringRefreshIntervals(profile: MonitoringRefreshProfile,
   }
 }
 
-export function appendMetricHistory(history: number[], value: number, clamp = false, limit = 24) {
+export function appendMetricHistory(history: number[], value: number, clamp = false, limit = 24, sampledAt?: number) {
+  if (!isNewMetricSample(history, sampledAt)) return history
   const nextValue = clamp ? clampPercent(value) : Number.isFinite(value) ? value : 0
   history.push(nextValue)
 

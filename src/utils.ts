@@ -1,6 +1,6 @@
 function bytesToGB(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0.00'
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2)
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0'
+  return String(Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10)
 }
 
 function mbToGB(megabytes: number): string {
@@ -31,7 +31,7 @@ function formatBytes(bytes: number): string {
   }
 
   const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2
-  return `${value.toFixed(digits)} ${units[unitIndex]}`
+  return `${Number(value.toFixed(digits))} ${units[unitIndex]}`
 }
 
 function formatSpeed(bytesPerSecond: number | null | undefined): string {
@@ -73,6 +73,7 @@ function formatDisplayResolution(display?: DisplayData): string {
 
 function getDisplayCpuCurrentSpeedGHz(speed?: CpuCurrentSpeedData | null, platform?: string): number {
   if (!speed) return 0
+  if (typeof speed.displayGHz === 'number' && Number.isFinite(speed.displayGHz)) return speed.displayGHz
 
   const validCoreSpeeds = Array.isArray(speed.cores)
     ? speed.cores.filter((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)

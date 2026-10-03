@@ -40,7 +40,7 @@ test('copy actions use one consistent user-facing term', () => {
   assert.doesNotMatch(copyTarget, /拷贝/)
 })
 
-test('advanced refresh controls stay in monitoring while sensor controls are limited to CPU and GPU details', () => {
+test('advanced refresh controls stay in monitoring while sensor controls remain available throughout supported hardware pages', () => {
   const app = readSource('src/App.vue')
   const monitor = readSource('src/components/MonitoringDashboard/index.vue')
   const sensorController = readSource('src/composables/useSensorEnhancementController.ts')
@@ -49,7 +49,8 @@ test('advanced refresh controls stay in monitoring while sensor controls are lim
   assert.doesNotMatch(app, /切换后台降频/)
   assert.match(monitor, /monitor-profile-button/)
   assert.match(monitor, /后台降频/)
-  assert.match(app, /selectedSection\.value === 'processor' \|\| selectedSection\.value === 'graphics'/)
+  assert.match(app, /const sensorControlVisible = computed\(\(\) =>\s*currentPage\.value === 'computer'\s*&& sensorEnhancementPlatform\.value !== 'unsupported'/)
+  assert.match(app, /v-if="sensorControlVisible"/)
   assert.match(sensorController, /getSensorEnhancementMenuAriaLabel/)
   assert.match(app, /:aria-label="processorSensorControlAriaLabel"/)
   assert.match(app, /copySensorDiagnostics/)
@@ -82,10 +83,10 @@ test('overview, processor, and board pages use the shared StateBlock component',
 
   assert.match(stateBlock, /defineProps/)
   assert.match(stateBlock, /variant: 'loading' \| 'empty' \| 'error' \| 'soon'/)
-  assert.match(overview, /<StateBlock[\s\S]*v-if="!loading && pageStateBlock"/)
+  assert.match(overview, /<StateBlock[\s\S]*v-if="pageStateBlock"/)
   assert.match(overview, /class="overview-progress"/)
   assert.match(processor, /<StateBlock[\s\S]*@retry="retryProcessorPage"/)
-  assert.match(board, /<StateBlock[\s\S]*variant="soon"/)
+  assert.match(board, /v-if="activeTab === 'usb'"\s+variant="empty"\s+compact/)
 })
 
 test('stores expose explicit force-refresh retry entrypoints for state blocks', () => {

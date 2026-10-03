@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import StateBlock from '../common/StateBlock.vue'
+import HardwareIdentity from '../common/HardwareIdentity.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 import { getServiceErrorDescription } from '../../utils/serviceReader'
 import { buildMemorySlotLabels, getMemoryChannel } from '../../utils/memory'
@@ -17,7 +18,6 @@ import {
   getDisplayMemoryUsedBytes,
   getDisplayMemoryUsedLabel,
   getInstalledMemoryBytes,
-  getMemoryPressureAccent,
   getMemoryPressureDescription,
   getMemoryPressureLabel,
 } from '../../utils'
@@ -58,7 +58,7 @@ const pageStateBlock = computed(() => {
   if (fetchState.memInfo.status === 'error' || fetchState.memoryLayout.status === 'error') {
     return {
       variant: 'error' as const,
-      title: '内存数据读取失败',
+      title: memoData.value.total ? '部分数据暂未更新，保留上次读数' : '内存数据读取失败',
       description: getServiceErrorDescription(
         fetchState.memInfo.note || fetchState.memoryLayout.note,
         '读取内存占用或模组布局时发生异常，可以重试该模块。'
@@ -159,9 +159,13 @@ const swapUsedGB = computed(() => bytesToGBNumber(memoData.value.swapused || 0))
 const pressureLevel = computed(() => memoData.value.pressure?.level || 'unknown')
 const pressureLabel = computed(() => getMemoryPressureLabel(pressureLevel.value))
 const pressureDescription = computed(() => getMemoryPressureDescription(pressureLevel.value))
-const pressureAccent = computed(() => getMemoryPressureAccent(pressureLevel.value))
+const pressureAccent = computed(() => ({
+  normal: 'var(--state-good-fg)', warning: 'var(--state-warn-fg)',
+  critical: 'var(--accent-orange)', unknown: 'var(--text-muted)',
+})[pressureLevel.value || 'unknown'])
 const moduleCount = computed(() => memoryModules.value.length)
-const slotCount = computed(() => Math.max(boardData.value?.memSlots || 0, memoLayoutData.value.length))
+const isAppleUnifiedMemory = computed(() => memoData.value.normalizedPlatform === 'darwin' && /LPDDR/i.test(memoryType.value))
+const slotCount = computed(() => isAppleUnifiedMemory.value ? 0 : Math.max(boardData.value?.memSlots || 0, memoLayoutData.value.length))
 const memoryType = computed(() => cleanText(memoryModules.value[0]?.type) || cleanText(memoLayoutData.value[0]?.type) || '--')
 const memoryManufacturer = computed(() => cleanText(memoryModules.value[0]?.manufacturer) || '--')
 const memorySeries = computed(() => normalizeKitPart(memoryModules.value[0]?.partNum))
@@ -169,6 +173,7 @@ const memoryConfiguredVoltage = computed(() => safeNumber(memoryModules.value[0]
 const memoryClock = computed(() => Math.max(0, ...memoLayoutData.value.map((item) => item.clockSpeed || 0)))
 const memoryActualClock = computed(() => (memoryClock.value > 0 ? Math.round(memoryClock.value / 2) : 0))
 const eccState = computed(() => {
+  if (isAppleUnifiedMemory.value) return '系统未提供'
   const value = memoryModules.value[0]?.ecc
   if (value === true) return '支持'
   if (value === false) return '不支持'
@@ -178,13 +183,13 @@ const formFactor = computed(() => cleanText(memoryModules.value[0]?.formFactor) 
 const kitSummary = computed(() => {
   if (!moduleCount.value) return '未识别到可用内存模组'
   const sizes = memoryModules.value.map((item) => `${bytesToGB(item.size)} GB`)
-  return `${installedMemoryGB.value} GB (${sizes.join(' + ')}) ${memoryType.value}`
+  const moduleBreakdown = sizes.length > 1 ? ` (${sizes.join(' + ')})` : ''
+  return `${installedMemoryGB.value} GB${moduleBreakdown} ${memoryType.value}`
 })
 
 const statusStats = computed<SummaryStat[]>(() => {
   if (memoData.value.normalizedPlatform === 'darwin') {
     return [
-      { label: displayMemoryCapacityLabel.value, value: `${displayMemoryCapacityGB.value} GB`, accent: 'var(--accent-purple)' },
       { label: '内存压力', value: pressureLabel.value, accent: pressureAccent.value },
       { label: usedMemoryLabel.value, value: `${usedMemoryGB.value} GB`, accent: 'var(--accent-purple)', barPercent: usagePercent.value },
       { label: availableMemoryLabel.value, value: `${freeMemoryGB.value} GB`, accent: 'var(--accent-cyan)', barPercent: clampPercent((freeMemoryGB.value / Math.max(systemMemoryGB.value, 1)) * 100) },
@@ -196,22 +201,24 @@ const statusStats = computed<SummaryStat[]>(() => {
     { label: '使用率', value: formatUsage(usagePercent.value), accent: 'var(--accent-blue)' },
     { label: usedMemoryLabel.value, value: `${usedMemoryGB.value} GB`, accent: 'var(--accent-purple)', barPercent: usagePercent.value },
     { label: availableMemoryLabel.value, value: `${freeMemoryGB.value} GB`, accent: 'var(--accent-blue)', barPercent: clampPercent((freeMemoryGB.value / Math.max(systemMemoryGB.value, 1)) * 100) },
-    { label: '当前频率', value: formatFrequency(memoryClock.value), accent: 'var(--accent-cyan)' },
-    { label: '模组数量', value: `${moduleCount.value} / ${slotCount.value || moduleCount.value}`, accent: 'var(--accent-green)' },
-    { label: displayMemoryCapacityLabel.value, value: `${displayMemoryCapacityGB.value} GB`, accent: 'var(--accent-purple)' },
+    { label: '已使用交换', value: `${swapUsedGB.value} GB`, accent: 'var(--accent-yellow)' },
   ]
 })
 
 const timingRows = computed(() => [
   { label: '频率', value: formatFrequency(memoryClock.value) },
   { label: '实际频率', value: memoryActualClock.value ? `${memoryActualClock.value} MHz` : '--' },
-  { label: '配置电压', value: formatVoltage(memoryConfiguredVoltage.value) },
-  { label: '最小电压', value: formatVoltage(memoryModules.value[0]?.voltageMin) },
-  { label: '最大电压', value: formatVoltage(memoryModules.value[0]?.voltageMax) },
-  { label: 'ECC', value: eccState.value },
-  { label: '封装', value: formFactor.value },
-  { label: '模组数', value: `${moduleCount.value}` },
-  { label: '插槽数', value: `${slotCount.value || moduleCount.value}` },
+  ...(!isAppleUnifiedMemory.value
+    ? [
+        { label: '配置电压', value: formatVoltage(memoryConfiguredVoltage.value) },
+        { label: '最小电压', value: formatVoltage(memoryModules.value[0]?.voltageMin) },
+        { label: '最大电压', value: formatVoltage(memoryModules.value[0]?.voltageMax) },
+        { label: 'ECC', value: eccState.value },
+        { label: '封装', value: formFactor.value },
+        { label: '模组数', value: `${moduleCount.value}` },
+        { label: '插槽数', value: `${slotCount.value || moduleCount.value}` },
+      ]
+    : [{ label: '封装方式', value: 'Apple Silicon SoC 集成' }]),
   { label: '制造商', value: memoryManufacturer.value },
   { label: '型号', value: memorySeries.value },
   { label: displayMemoryCapacityLabel.value, value: `${displayMemoryCapacityGB.value} GB` },
@@ -222,7 +229,7 @@ const slotRows = computed<SlotRow[]>(() => {
   const slotLabels = buildMemorySlotLabels(total, memoLayoutData.value)
   return Array.from({ length: total }, (_, index) => {
     const item = memoLayoutData.value[index]
-    const slot = slotLabels[index]
+    const slot = isAppleUnifiedMemory.value ? 'SoC 集成内存' : slotLabels[index]
       || cleanText(item?.bank)
       || `DIMM_${String.fromCharCode(65 + Math.floor(index / 2))}${(index % 2) + 1}`
     const installed = Boolean(item?.size)
@@ -231,13 +238,14 @@ const slotRows = computed<SlotRow[]>(() => {
       size: installed && item ? `${bytesToGB(item.size)} GB` : '-',
       typeSpeed: installed && item ? joinParts([item.type, item.clockSpeed ? `${item.clockSpeed} MHz` : ''], ' / ') || '--' : '-',
       manufacturerModel: installed && item ? joinParts([item.manufacturer, normalizeKitPart(item.partNum)], ' / ') || '--' : '-',
-      status: installed ? '已启用' : '空闲',
+      status: isAppleUnifiedMemory.value ? '不可拆卸' : installed ? '已启用' : '空闲',
       installed,
     }
   })
 })
 
 const memoryChannels = computed(() => {
+  if (isAppleUnifiedMemory.value) return []
   const groups = new Map<string, SlotRow[]>()
   slotRows.value.forEach((row, index) => {
     const key = getMemoryChannel(row.slot, index)
@@ -255,6 +263,7 @@ const memoryChannels = computed(() => {
 })
 
 const channelSummary = computed(() => {
+  if (isAppleUnifiedMemory.value) return '统一内存，不适用 DIMM 通道'
   const count = memoryChannels.value.length
   if (count >= 4) return '四通道'
   if (count === 3) return '三通道'
@@ -266,14 +275,14 @@ const channelSummary = computed(() => {
 const detailRows = computed(() => [
   { label: '内存类型', value: memoryType.value },
   { label: '内存频率', value: memoryClock.value ? `${memoryActualClock.value} MHz (实际) / ${memoryClock.value} MHz (等效)` : '--' },
-  { label: '内存电压', value: formatVoltage(memoryConfiguredVoltage.value) },
-  { label: 'XMP / EXPO', value: '系统未提供' },
-  { label: '位宽', value: '64-bit' },
+  { label: '内存电压', value: isAppleUnifiedMemory.value ? '系统未单独提供' : formatVoltage(memoryConfiguredVoltage.value) },
+  { label: 'XMP / EXPO', value: isAppleUnifiedMemory.value ? '不适用' : '系统未提供' },
+  { label: '位宽', value: '系统未提供' },
   { label: 'ECC', value: eccState.value },
-  { label: 'Registered', value: '系统未提供' },
+  { label: 'Registered', value: isAppleUnifiedMemory.value ? '不适用' : '系统未提供' },
   { label: '内存颗粒', value: memoryManufacturer.value },
   { label: 'SPD 型号', value: memorySeries.value },
-  { label: '插槽占用', value: `${moduleCount.value} / ${slotCount.value || moduleCount.value}` },
+  { label: isAppleUnifiedMemory.value ? '内存封装' : '插槽占用', value: isAppleUnifiedMemory.value ? 'SoC 集成，不适用 DIMM 插槽' : `${moduleCount.value} / ${slotCount.value || moduleCount.value}` },
   { label: '制造信息', value: cleanText(memoryModules.value[0]?.serialNum) || '--' },
   { label: '已安装容量', value: installedMemoryGB.value ? `${installedMemoryGB.value} GB` : '--' },
   { label: '系统可见总量', value: systemMemoryGB.value ? `${systemMemoryGB.value} GB` : '--' },
@@ -367,7 +376,7 @@ useActivePageLifecycle(
 <template>
   <div class="memory-page">
     <StateBlock
-      v-if="loading"
+      v-if="loading && !memoData.total && !memoLayoutData.length"
       variant="loading"
       title="正在同步内存数据"
       description="正在读取内存占用、模组布局、频率和插槽信息。"
@@ -375,24 +384,20 @@ useActivePageLifecycle(
       @retry="retryMemoryPage"
     />
 
-    <StateBlock
-      v-else-if="pageStateBlock"
-      :variant="pageStateBlock.variant"
-      :title="pageStateBlock.title"
-      :description="pageStateBlock.description"
-      :action-label="pageStateBlock.actionLabel"
-      @retry="retryMemoryPage"
-    />
-
     <template v-else>
+      <StateBlock
+        v-if="pageStateBlock"
+        :variant="pageStateBlock.variant"
+        :title="pageStateBlock.title"
+        :description="pageStateBlock.description"
+        :action-label="pageStateBlock.actionLabel"
+        @retry="retryMemoryPage"
+      />
+
       <section class="memory-hero">
         <article class="hero-card">
           <div class="hero-card__head">
-            <div class="ram-badge">
-              <div class="ram-badge__board">
-                <span class="ram-badge__pins"></span>
-              </div>
-            </div>
+            <HardwareIdentity kind="memory" :label="isAppleUnifiedMemory ? 'SoC' : 'RAM'" />
 
             <div class="hero-card__title">
               <h2>{{ kitSummary }}</h2>
@@ -418,18 +423,18 @@ useActivePageLifecycle(
               <strong>{{ formatFrequency(memoryClock) }}</strong>
             </div>
             <div class="hero-spec">
-              <span>已装模组</span>
-              <strong>{{ moduleCount }} / {{ slotCount || moduleCount }}</strong>
+              <span>{{ isAppleUnifiedMemory ? '内存封装' : '已装模组' }}</span>
+              <strong>{{ isAppleUnifiedMemory ? 'SoC 集成' : `${moduleCount} / ${slotCount || moduleCount}` }}</strong>
             </div>
             <div class="hero-spec">
               <span>配置电压</span>
-              <strong>{{ formatVoltage(memoryConfiguredVoltage) }}</strong>
+              <strong>{{ isAppleUnifiedMemory ? '系统未单独提供' : formatVoltage(memoryConfiguredVoltage) }}</strong>
             </div>
           </div>
         </article>
 
         <article class="status-card">
-          <div class="status-card__title">
+          <div class="status-card__title hardware-section-heading">
             <h3>内存状态</h3>
             <p :title="memoData.normalizedPlatform === 'darwin' ? pressureDescription : ''">
               {{ memoData.normalizedPlatform === 'darwin' ? `内存压力：${pressureLabel}` : `更新时间：${formatSyncTime(lastSyncedAt)}` }}
@@ -450,9 +455,9 @@ useActivePageLifecycle(
 
       <section class="memory-grid">
         <article class="memory-panel">
-          <div class="memory-panel__title">
+          <div class="memory-panel__title hardware-section-heading">
             <h3>内存配置</h3>
-            <p>当前可识别的 SPD / 模组配置项</p>
+            <p>{{ isAppleUnifiedMemory ? '当前可识别的 SoC 内存规格' : '当前可识别的 SPD / 模组配置项' }}</p>
           </div>
 
           <div class="timing-grid">
@@ -464,18 +469,18 @@ useActivePageLifecycle(
         </article>
 
         <article class="memory-panel">
-          <div class="memory-panel__title">
-            <h3>内存槽位</h3>
-            <p>{{ moduleCount }} / {{ slotCount || moduleCount }} 已启用</p>
+          <div class="memory-panel__title hardware-section-heading">
+            <h3>{{ isAppleUnifiedMemory ? '统一内存封装' : '内存槽位' }}</h3>
+            <p>{{ isAppleUnifiedMemory ? '集成于 Apple Silicon SoC，不按 DIMM 插槽展示' : `${moduleCount} / ${slotCount || moduleCount} 已启用` }}</p>
           </div>
 
           <div class="slot-table">
             <div class="slot-table__head">
-              <span>插槽</span>
+              <span>{{ isAppleUnifiedMemory ? '封装' : '插槽' }}</span>
               <span>容量</span>
               <span>类型 / 频率</span>
               <span>制造商 / 型号</span>
-              <span>状态</span>
+              <span>{{ isAppleUnifiedMemory ? '形式' : '状态' }}</span>
             </div>
 
             <div v-for="row in slotRows" :key="row.slot" class="slot-table__row">
@@ -483,13 +488,13 @@ useActivePageLifecycle(
               <strong>{{ row.size }}</strong>
               <strong>{{ row.typeSpeed }}</strong>
               <strong>{{ row.manufacturerModel }}</strong>
-              <em :class="['slot-state', { 'slot-state--active': row.installed }]">{{ row.status }}</em>
+              <em :class="['slot-state', { 'slot-state--active': row.installed && !isAppleUnifiedMemory }]">{{ row.status }}</em>
             </div>
           </div>
         </article>
 
         <article class="memory-panel">
-          <div class="memory-panel__title">
+          <div class="memory-panel__title hardware-section-heading">
             <h3>{{ memoData.normalizedPlatform === 'darwin' ? '内存占用趋势' : '内存使用率' }}</h3>
             <p>{{ memoData.normalizedPlatform === 'darwin' ? 'macOS 下基于已占用内存（含缓存）的趋势估算' : '共享轮询历史，切页不会重置' }}</p>
           </div>
@@ -535,8 +540,8 @@ useActivePageLifecycle(
           </div>
         </article>
 
-        <article class="memory-panel">
-          <div class="memory-panel__title">
+        <article v-if="!isAppleUnifiedMemory" class="memory-panel">
+          <div class="memory-panel__title hardware-section-heading">
             <h3>内存通道</h3>
             <p>{{ channelSummary }}</p>
           </div>
@@ -556,9 +561,9 @@ useActivePageLifecycle(
       </section>
 
       <section class="memory-detail">
-        <div class="memory-panel__title">
+        <div class="memory-panel__title hardware-section-heading">
           <h3>内存详细信息</h3>
-          <p>基于当前模组、主板槽位与系统内存状态整理</p>
+          <p>{{ isAppleUnifiedMemory ? '基于 SoC 内存信息与 macOS 运行时状态整理' : '基于当前模组、主板槽位与系统内存状态整理' }}</p>
         </div>
 
         <div class="detail-grid">
@@ -589,6 +594,7 @@ useActivePageLifecycle(
 
 .memory-hero,
 .memory-grid {
+  align-items: start;
   display: grid;
   gap: 12px;
   margin-bottom: 12px;
@@ -620,60 +626,9 @@ useActivePageLifecycle(
 }
 
 .hero-card__head {
-  display: grid;
-  grid-template-columns: 134px minmax(0, 1fr);
+  display: flex;
   gap: 18px;
   align-items: center;
-}
-
-.ram-badge {
-  display: grid;
-  place-items: center;
-}
-
-.ram-badge__board {
-  position: relative;
-  width: 112px;
-  height: 74px;
-  border-radius: 14px;
-  background:
-    linear-gradient(155deg, rgba(246, 248, 252, 0.92), rgba(210, 221, 238, 0.74)),
-    linear-gradient(180deg, rgba(18, 25, 36, 0.18), rgba(18, 25, 36, 0));
-  border: 1px solid rgba(225, 232, 244, 0.28);
-  transform: rotate(-18deg);
-  box-shadow:
-    0 16px 22px rgba(3, 8, 14, 0.28),
-    inset 0 -10px 16px rgba(14, 22, 34, 0.08);
-}
-
-.ram-badge__board::before,
-.ram-badge__board::after {
-  content: '';
-  position: absolute;
-  top: 12px;
-  bottom: 12px;
-  width: 20px;
-  border-radius: 8px;
-  background: rgba(22, 34, 48, 0.12);
-}
-
-.ram-badge__board::before {
-  left: 14px;
-}
-
-.ram-badge__board::after {
-  right: 14px;
-}
-
-.ram-badge__pins {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: -5px;
-  height: 6px;
-  border-radius: 999px;
-  background:
-    repeating-linear-gradient(90deg, rgba(246, 190, 90, 0.95) 0 6px, rgba(138, 102, 26, 0.2) 6px 9px);
 }
 
 .hero-card__title {
@@ -699,7 +654,7 @@ useActivePageLifecycle(
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 18px;
-  border-top: 1px solid rgba(86, 101, 126, 0.18);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .hero-spec {
@@ -707,7 +662,7 @@ useActivePageLifecycle(
   flex-direction: column;
   gap: 8px;
   padding: 14px 12px 10px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.12);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -737,7 +692,7 @@ useActivePageLifecycle(
   }
 
   p {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-subtle);
     font-size: 13px;
   }
@@ -745,14 +700,14 @@ useActivePageLifecycle(
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
 .status-metric {
   padding: 12px 12px 10px;
-  border: 1px solid rgba(86, 101, 126, 0.14);
-  border-radius: 14px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--tile-radius);
   background: var(--surface-softer-background);
 
   span {
@@ -773,7 +728,7 @@ useActivePageLifecycle(
 .status-metric__bar {
   height: 3px;
   margin-top: 12px;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: var(--surface-track-background);
   overflow: hidden;
 
@@ -795,7 +750,7 @@ useActivePageLifecycle(
   flex-direction: column;
   gap: 8px;
   padding: 12px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -827,12 +782,12 @@ useActivePageLifecycle(
   padding: 0 0 10px;
   color: var(--text-subtle);
   font-size: 12px;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.16);
+  border-bottom: 1px solid var(--panel-border-soft);
 }
 
 .slot-table__row {
   padding: 10px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-secondary);
@@ -893,7 +848,7 @@ useActivePageLifecycle(
 .usage-chart__svg {
   width: 100%;
   height: 104px;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.14);
+  border-bottom: 1px solid var(--panel-border-soft);
 }
 
 .usage-chart__axis {
@@ -914,7 +869,7 @@ useActivePageLifecycle(
   justify-content: space-between;
   gap: 16px;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -936,8 +891,8 @@ useActivePageLifecycle(
 
 .channel-card {
   padding: 14px;
-  border: 1px solid rgba(86, 101, 126, 0.16);
-  border-radius: 14px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--frame-radius);
   background: var(--surface-softer-background);
 }
 
@@ -958,8 +913,8 @@ useActivePageLifecycle(
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(84, 104, 132, 0.24);
-  border-radius: 10px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--control-radius);
   background: var(--surface-soft-background);
 
   span {

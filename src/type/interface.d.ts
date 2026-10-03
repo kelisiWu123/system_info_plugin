@@ -1,8 +1,32 @@
 import type { Systeminformation } from 'systeminformation'
 
 declare global {
+  interface HardwareTelemetryValues {
+    cpuLoad: CurrentLoadData
+    cpuTemperature: CpuTemperatureData | undefined
+    cpuFrequency: CpuCurrentSpeedData
+    fanSpeed: CpuFanData | undefined
+    memoryUsage: MemoData
+    diskIo: StorageIoData
+    networkIo: NetworkStatusData
+    gpu: GpuData[]
+    cpuPower: CpuPowerData | undefined
+    cpuVoltage: CpuVoltageData | undefined
+    storage: DiskData[]
+  }
+  type HardwareTelemetryKey = keyof HardwareTelemetryValues
+  interface HardwareTelemetrySnapshot {
+    sampleId?: string
+    status: 'ok' | 'error' | 'stale'
+    value?: HardwareTelemetryValues[HardwareTelemetryKey]
+    error?: string
+    sampledAt?: number
+    checkedAt: number
+  }
   type CpuData = Systeminformation.CpuData
   interface CpuCurrentSpeedData extends Systeminformation.CpuCurrentSpeedData {
+    displayGHz?: number
+    sampledAt?: number
     source?: 'powermetrics' | 'systeminformation' | 'OpenHardwareMonitor'
     sensorName?: string
     allCpuClockSensors?: Array<{
@@ -36,8 +60,9 @@ declare global {
     privileged?: boolean
     helper?: boolean
   }
-  type CurrentLoadData = Systeminformation.CurrentLoadData
+  type CurrentLoadData = Systeminformation.CurrentLoadData & { sampledAt?: number }
   interface GpuData {
+    sampledAt?: number
     model: string
     name?: string
     vendor?: string
@@ -79,6 +104,7 @@ declare global {
   }
 
   interface MemoData {
+    sampledAt?: number
     total: number
     available: number
     active: number
@@ -102,6 +128,7 @@ declare global {
   type SystemData = Systeminformation.SystemData
   type BiosInfoData = Systeminformation.BiosData
   interface NetworkStatusData {
+    sampledAt?: number
     defaultInterface: string
     gateway: string
     latencyMs: number | null
@@ -122,6 +149,7 @@ declare global {
     operstate: string
   }
   interface StorageIoData {
+    sampledAt?: number
     readBytesPerSec: number | null
     writeBytesPerSec: number | null
     totalBytesPerSec: number | null
@@ -139,6 +167,7 @@ declare global {
     user: string
   }
   type CpuTemperatureData = Systeminformation.CpuTemperatureData & {
+    sampledAt?: number
     ok?: boolean
     value?: number | null
     source?:
@@ -331,6 +360,7 @@ declare global {
     shared?: boolean
   }
   interface CpuPowerData {
+    sampledAt?: number
     value: number | null
     source: 'powermetrics' | 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
@@ -346,6 +376,7 @@ declare global {
     helper?: boolean
   }
   interface CpuVoltageData {
+    sampledAt?: number
     value: number | null
     source: 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
@@ -360,6 +391,7 @@ declare global {
     }>
   }
   interface CpuFanData {
+    sampledAt?: number
     value: number | null
     source: 'apple-smc' | 'OpenHardwareMonitor' | 'unsupported'
     sensorName?: string
@@ -380,6 +412,7 @@ declare global {
   type StaticHardwareData = Systeminformation.StaticData
 
   interface DiskData {
+    sampledAt?: number
     name: string
     fs?: string
     size: number
@@ -425,6 +458,14 @@ declare global {
       getCpuTemperature: () => Promise<CpuTemperatureData | undefined>
       getCpuPower: () => Promise<CpuPowerData | undefined>
       getCpuCurrentSpeed: () => Promise<CpuCurrentSpeedData | undefined>
+      refreshHardwareTelemetry?: (keys: HardwareTelemetryKey[]) => Promise<void>
+      invalidateHardwareInfoCache?: (keys: string[]) => void
+      sharedHardwareTelemetrySupported?: boolean
+      setHardwareTelemetryVisibility?: (hidden: boolean) => void
+      subscribeHardwareTelemetry?: (
+        keys: HardwareTelemetryKey[],
+        listener: (snapshots: Partial<Record<HardwareTelemetryKey, HardwareTelemetrySnapshot>>) => void,
+      ) => () => void
       getCpuLoadData: () => Promise<CurrentLoadData | undefined>
       getCpuVoltage: () => Promise<CpuVoltageData | undefined>
       getCpuFanSpeed: () => Promise<CpuFanData | undefined>

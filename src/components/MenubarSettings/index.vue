@@ -311,7 +311,7 @@ onMounted(async () => {
   width: 52px;
   height: 52px;
   border: 1px solid var(--control-border-strong);
-  border-radius: 16px;
+  border-radius: var(--frame-radius);
   background: var(--control-active-bg);
   color: var(--accent-blue);
   box-shadow: var(--brand-shadow);
@@ -415,7 +415,7 @@ onMounted(async () => {
   width: 42px;
   height: 24px;
   padding: 3px;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: var(--control-bg-soft);
   box-shadow: inset 0 0 0 1px var(--control-border);
   transition: background 0.16s ease, box-shadow 0.16s ease;
@@ -462,7 +462,7 @@ onMounted(async () => {
   align-items: center;
   width: 100%;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 12px;
+  border-radius: var(--frame-radius);
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -525,7 +525,7 @@ onMounted(async () => {
   flex: 0 0 auto;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
+  border-radius: var(--icon-radius);
   background: var(--surface-icon-background);
   color: var(--accent-cyan);
 }
@@ -558,7 +558,7 @@ onMounted(async () => {
   width: 22px;
   height: 22px;
   border: 1px solid var(--control-border);
-  border-radius: 7px;
+  border-radius: var(--control-compact-radius);
   background: var(--control-bg-soft);
 }
 
@@ -611,7 +611,7 @@ onMounted(async () => {
 .menubar-settings__preview-items span {
   padding: 5px 9px;
   border: 1px solid var(--control-border);
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: var(--control-bg-soft);
   color: var(--text-muted);
   font-size: 11px;
@@ -703,7 +703,7 @@ onMounted(async () => {
   place-items: center;
   width: 34px;
   height: 34px;
-  border-radius: 6px;
+  border-radius: var(--control-segment-radius);
   background: rgba(14, 20, 28, 0.92);
   border: 1.8px solid rgba(78, 201, 240, 0.7);
   color: #4ec9f0;
@@ -721,7 +721,7 @@ onMounted(async () => {
 .menubar-settings__win-tooltip {
   min-width: 250px;
   padding: 10px 14px;
-  border-radius: 8px;
+  border-radius: var(--control-compact-radius);
   border: 1px solid var(--control-border);
   background: rgba(20, 26, 36, 0.95);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);

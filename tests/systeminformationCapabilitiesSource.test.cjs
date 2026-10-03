@@ -106,7 +106,7 @@ test('overview renders progressively and promotes active network information int
   assert.match(overviewStore, /async function loadOverviewEarlyEnrichment\(\)/)
   assert.match(overviewStore, /const earlyEnrichmentPromise = loadOverviewEarlyEnrichment\(\)\.catch\(\(\) => undefined\)/)
   assert.match(overviewStore, /await loadOverviewCoreSummary\(\)\s*loading\.value = false\s*await hydrateOverviewDetails\(\)/)
-  assert.match(computer, /v-if="!loading && pageStateBlock"/)
+  assert.match(computer, /v-if="pageStateBlock"/)
   assert.match(computer, /class="overview-progress"/)
   assert.match(computer, /id:\s*'network',[\s\S]*label:\s*'网络',[\s\S]*icon:\s*Wifi/)
   assert.match(computer, /networkSummaryTitle/)

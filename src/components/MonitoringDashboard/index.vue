@@ -122,6 +122,10 @@ function formatProcessMemory(item: TopProcessData) {
   return item.memRss > 0 ? formatBytes(item.memRss * 1024) : `${item.mem.toFixed(1)}%`
 }
 
+function hasTelemetryResult(key: MonitorTelemetryKey) {
+  return Boolean(telemetryStatus[key].lastSuccessAt)
+}
+
 function telemetryDescription(key: MonitorTelemetryKey, fallback: string) {
   const status = telemetryStatus[key]
   if (!status.error) return fallback
@@ -201,12 +205,12 @@ const gpuTemperatureValue = computed(() => (
   typeof primaryGpu.value?.temperatureGpu === 'number' ? primaryGpu.value.temperatureGpu : null
 ))
 const cpuTemperatureDescription = computed(() => {
-  if (!initialized.value) return '正在读取处理器温度'
+  if (!initialized.value && !hasTelemetryResult('cpuTemperature')) return '正在读取处理器温度'
   if (cpuTemperature.value?.source === 'unsupported') return '当前传感器暂不可用'
   return cpuTemperatureValue.value === null ? '暂未提供处理器温度读数' : '处理器温度'
 })
 const gpuTemperatureDescription = computed(() => {
-  if (!initialized.value) return '正在读取图形处理器温度'
+  if (!initialized.value && !hasTelemetryResult('gpu')) return '正在读取图形处理器温度'
   if (!primaryGpu.value) return '未检测到图形处理器'
   return gpuTemperatureValue.value === null ? '当前显卡未提供温度读数' : '图形处理器温度'
 })
@@ -217,15 +221,15 @@ const memoryDisplayValue = computed(() => (
     : formatPercent(usedMemoPercent.value)
 ))
 const hasMemoryTelemetry = computed(() => (
-  memoData.value.total > 0 || memoData.value.pressure?.level !== 'unknown'
+  memoData.value.total > 0 || Boolean(memoData.value.pressure?.level && memoData.value.pressure.level !== 'unknown')
 ))
 
 const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'cpu-load',
     label: 'CPU 使用率',
-    value: initialized.value && metricHistory.cpuLoad.length ? formatPercent(cpuLoad.value) : '--',
-    secondary: telemetryDescription('cpuLoad', !initialized.value
+    value: metricHistory.cpuLoad.length ? formatPercent(cpuLoad.value) : '--',
+    secondary: telemetryDescription('cpuLoad', !initialized.value && !hasTelemetryResult('cpuLoad')
       ? '正在读取处理器负载'
       : metricHistory.cpuLoad.length ? (cpuData.value?.brand || '处理器负载') : '暂未提供处理器负载'),
     percent: clampPercent(cpuLoad.value),
@@ -238,7 +242,7 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'cpu-temp',
     label: 'CPU 温度',
-    value: initialized.value ? formatTemperature(cpuTemperatureValue.value) : '--',
+    value: formatTemperature(cpuTemperatureValue.value),
     secondary: telemetryDescription('cpuTemperature', cpuTemperatureDescription.value),
     percent: clampPercent(cpuTemperatureValue.value || 0),
     kind: 'temperature',
@@ -250,8 +254,8 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'gpu-load',
     label: 'GPU 使用率',
-    value: initialized.value && typeof primaryGpu.value?.utilizationGpu === 'number' ? formatPercent(gpuLoadPercent.value) : '--',
-    secondary: telemetryDescription('gpu', !initialized.value
+    value: typeof primaryGpu.value?.utilizationGpu === 'number' ? formatPercent(gpuLoadPercent.value) : '--',
+    secondary: telemetryDescription('gpu', !initialized.value && !hasTelemetryResult('gpu')
       ? '正在读取图形处理器'
       : primaryGpu.value && typeof primaryGpu.value.utilizationGpu === 'number'
         ? (primaryGpu.value.model || primaryGpu.value.name || '图形处理器')
@@ -266,7 +270,7 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'gpu-temp',
     label: 'GPU 温度',
-    value: initialized.value && primaryGpu.value ? formatTemperature(gpuTemperatureValue.value) : '--',
+    value: primaryGpu.value ? formatTemperature(gpuTemperatureValue.value) : '--',
     secondary: telemetryDescription('gpu', gpuTemperatureDescription.value),
     percent: clampPercent(gpuTemperatureValue.value || 0),
     kind: 'temperature',
@@ -278,7 +282,7 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'memory',
     label: memoData.value.normalizedPlatform === 'darwin' ? '内存压力' : '内存使用率',
-    value: initialized.value && hasMemoryTelemetry.value ? memoryDisplayValue.value : '--',
+    value: hasMemoryTelemetry.value ? memoryDisplayValue.value : '--',
     secondary: telemetryDescription('memory', memoData.value.total
       ? `${formatBytes(memoryUsedBytes.value)} / ${formatBytes(memoData.value.total)}`
       : initialized.value ? '暂未提供内存数据' : '正在读取内存数据'),
@@ -292,7 +296,7 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
   {
     id: 'storage',
     label: '存储使用率',
-    value: initialized.value && storageUsage.value.total ? formatPercent(storageUsage.value.percent) : '--',
+    value: storageUsage.value.total ? formatPercent(storageUsage.value.percent) : '--',
     secondary: telemetryDescription('storage', storageUsage.value.total
       ? `${formatBytes(storageUsage.value.used)} / ${formatBytes(storageUsage.value.total)}`
       : initialized.value ? '暂未提供磁盘数据' : '正在读取磁盘数据'),
@@ -308,7 +312,7 @@ const metricCards = computed<MonitorMetricCard[]>(() => [
 const monitorStatusText = computed(() => {
   if (loading.value) return '正在建立监控基线'
   if (lastError.value) return '部分数据未刷新'
-  if (backgroundThrottled.value) return '后台降频中'
+  if (backgroundThrottled.value) return '后台视图 · 共享采样'
   return '监控运行中'
 })
 const monitorFailureText = computed(() => {
@@ -505,6 +509,7 @@ onUnmounted(() => {
               type="button"
               :disabled="settingsPending"
               :aria-busy="settingsPending"
+              title="所有使用此指标的窗口都隐藏时降低采样频率；可见窗口和托盘保持共享更新"
               :class="['monitor-background-button', { 'monitor-background-button--active': monitoringRefreshSettings.backgroundThrottleEnabled }]"
               @click="toggleBackgroundThrottle"
             >
@@ -774,7 +779,7 @@ onUnmounted(() => {
   min-height: 48px;
   padding: 7px 10px;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 12px;
+  border-radius: var(--frame-radius);
   background: var(--frame-bg);
 }
 
@@ -879,7 +884,7 @@ onUnmounted(() => {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--icon-radius);
   background: var(--state-info-bg);
   color: var(--state-info-fg);
 }
@@ -1018,7 +1023,7 @@ onUnmounted(() => {
 .monitor-live-card__values > div {
   padding: 10px 11px;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: var(--surface-softer-background);
 }
 
@@ -1069,7 +1074,7 @@ onUnmounted(() => {
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 8px;
+  border-radius: var(--control-compact-radius);
   background: var(--state-info-bg);
   color: var(--state-info-fg);
   font-size: 11px;

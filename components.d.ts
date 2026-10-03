@@ -15,6 +15,8 @@ declare module 'vue' {
     CpuCoresWatchView: typeof import('./src/components/Watch/CpuCoresWatchView.vue')['default']
     DeviceSpecsLite: typeof import('./src/components/DeviceSpecsLite/index.vue')['default']
     GraphicsPage: typeof import('./src/components/GraphicsPage/index.vue')['default']
+    HardwareIdentity: typeof import('./src/components/common/HardwareIdentity.vue')['default']
+    HardwareMetric: typeof import('./src/components/common/HardwareMetric.vue')['default']
     MemoryPage: typeof import('./src/components/MemoryPage/index.vue')['default']
     MenubarSettings: typeof import('./src/components/MenubarSettings/index.vue')['default']
     MonitoringDashboard: typeof import('./src/components/MonitoringDashboard/index.vue')['default']

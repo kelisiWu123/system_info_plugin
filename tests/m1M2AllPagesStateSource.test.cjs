@@ -7,7 +7,7 @@ function readSource(relativePath) {
   return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8')
 }
 
-test('detail pages keep blocking loading states while overview progressively renders and preserves retryable error or empty states', () => {
+test('pages progressively expose available data and preserve retryable error or empty banners', () => {
   const graphics = readSource('src/components/GraphicsPage/index.vue')
   const memory = readSource('src/components/MemoryPage/index.vue')
   const storage = readSource('src/components/StoragePage/index.vue')
@@ -23,7 +23,7 @@ test('detail pages keep blocking loading states while overview progressively ren
   }
 
   assert.match(overview, /import StateBlock from '..\/common\/StateBlock.vue'/)
-  assert.match(overview, /v-if="!loading && pageStateBlock"/)
+  assert.match(overview, /v-if="pageStateBlock"/)
   assert.match(overview, /class="overview-progress"/)
   assert.match(overview, /:variant="pageStateBlock\.variant"/)
   assert.match(overview, /@retry="retryOverviewPage"/)

@@ -1,4 +1,5 @@
 import { computed, reactive, ref } from 'vue'
+import { settleMetric, subscribeHardwareMetrics, hasSharedHardwareTelemetry, refreshSharedHardwareMetrics, isOlderMetricSample, getMetricSampledAt } from '../utils/metricRefresh'
 import {
   DEFAULT_MONITORING_REFRESH_SETTINGS,
   appendMetricHistory,
@@ -91,6 +92,7 @@ const backgroundThrottled = ref(false)
 
 const cpuData = ref<CpuData>()
 const cpuLoad = ref(0)
+let latestCpuLoadSample: CurrentLoadData | undefined
 const cpuTemperature = ref<CpuTemperatureData>()
 const memoData = ref<MemoData>(emptyMemoData)
 const gpuData = ref<GpuData[]>([])
@@ -167,6 +169,73 @@ function getRefreshIntervals() {
   return getMonitoringRefreshIntervals(monitoringRefreshSettings.value.profile, backgroundThrottled.value)
 }
 
+function syncTelemetryErrorSummary() {
+  lastError.value = (Object.keys(telemetryStatus) as MonitorTelemetryKey[])
+    .filter((key) => telemetryStatus[key].error)
+    .map((key) => telemetryLabels[key])
+    .join('、')
+}
+
+let stopSharedTelemetry: (() => void) | undefined
+function subscribeDashboardTelemetry() {
+  if (stopSharedTelemetry) return
+  const success = (key: MonitorTelemetryKey, at: number) => {
+    telemetryStatus[key].lastSuccessAt = at
+    telemetryStatus[key].error = ''
+    lastSyncedAt.value = Math.max(lastSyncedAt.value ?? 0, at)
+    syncTelemetryErrorSummary()
+  }
+  stopSharedTelemetry = subscribeHardwareMetrics({
+    cpuLoad: (value, at) => {
+      latestCpuLoadSample = value
+      cpuLoad.value = value.currentLoad
+      appendMetricHistory(metricHistory.cpuLoad, cpuLoad.value, true, 24, at)
+      success('cpuLoad', at)
+    },
+    cpuTemperature: (value, at) => {
+      cpuTemperature.value = value
+      if (value) appendMetricHistory(metricHistory.cpuTemp, value.value ?? value.main ?? 0, false, 24, at)
+      success('cpuTemperature', at)
+    },
+    gpu: (value, at) => {
+      gpuData.value = value
+      appendMetricHistory(metricHistory.gpuLoad, primaryGpu.value?.utilizationGpu ?? 0, true, 24, at)
+      appendMetricHistory(metricHistory.gpuTemp, primaryGpu.value?.temperatureGpu ?? 0, false, 24, at)
+      success('gpu', at)
+    },
+    memoryUsage: (value, at) => {
+      memoData.value = value
+      appendMetricHistory(metricHistory.memoryLoad, usedMemoPercent.value, true, 24, at)
+      success('memory', at)
+    },
+    storage: (value, at) => {
+      diskData.value = value
+      appendMetricHistory(metricHistory.storageLoad, storageUsage.value.percent, true, 24, at)
+      success('storage', at)
+    },
+    diskIo: (value, at) => {
+      storageIoData.value = value
+      appendMetricHistory(metricHistory.diskRead, value.readBytesPerSec ?? 0, false, 24, at)
+      appendMetricHistory(metricHistory.diskWrite, value.writeBytesPerSec ?? 0, false, 24, at)
+      success('storageIo', at)
+    },
+    networkIo: (value, at) => {
+      networkStatus.value = value
+      appendMetricHistory(metricHistory.networkRx, value.rxSec ?? 0, false, 24, at)
+      appendMetricHistory(metricHistory.networkTx, value.txSec ?? 0, false, 24, at)
+      success('network', at)
+    },
+  }, (key, error) => {
+    const keys: Partial<Record<HardwareTelemetryKey, MonitorTelemetryKey>> = {
+      cpuLoad: 'cpuLoad', cpuTemperature: 'cpuTemperature', gpu: 'gpu', memoryUsage: 'memory',
+      storage: 'storage', diskIo: 'storageIo', networkIo: 'network',
+    }
+    const telemetryKey = keys[key]
+    if (telemetryKey) telemetryStatus[telemetryKey].error = error
+    syncTelemetryErrorSummary()
+  })
+}
+
 async function ensureRefreshSettingsLoaded() {
   if (settingsPromise) return settingsPromise
 
@@ -210,12 +279,14 @@ function updateTelemetryStatus(
 ) {
   const status = telemetryStatus[key]
   if (result.status === 'fulfilled') {
-    status.lastSuccessAt = completedAt
+    status.lastSuccessAt = Math.max(status.lastSuccessAt ?? 0, getMetricSampledAt(result.value) ?? completedAt)
     status.error = ''
+    syncTelemetryErrorSummary()
     return true
   }
 
   status.error = normalizeErrorMessage(result.reason)
+  syncTelemetryErrorSummary()
   return false
 }
 
@@ -227,18 +298,16 @@ function summarizeRefreshResults(
   const successfulKeys: MonitorTelemetryKey[] = []
 
   for (const [key, result] of results) {
-    if (updateTelemetryStatus(key, result, completedAt)) {
+    if (result.status === 'fulfilled') {
       successfulKeys.push(key)
     } else {
       failedKeys.push(key)
     }
   }
 
-  lastError.value = (Object.keys(telemetryStatus) as MonitorTelemetryKey[])
-    .filter((key) => telemetryStatus[key].error)
-    .map((key) => telemetryLabels[key])
-    .join('、')
-  if (successfulKeys.length) lastSyncedAt.value = completedAt
+  syncTelemetryErrorSummary()
+  if (successfulKeys.length) lastSyncedAt.value = Math.max(lastSyncedAt.value ?? 0,
+    ...successfulKeys.map((key) => telemetryStatus[key].lastSuccessAt ?? completedAt))
 
   return { failedKeys, successfulKeys }
 }
@@ -259,102 +328,125 @@ async function refreshMonitorMetrics(force = false): Promise<MonitorRefreshResul
   refreshInFlightIsForced = force
   refreshInFlight = (async () => {
     const now = Date.now()
+    const shared = hasSharedHardwareTelemetry()
     const intervals = getRefreshIntervals()
-    const needsCpuTemp = force || now - lastCpuTempRefreshAt >= intervals.cpuTemp
-    const needsGpu = intervals.gpu > 0 && (force || now - lastGpuRefreshAt >= intervals.gpu)
-    const needsMemory = force || now - lastMemoryRefreshAt >= intervals.memory
-    const needsDisk = force || now - lastDiskRefreshAt >= intervals.disk
-    const needsNetwork = force || now - lastNetworkRefreshAt >= Math.max(intervals.base, 3000)
+    const needsCpuLoad = !shared && (force || intervals.cpuLoadDetail > 0)
+    const needsCpuTemp = !shared && (force || now - lastCpuTempRefreshAt >= intervals.cpuTemp)
+    const needsGpu = !shared && (intervals.gpu > 0 && (force || now - lastGpuRefreshAt >= intervals.gpu))
+    const needsMemory = !shared && (force || now - lastMemoryRefreshAt >= intervals.memory)
+    const needsDisk = !shared && (force || now - lastDiskRefreshAt >= intervals.disk)
+    const needsNetwork = !shared && (force || now - lastNetworkRefreshAt >= Math.max(intervals.base, 3000))
     const needsProcesses = force || now - lastProcessRefreshAt >= Math.max(intervals.base * 2, 8000)
     const needsTime = force || now - lastTimeRefreshAt >= intervals.time
 
-    const results = await Promise.allSettled([
-      readService(() => window.services.getCpuFullLoad(), 6000),
-      needsCpuTemp ? readService(() => window.services.getCpuTemperature(), 9000) : Promise.resolve(undefined),
-      needsGpu ? readService(() => window.services.getGpuInfo(), 15000) : Promise.resolve(undefined),
-      needsMemory ? readService(() => window.services.getMemInfo(), 6000) : Promise.resolve(undefined),
-      needsDisk ? readService(() => window.services.getDiskData(), 10000) : Promise.resolve(undefined),
-      needsDisk ? readService(() => window.services.getStorageIo(), 7000) : Promise.resolve(undefined),
-      needsNetwork ? readService(() => window.services.getNetworkStatus(), 10000) : Promise.resolve(undefined),
-      needsProcesses ? readService(() => window.services.getTopProcesses(), 12000) : Promise.resolve(undefined),
-      needsTime ? readService(() => window.services.getTimeInfo(), 6000) : Promise.resolve(undefined),
+    const results = await Promise.all([
+      settleMetric(needsCpuLoad ? readService(() => window.services.getCpuLoadData(), 6000) : Promise.resolve(undefined), (cpuLoadRes) => {
+        if (needsCpuLoad && cpuLoadRes.status === 'fulfilled' && !isOlderMetricSample(cpuLoadRes.value, latestCpuLoadSample)) {
+          latestCpuLoadSample = cpuLoadRes.value
+          cpuLoad.value = cpuLoadRes.value?.currentLoad || 0
+          appendMetricHistory(metricHistory.cpuLoad, cpuLoad.value, true, 24, cpuLoadRes.value?.sampledAt)
+        }
+
+        if (needsCpuLoad) updateTelemetryStatus('cpuLoad', cpuLoadRes, Date.now())
+      }),
+      settleMetric(needsCpuTemp ? readService(() => window.services.getCpuTemperature(), 9000) : Promise.resolve(undefined), (cpuTempRes) => {
+        if (needsCpuTemp) {
+          if (cpuTempRes.status === 'fulfilled' && !isOlderMetricSample(cpuTempRes.value, cpuTemperature.value)) {
+            cpuTemperature.value = cpuTempRes.value
+            const value = typeof cpuTempRes.value?.value === 'number'
+              ? cpuTempRes.value.value
+              : typeof cpuTempRes.value?.main === 'number'
+                ? cpuTempRes.value.main
+                : 0
+            appendMetricHistory(metricHistory.cpuTemp, value, false, 24, cpuTempRes.value?.sampledAt)
+          }
+          lastCpuTempRefreshAt = now
+        }
+
+        if (needsCpuTemp) updateTelemetryStatus('cpuTemperature', cpuTempRes, Date.now())
+      }),
+      settleMetric(needsGpu ? readService(() => window.services.getGpuInfo(), 15000) : Promise.resolve(undefined), (gpuRes) => {
+        if (needsGpu) {
+          if (gpuRes.status === 'fulfilled' && !isOlderMetricSample(gpuRes.value, gpuData.value)) {
+            gpuData.value = gpuRes.value || []
+            appendMetricHistory(metricHistory.gpuLoad, primaryGpu.value?.utilizationGpu || 0, true, 24, gpuRes.value?.[0]?.sampledAt)
+            appendMetricHistory(metricHistory.gpuTemp, primaryGpu.value?.temperatureGpu || 0, false, 24, gpuRes.value?.[0]?.sampledAt)
+          }
+          lastGpuRefreshAt = now
+        }
+
+        if (needsGpu) updateTelemetryStatus('gpu', gpuRes, Date.now())
+      }),
+      settleMetric(needsMemory ? readService(() => window.services.getMemInfo(), 6000) : Promise.resolve(undefined), (memoRes) => {
+        if (needsMemory) {
+          if (memoRes.status === 'fulfilled' && !isOlderMetricSample(memoRes.value, memoData.value)) {
+            memoData.value = memoRes.value || emptyMemoData
+            appendMetricHistory(metricHistory.memoryLoad, usedMemoPercent.value, true, 24, memoRes.value?.sampledAt)
+          }
+          lastMemoryRefreshAt = now
+        }
+
+        if (needsMemory) updateTelemetryStatus('memory', memoRes, Date.now())
+      }),
+      settleMetric(needsDisk ? readService(() => window.services.getDiskData(), 10000) : Promise.resolve(undefined), (diskRes) => {
+        if (needsDisk) {
+          if (diskRes.status === 'fulfilled' && !isOlderMetricSample(diskRes.value, diskData.value)) {
+            diskData.value = diskRes.value || []
+            appendMetricHistory(metricHistory.storageLoad, storageUsage.value.percent, true, 24, diskRes.value?.[0]?.sampledAt)
+          }
+
+        }
+        if (needsDisk) updateTelemetryStatus('storage', diskRes, Date.now())
+      }),
+      settleMetric(needsDisk ? readService(() => window.services.getStorageIo(), 7000) : Promise.resolve(undefined), (storageIoRes) => {
+        if (needsDisk) {
+          if (storageIoRes.status === 'fulfilled' && storageIoRes.value && !isOlderMetricSample(storageIoRes.value, storageIoData.value)) {
+            storageIoData.value = storageIoRes.value
+            appendMetricHistory(metricHistory.diskRead, storageIoData.value.readBytesPerSec || 0, false, 24, storageIoRes.value.sampledAt)
+            appendMetricHistory(metricHistory.diskWrite, storageIoData.value.writeBytesPerSec || 0, false, 24, storageIoRes.value.sampledAt)
+          }
+          lastDiskRefreshAt = now
+        }
+
+        if (needsDisk) updateTelemetryStatus('storageIo', storageIoRes, Date.now())
+      }),
+      settleMetric(needsNetwork ? readService(() => window.services.getNetworkStatus(), 10000) : Promise.resolve(undefined), (networkRes) => {
+        if (needsNetwork) {
+          if (networkRes.status === 'fulfilled' && networkRes.value && !isOlderMetricSample(networkRes.value, networkStatus.value)) {
+            networkStatus.value = networkRes.value
+            appendMetricHistory(metricHistory.networkRx, networkStatus.value.rxSec || 0, false, 24, networkRes.value.sampledAt)
+            appendMetricHistory(metricHistory.networkTx, networkStatus.value.txSec || 0, false, 24, networkRes.value.sampledAt)
+          }
+          lastNetworkRefreshAt = now
+        }
+
+        if (needsNetwork) updateTelemetryStatus('network', networkRes, Date.now())
+      }),
+      settleMetric(needsProcesses ? readService(() => window.services.getTopProcesses(), 12000) : Promise.resolve(undefined), (processRes) => {
+        if (needsProcesses) {
+          if (processRes.status === 'fulfilled') {
+            topProcesses.value = processRes.value || []
+          }
+          lastProcessRefreshAt = now
+        }
+
+        if (needsProcesses) updateTelemetryStatus('processes', processRes, Date.now())
+      }),
+      settleMetric(needsTime ? readService(() => window.services.getTimeInfo(), 6000) : Promise.resolve(undefined), (timeRes) => {
+        if (needsTime) {
+          if (timeRes.status === 'fulfilled') timeInfo.value = timeRes.value
+          lastTimeRefreshAt = now
+        }
+
+        if (needsTime) updateTelemetryStatus('time', timeRes, Date.now())
+      }),
     ])
 
     const [cpuLoadRes, cpuTempRes, gpuRes, memoRes, diskRes, storageIoRes, networkRes, processRes, timeRes] = results
 
-    if (cpuLoadRes.status === 'fulfilled') {
-      cpuLoad.value = cpuLoadRes.value || 0
-      appendMetricHistory(metricHistory.cpuLoad, cpuLoad.value, true)
-    }
-
-    if (needsCpuTemp) {
-      if (cpuTempRes.status === 'fulfilled') {
-        cpuTemperature.value = cpuTempRes.value
-        const value = typeof cpuTempRes.value?.value === 'number'
-          ? cpuTempRes.value.value
-          : typeof cpuTempRes.value?.main === 'number'
-            ? cpuTempRes.value.main
-            : 0
-        appendMetricHistory(metricHistory.cpuTemp, value)
-      }
-      lastCpuTempRefreshAt = now
-    }
-
-    if (needsGpu) {
-      if (gpuRes.status === 'fulfilled') {
-        gpuData.value = gpuRes.value || []
-        appendMetricHistory(metricHistory.gpuLoad, primaryGpu.value?.utilizationGpu || 0, true)
-        appendMetricHistory(metricHistory.gpuTemp, primaryGpu.value?.temperatureGpu || 0)
-      }
-      lastGpuRefreshAt = now
-    }
-
-    if (needsMemory) {
-      if (memoRes.status === 'fulfilled') {
-        memoData.value = memoRes.value || emptyMemoData
-        appendMetricHistory(metricHistory.memoryLoad, usedMemoPercent.value, true)
-      }
-      lastMemoryRefreshAt = now
-    }
-
-    if (needsDisk) {
-      if (diskRes.status === 'fulfilled') {
-        diskData.value = diskRes.value || []
-        appendMetricHistory(metricHistory.storageLoad, storageUsage.value.percent, true)
-      }
-
-      if (storageIoRes.status === 'fulfilled' && storageIoRes.value) {
-        storageIoData.value = storageIoRes.value
-        appendMetricHistory(metricHistory.diskRead, storageIoData.value.readBytesPerSec || 0)
-        appendMetricHistory(metricHistory.diskWrite, storageIoData.value.writeBytesPerSec || 0)
-      }
-      lastDiskRefreshAt = now
-    }
-
-    if (needsNetwork) {
-      if (networkRes.status === 'fulfilled' && networkRes.value) {
-        networkStatus.value = networkRes.value
-        appendMetricHistory(metricHistory.networkRx, networkStatus.value.rxSec || 0)
-        appendMetricHistory(metricHistory.networkTx, networkStatus.value.txSec || 0)
-      }
-      lastNetworkRefreshAt = now
-    }
-
-    if (needsProcesses) {
-      if (processRes.status === 'fulfilled') {
-        topProcesses.value = processRes.value || []
-      }
-      lastProcessRefreshAt = now
-    }
-
-    if (needsTime) {
-      if (timeRes.status === 'fulfilled') timeInfo.value = timeRes.value
-      lastTimeRefreshAt = now
-    }
-
     const completedAt = Date.now()
     return summarizeRefreshResults([
-      ['cpuLoad', cpuLoadRes],
+      ...(needsCpuLoad ? [['cpuLoad', cpuLoadRes] as const] : []),
       ...(needsCpuTemp ? [['cpuTemperature', cpuTempRes] as const] : []),
       ...(needsGpu ? [['gpu', gpuRes] as const] : []),
       ...(needsMemory ? [['memory', memoRes] as const] : []),
@@ -435,6 +527,7 @@ function restartPolling() {
 
 export async function activateMonitorDashboard() {
   subscriberCount += 1
+  subscribeDashboardTelemetry()
 
   if (!initialized.value) {
     if (!initPromise) {
@@ -454,10 +547,15 @@ export async function activateMonitorDashboard() {
 
 export function deactivateMonitorDashboard() {
   subscriberCount = Math.max(0, subscriberCount - 1)
-  if (subscriberCount === 0) stopPolling()
+  if (subscriberCount === 0) {
+    stopSharedTelemetry?.()
+    stopSharedTelemetry = undefined
+    stopPolling()
+  }
 }
 
 export async function refreshMonitorDashboardData(): Promise<MonitorRefreshResult> {
+  await refreshSharedHardwareMetrics(['cpuLoad', 'cpuTemperature', 'gpu', 'memoryUsage', 'storage', 'diskIo', 'networkIo'])
   return refreshMonitorMetrics(true)
 }
 

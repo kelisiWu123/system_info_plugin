@@ -51,7 +51,7 @@ const rootClass = computed(() => [
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 12px;
+  border-radius: var(--frame-radius);
   background: var(--frame-bg);
   -webkit-app-region: no-drag;
 }
@@ -83,7 +83,7 @@ const rootClass = computed(() => [
   min-width: 0;
   padding: 3px;
   border: 1px solid var(--control-border);
-  border-radius: 9px;
+  border-radius: var(--control-radius);
   background: var(--control-bg-soft);
 }
 
@@ -91,7 +91,7 @@ const rootClass = computed(() => [
   min-width: 0;
   height: 26px;
   padding: 0 7px;
-  border-radius: 6px;
+  border-radius: var(--control-segment-radius);
   color: var(--text-subtle);
   font-size: 10px;
   font-weight: 800;

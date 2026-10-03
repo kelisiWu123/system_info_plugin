@@ -63,7 +63,7 @@ defineProps<{
   min-height: 82px;
   padding: 7px 10px;
   border: 1px solid var(--watch-card-border);
-  border-radius: 8px;
+  border-radius: var(--watch-card-radius);
   background: var(--watch-card-background);
   box-shadow:
     inset 0 1px 0 var(--surface-inset-highlight),
@@ -92,7 +92,7 @@ defineProps<{
   width: 40px;
   height: 40px;
   align-self: center;
-  border-radius: 8px;
+  border-radius: var(--watch-card-radius);
   background: var(--watch-card-icon-background);
   box-shadow: inset 0 1px 0 var(--surface-inset-highlight);
 }

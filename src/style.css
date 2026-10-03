@@ -36,6 +36,9 @@
   --status-halo-background: rgba(255, 255, 255, 0.04);
   --control-height: 34px;
   --control-radius: 10px;
+  --control-compact-radius: 8px;
+  --control-segment-radius: 6px;
+  --tile-radius: 12px;
   --control-border: var(--panel-border-soft);
   --control-border-strong: rgba(94, 180, 255, 0.38);
   --control-bg: rgba(20, 29, 42, 0.72);
@@ -48,6 +51,11 @@
   --pill-radius: 999px;
   --pill-height: 28px;
   --surface-radius: 16px;
+  --icon-radius: var(--tile-radius);
+  --watch-shell-radius: var(--control-radius);
+  --watch-card-radius: var(--control-compact-radius);
+  --watch-control-radius: var(--control-segment-radius);
+  --watch-micro-radius: 4px;
   --surface-padding: 18px 20px 16px;
   --surface-heading-gap: 16px;
   --surface-heading-margin: 14px;
@@ -63,7 +71,7 @@
   --brand-bg: linear-gradient(180deg, rgba(68, 150, 255, 0.88), rgba(40, 108, 255, 0.68));
   --brand-shadow: 0 8px 20px rgba(46, 105, 255, 0.24);
   --button-height-lg: 44px;
-  --button-radius-lg: 12px;
+  --button-radius-lg: var(--control-radius);
   --button-bg: rgba(20, 29, 42, 0.86);
   --button-border: var(--panel-border);
   --button-fg: var(--text-secondary);
@@ -120,7 +128,6 @@
     linear-gradient(180deg, rgba(22, 34, 53, 0.84), rgba(15, 24, 39, 0.82));
   --watch-throughput-background: rgba(16, 26, 42, 0.8);
   --watch-muted-surface: rgba(255, 255, 255, 0.07);
-  --radius-sm: 18px;
   --space-xs: 10px;
 }
 
@@ -131,7 +138,7 @@ html[data-theme='light'] {
   --panel-background-strong: #f7f9fc;
   --panel-border: rgba(68, 83, 106, 0.2);
   --panel-border-soft: rgba(68, 83, 106, 0.12);
-  --panel-shadow: 0 16px 34px rgba(39, 55, 80, 0.1);
+  --panel-shadow: 0 3px 12px rgba(39, 55, 80, 0.055);
   --card-background: #ffffff;
   --card-background-alt: #f7f9fc;
   --text-primary: #172033;
@@ -273,7 +280,7 @@ a {
 
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: rgba(110, 128, 160, 0.34);
   background-clip: padding-box;
 }
@@ -281,3 +288,10 @@ a {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Shared hardware presentation: section headings and data tiles. */
+.hardware-section-heading { flex-wrap: wrap; }
+.hardware-section-heading > h2,
+.hardware-section-heading > h3 { flex-shrink: 0; white-space: nowrap; }
+.hardware-section-heading > p,
+.hardware-section-heading > span { min-width: 0; line-height: 1.5; }

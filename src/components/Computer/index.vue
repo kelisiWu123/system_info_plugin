@@ -125,24 +125,40 @@ const isDev = import.meta.env.DEV
 let uptimeTimerId: number | undefined
 
 const pageStateBlock = computed(() => {
-  if (fetchState.cpuInfo.status === 'error' || fetchState.memInfo.status === 'error') {
+  const failedServices = [
+    { label: '处理器', state: fetchState.cpuInfo },
+    { label: '内存', state: fetchState.memInfo },
+    { label: '存储', state: fetchState.diskData },
+    { label: '网络', state: fetchState.networkStatus },
+  ].filter((item) => item.state.status === 'error')
+
+  if (failedServices.length) {
+    const hasCachedData = Boolean(
+      cpuData.value
+      || memoData.value.total
+      || diskData.value.length
+      || diskLayoutData.value.length
+      || primaryGpu.value
+      || networkInterfaces.value.length
+      || networkStatus.value.defaultInterface
+    )
+
     return {
       variant: 'error' as const,
-      title: '系统概览读取失败',
-      description: getServiceErrorDescription(
-        fetchState.cpuInfo.note || fetchState.memInfo.note,
-        '读取处理器或内存摘要时发生异常，可以重试该模块。'
-      ),
-      actionLabel: '重试该模块',
+      title: hasCachedData ? '部分数据暂未更新，保留上次读数' : '部分摘要读取失败',
+      description: failedServices
+        .map(({ label, state }) => `${label}：${getServiceErrorDescription(state.note, '本次读取失败，请稍后重试。')}`)
+        .join(' '),
+      actionLabel: '重试读取',
     }
   }
 
   if (fetchState.cpuInfo.status === 'missing' && fetchState.memInfo.status === 'missing' && !cpuData.value && !memoData.value.total) {
     return {
       variant: 'empty' as const,
-      title: '未识别到系统概览信息',
-      description: '当前系统数据源没有返回处理器或内存摘要信息。',
-      actionLabel: '重试该模块',
+      title: '处理器和内存摘要暂不可用',
+      description: '其他已识别到的硬件摘要仍可查看。',
+      actionLabel: '重试读取',
     }
   }
 
@@ -186,7 +202,7 @@ function formatBoardTitle() {
 
 function formatMemoryKit() {
   const sizes = memoLayoutData.value
-    .map((item) => (item.size > 0 ? Number(bytesToGB(item.size)) : 0))
+    .map((item) => (item.size > 0 ? item.size / (1024 * 1024 * 1024) : 0))
     .filter((item) => item > 0)
 
   if (!sizes.length) return ''
@@ -379,6 +395,9 @@ const summaryCards = computed(() => [
     icon: GraphicDesign,
     title: primaryGpu.value?.model || primaryGpu.value?.name || '读取中',
     lines: [
+      primaryGpu.value?.vendor || '',
+      primaryGpu.value?.cores ? `${primaryGpu.value.cores} 个图形核心` : '',
+      /apple/i.test(primaryGpu.value?.vendor || primaryGpu.value?.model || '') ? '与系统统一内存共享' : '',
       formatOverviewGpuMemory(primaryGpu.value),
       normalizeOverviewGpuBus(primaryGpu.value?.bus),
     ].filter(Boolean),
@@ -389,9 +408,9 @@ const summaryCards = computed(() => [
     accent: 'var(--accent-purple)',
     icon: Memory,
     title: displayMemoryCapacityBytes() > 0
-      ? joinParts([memoryOverviewManufacturer.value, `${bytesToGB(displayMemoryCapacityBytes())} GB`], ' · ')
-      : memoryOverviewManufacturer.value || '读取中',
-    lines: memoryOverviewLines(),
+      ? `${bytesToGB(displayMemoryCapacityBytes())} GB`
+      : '读取中',
+    lines: [memoryOverviewManufacturer.value, ...memoryOverviewLines()].filter(Boolean),
   },
   {
     id: 'storage',
@@ -706,17 +725,18 @@ useActivePageLifecycle(
 
 <template>
   <div class="dashboard-page">
-    <StateBlock
-      v-if="!loading && pageStateBlock"
-      :variant="pageStateBlock.variant"
-      :title="pageStateBlock.title"
-      :description="pageStateBlock.description"
-      :action-label="pageStateBlock.actionLabel"
-      @retry="retryOverviewPage"
-    />
-
-    <div v-else class="dashboard-scroll">
+    <div class="dashboard-scroll">
       <div class="dashboard-shell">
+        <StateBlock
+          v-if="pageStateBlock"
+          compact
+          :variant="pageStateBlock.variant"
+          :title="pageStateBlock.title"
+          :description="pageStateBlock.description"
+          :action-label="pageStateBlock.actionLabel"
+          @retry="retryOverviewPage"
+        />
+
         <div v-if="loading || !initialized" class="overview-progress" role="status" aria-live="polite">
           <span class="overview-progress__dot" aria-hidden="true"></span>
           <span>{{ loading ? '正在读取核心硬件信息，已返回的数据会立即显示' : '首屏已就绪，正在后台补齐详细硬件信息' }}</span>
@@ -775,7 +795,7 @@ useActivePageLifecycle(
         </section>
 
         <section class="detail-panel">
-          <div class="panel-heading">
+          <div class="panel-heading hardware-section-heading">
             <h3>详细信息</h3>
             <span>首屏优先展示常用摘要</span>
           </div>
@@ -824,7 +844,7 @@ useActivePageLifecycle(
   min-height: 34px;
   padding: 7px 12px;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: rgba(43, 114, 255, 0.07);
   color: var(--text-muted);
   font-size: 12px;
@@ -859,7 +879,7 @@ useActivePageLifecycle(
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -874,7 +894,7 @@ useActivePageLifecycle(
 
 .summary-card {
   min-width: 0;
-  min-height: 172px;
+  min-height: 148px;
   padding: var(--surface-padding);
   overflow: hidden;
 }
@@ -886,7 +906,7 @@ useActivePageLifecycle(
   width: 36px;
   height: 36px;
   margin-bottom: 10px;
-  border-radius: 12px;
+  border-radius: var(--icon-radius);
   background: var(--surface-icon-background);
   box-shadow: inset 0 0 0 1px var(--surface-inset-highlight);
 }
@@ -986,7 +1006,7 @@ useActivePageLifecycle(
 
 .diagnostics-card {
   border: 1px solid var(--panel-border-soft);
-  border-radius: 14px;
+  border-radius: var(--frame-radius);
   padding: 14px 16px;
   background: var(--surface-softer-background);
 }
@@ -1086,6 +1106,12 @@ useActivePageLifecycle(
 @media (max-width: 1480px) {
   .detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1900px) {
+  .summary-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 

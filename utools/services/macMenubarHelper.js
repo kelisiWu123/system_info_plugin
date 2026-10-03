@@ -11,8 +11,9 @@ let menubarConfiguredPluginRoot = ''
 const MENUBAR_STATE_DIRECTORY = path.join(os.tmpdir(), 'system-info-plugin', 'macos-menubar')
 const MENUBAR_OWNER_RECORD_PATH = path.join(MENUBAR_STATE_DIRECTORY, 'owner.json')
 const MENUBAR_TELEMETRY_PATH = path.join(MENUBAR_STATE_DIRECTORY, 'telemetry.json')
+const MENUBAR_COMMAND_PATH = path.join(MENUBAR_STATE_DIRECTORY, 'command.json')
 const MENUBAR_LOCK_PATH = path.join(MENUBAR_STATE_DIRECTORY, 'helper.lock')
-const MENUBAR_PROTOCOL_VERSION = 4
+const MENUBAR_PROTOCOL_VERSION = 6
 const MENUBAR_OWNER_STARTING_TTL_MS = 5000
 
 function isMacOS() {
@@ -312,6 +313,7 @@ export function startMacMenubarHelper(options = {}) {
     const child = spawn(executablePath, [], {
       env: {
         ...process.env,
+        HWINFOX_MENUBAR_COMMAND_PATH: MENUBAR_COMMAND_PATH,
         HWINFOX_MENUBAR_TELEMETRY_PATH: MENUBAR_TELEMETRY_PATH,
         HWINFOX_MENUBAR_LOCK_PATH: MENUBAR_LOCK_PATH,
         HWINFOX_MENUBAR_SCHEDULER_PATH: path.join(MENUBAR_STATE_DIRECTORY, 'scheduler.json'),
@@ -428,4 +430,47 @@ export function updateMacMenubarTelemetry(telemetry = {}) {
   }
 
   return writeMenubarTelemetry(payload) && getMacMenubarStatus().running
+}
+
+
+let menubarCommandHandler = null
+let menubarCommandTimer
+
+function processPendingMacMenubarCommand() {
+  if (!menubarCommandHandler) return
+  const claimedPath = `${MENUBAR_COMMAND_PATH}.${process.pid}.${Math.random().toString(36).slice(2)}.claimed`
+  try {
+    // A rename atomically claims the command across all preload contexts.
+    fs.renameSync(MENUBAR_COMMAND_PATH, claimedPath)
+  } catch {
+    return
+  }
+  try {
+    const command = JSON.parse(fs.readFileSync(claimedPath, 'utf8'))
+    const age = Date.now() - command?.createdAt
+    const status = getMacMenubarStatus()
+    if (command?.action !== 'openPreset' || !['a_computer', 'a_menubar_settings'].includes(command.preset)
+      || typeof command.id !== 'string' || !command.id
+      || !Number.isFinite(age) || age < 0 || age > 30000
+      || !status.running || command.helperPid !== status.pid) return
+    Promise.resolve(menubarCommandHandler(command)).catch((error) => {
+      console.error('[macMenubarHelper] open-main command failed:', error)
+    })
+  } catch (error) {
+    console.warn('[macMenubarHelper] invalid command:', error)
+  } finally {
+    try { fs.unlinkSync(claimedPath) } catch { /* Already consumed. */ }
+  }
+}
+
+export function setMacMenubarCommandHandler(handler) {
+  menubarCommandHandler = typeof handler === 'function' ? handler : null
+  if (menubarCommandTimer) {
+    clearInterval(menubarCommandTimer)
+    menubarCommandTimer = undefined
+  }
+  if (!isMacOS() || !menubarCommandHandler) return
+  fs.mkdirSync(MENUBAR_STATE_DIRECTORY, { recursive: true })
+  menubarCommandTimer = setInterval(processPendingMacMenubarCommand, 100)
+  menubarCommandTimer.unref?.()
 }

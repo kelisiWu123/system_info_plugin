@@ -1,4 +1,5 @@
 import { reactive, ref } from 'vue'
+import { settleMetric, subscribeHardwareMetrics, hasSharedHardwareTelemetry, refreshSharedHardwareMetrics, isOlderMetricSample, getHardwareMetricState } from '../utils/metricRefresh'
 import {
   appendMetricHistory,
   createMonitoringDiagnostics,
@@ -214,10 +215,57 @@ function getEffectiveMonitoringOptions(): {
 
 function getCurrentRefreshIntervals() {
   const { profile } = getEffectiveMonitoringOptions()
-  if (profile === 'balanced') {
-    return getMonitoringRefreshIntervals('balanced', backgroundThrottled.value)
-  }
   return getMonitoringRefreshIntervals(profile, backgroundThrottled.value)
+}
+
+function setProcessorMetricState(metric: HardwareTelemetryKey, key: ProcessorServiceKey, value: unknown) {
+  const state = getHardwareMetricState(metric, value)
+  setFetchState(key, state.status, state.note)
+}
+
+let stopSharedTelemetry: (() => void) | undefined
+function subscribeProcessorTelemetry() {
+  if (stopSharedTelemetry) return
+  stopSharedTelemetry = subscribeHardwareMetrics({
+    cpuLoad: (value, at) => {
+      cpuLoadData.value = value
+      setFetchState('cpuLoadData', 'ok', '')
+      appendMetricHistory(metricHistory.cpuLoad, value.currentLoad, true, 24, at)
+      lastSyncedAt.value = Math.max(lastSyncedAt.value ?? 0, at)
+    },
+    cpuTemperature: (value, at) => {
+      cpuTemperature.value = value
+      setProcessorMetricState('cpuTemperature', 'cpuTemperature', value)
+      if (getHardwareMetricState('cpuTemperature', value).status === 'ok') lastSyncedAt.value = Math.max(lastSyncedAt.value ?? 0, at)
+      if (getHardwareMetricState('cpuTemperature', value).status === 'ok' && value) appendMetricHistory(metricHistory.cpuTemp, value.value ?? value.main ?? 0, false, 24, at)
+    },
+    cpuFrequency: (value, at) => {
+      cpuCurrentSpeed.value = value
+      setProcessorMetricState('cpuFrequency', 'cpuCurrentSpeed', value)
+      if (getHardwareMetricState('cpuFrequency', value).status === 'ok') lastSyncedAt.value = Math.max(lastSyncedAt.value ?? 0, at)
+      appendMetricHistory(metricHistory.cpuSpeed, getDisplayCpuCurrentSpeedGHz(value), false, 24, at)
+    },
+    cpuPower: (value, at) => {
+      cpuPower.value = value
+      setProcessorMetricState('cpuPower', 'cpuPower', value)
+      if (getHardwareMetricState('cpuPower', value).status === 'ok') lastSyncedAt.value = Math.max(lastSyncedAt.value ?? 0, at)
+      if (value && getHardwareMetricState('cpuPower', value).status === 'ok') appendMetricHistory(metricHistory.cpuPower, value.value ?? 0, false, 24, at)
+    },
+    cpuVoltage: (value, at) => {
+      cpuVoltage.value = value
+      setProcessorMetricState('cpuVoltage', 'cpuVoltage', value)
+      if (getHardwareMetricState('cpuVoltage', value).status === 'ok') lastSyncedAt.value = Math.max(lastSyncedAt.value ?? 0, at)
+      if (value && getHardwareMetricState('cpuVoltage', value).status === 'ok') appendMetricHistory(metricHistory.cpuVoltage, value.value ?? 0, false, 24, at)
+    },
+    fanSpeed: (value) => { cpuFanSpeed.value = value; setProcessorMetricState('fanSpeed', 'cpuFanSpeed', value) },
+  }, (key, error) => {
+    const keys: Partial<Record<HardwareTelemetryKey, ProcessorServiceKey>> = {
+      cpuLoad: 'cpuLoadData', cpuTemperature: 'cpuTemperature', cpuFrequency: 'cpuCurrentSpeed',
+      cpuPower: 'cpuPower', cpuVoltage: 'cpuVoltage', fanSpeed: 'cpuFanSpeed',
+    }
+    const serviceKey = keys[key]
+    if (serviceKey) setFetchState(serviceKey, 'error', error)
+  })
 }
 
 function hasActiveRefreshIntervals() {
@@ -291,6 +339,7 @@ async function refreshProcessorDynamicMetrics(force = false) {
 
   refreshInFlight = (async () => {
     try {
+      const shared = hasSharedHardwareTelemetry()
       const intervals = getCurrentRefreshIntervals()
       diagnostics.markRefreshAttempt(force, backgroundThrottled.value)
       if (!force && !hasActiveRefreshIntervals()) {
@@ -299,14 +348,14 @@ async function refreshProcessorDynamicMetrics(force = false) {
       }
 
       const now = Date.now()
-      const needsCpuTemp = intervals.cpuTemp > 0 && (force || now - lastCpuTempRefreshAt >= intervals.cpuTemp)
-      const needsCpuLoad = intervals.cpuLoadDetail > 0 && (force || now - lastCpuLoadRefreshAt >= intervals.cpuLoadDetail)
-      const needsCpuSpeed = intervals.cpuSpeed > 0 && (force || now - lastCpuSpeedRefreshAt >= intervals.cpuSpeed)
+      const needsCpuTemp = !shared && intervals.cpuTemp > 0 && (force || now - lastCpuTempRefreshAt >= intervals.cpuTemp)
+      const needsCpuLoad = !shared && intervals.cpuLoadDetail > 0 && (force || now - lastCpuLoadRefreshAt >= intervals.cpuLoadDetail)
+      const needsCpuSpeed = !shared && intervals.cpuSpeed > 0 && (force || now - lastCpuSpeedRefreshAt >= intervals.cpuSpeed)
       // A forced refresh is used when a sensor helper becomes ready or the
       // user explicitly retries. It must still fetch voltage/power while the
       // page is temporarily background-throttled; otherwise these cards can
       // remain permanently pending until the next foreground transition.
-      const needsCpuAux = force || (intervals.cpuAux > 0 && now - lastCpuAuxRefreshAt >= intervals.cpuAux)
+      const needsCpuAux = !shared && (force || (intervals.cpuAux > 0 && now - lastCpuAuxRefreshAt >= intervals.cpuAux))
       const needsTime = intervals.time > 0 && (force || now - lastTimeRefreshAt >= intervals.time)
 
       if (!force && !needsCpuTemp && !needsCpuLoad && !needsCpuSpeed && !needsCpuAux && !needsTime) {
@@ -314,103 +363,109 @@ async function refreshProcessorDynamicMetrics(force = false) {
         return
       }
 
-      const [temperatureRes, cpuLoadRes, cpuSpeedRes, cpuPowerRes, cpuVoltageRes, cpuFanRes, timeRes] = await Promise.allSettled([
-        needsCpuTemp ? readService(() => window.services.getCpuTemperature(), 9000) : Promise.resolve(undefined),
-        needsCpuLoad ? readService(() => window.services.getCpuLoadData(), 7000) : Promise.resolve(undefined),
-        needsCpuSpeed ? readService(() => window.services.getCpuCurrentSpeed(), 7000) : Promise.resolve(undefined),
-        needsCpuAux ? readService(() => window.services.getCpuPower(), 7000) : Promise.resolve(undefined),
-        needsCpuAux ? readService(() => window.services.getCpuVoltage(), 7000) : Promise.resolve(undefined),
-        needsCpuAux ? readService(() => window.services.getCpuFanSpeed(), 7000) : Promise.resolve(undefined),
-        needsTime ? readService(() => window.services.getTimeInfo(), 6000) : Promise.resolve(undefined),
+      let hasUpdatedDynamicMetric = false
+      await Promise.all([
+        settleMetric(needsCpuTemp ? readService(() => window.services.getCpuTemperature(), 9000) : Promise.resolve(undefined), async (temperatureRes) => {
+          if (needsCpuTemp && temperatureRes.status === 'fulfilled') {
+            const nextCpuTemperature = await retryMissingCpuTemperature(temperatureRes.value)
+            if (isOlderMetricSample(nextCpuTemperature, cpuTemperature.value)) return
+            cpuTemperature.value = nextCpuTemperature
+            const nextCpuTemperatureValue =
+              typeof nextCpuTemperature?.value === 'number'
+                ? nextCpuTemperature.value
+                : typeof nextCpuTemperature?.main === 'number'
+                  ? nextCpuTemperature.main
+                  : 0
+            setProcessorMetricState('cpuTemperature', 'cpuTemperature', nextCpuTemperature)
+            if (getHardwareMetricState('cpuTemperature', nextCpuTemperature).status === 'ok') appendMetricHistory(metricHistory.cpuTemp, nextCpuTemperatureValue, false, 24, nextCpuTemperature?.sampledAt)
+            lastCpuTempRefreshAt = now
+            hasUpdatedDynamicMetric = true
+          } else if (needsCpuTemp && temperatureRes.status === 'rejected') {
+            setFetchState('cpuTemperature', 'error', normalizeErrorMessage(temperatureRes.reason))
+          }
+
+        }),
+        settleMetric(needsCpuLoad ? readService(() => window.services.getCpuLoadData(), 7000) : Promise.resolve(undefined), async (cpuLoadRes) => {
+          if (needsCpuLoad && cpuLoadRes.status === 'fulfilled' && !isOlderMetricSample(cpuLoadRes.value, cpuLoadData.value)) {
+            cpuLoadData.value = cpuLoadRes.value || emptyCurrentLoadData
+            setFetchState('cpuLoadData', cpuLoadRes.value ? 'ok' : 'missing', cpuLoadRes.value ? '' : '返回为空')
+            appendMetricHistory(metricHistory.cpuLoad, cpuLoadData.value.currentLoad || 0, true, 24, cpuLoadData.value.sampledAt)
+            lastCpuLoadRefreshAt = now
+            hasUpdatedDynamicMetric = true
+          } else if (needsCpuLoad && cpuLoadRes.status === 'rejected') {
+            setFetchState('cpuLoadData', 'error', normalizeErrorMessage(cpuLoadRes.reason))
+          }
+
+        }),
+        settleMetric(needsCpuSpeed ? readService(() => window.services.getCpuCurrentSpeed(), 7000) : Promise.resolve(undefined), async (cpuSpeedRes) => {
+          if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
+            const nextCpuSpeed = await retrySystemInformationCpuSpeed(cpuSpeedRes.value)
+            if (isOlderMetricSample(nextCpuSpeed, cpuCurrentSpeed.value)) return
+            cpuCurrentSpeed.value = nextCpuSpeed || emptyCpuCurrentSpeedData
+            setProcessorMetricState('cpuFrequency', 'cpuCurrentSpeed', nextCpuSpeed)
+            appendMetricHistory(metricHistory.cpuSpeed, getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value), false, 24, cpuCurrentSpeed.value.sampledAt)
+            lastCpuSpeedRefreshAt = now
+            hasUpdatedDynamicMetric = true
+          } else if (needsCpuSpeed && cpuSpeedRes.status === 'rejected') {
+            setFetchState('cpuCurrentSpeed', 'error', normalizeErrorMessage(cpuSpeedRes.reason))
+          }
+
+        }),
+        settleMetric(needsCpuAux ? readService(() => window.services.getCpuPower(), 7000) : Promise.resolve(undefined), async (cpuPowerRes) => {
+          if (needsCpuAux && cpuPowerRes.status === 'fulfilled') {
+            const nextCpuPower = await retryMissingCpuPower(cpuPowerRes.value)
+            if (isOlderMetricSample(nextCpuPower, cpuPower.value)) return
+            cpuPower.value = nextCpuPower
+            setProcessorMetricState('cpuPower', 'cpuPower', nextCpuPower)
+            if (getHardwareMetricState('cpuPower', nextCpuPower).status === 'ok') appendMetricHistory(metricHistory.cpuPower, nextCpuPower?.value || 0, false, 24, nextCpuPower?.sampledAt)
+            hasUpdatedDynamicMetric = true
+          } else if (needsCpuAux && cpuPowerRes.status === 'rejected') {
+            setFetchState('cpuPower', 'error', normalizeErrorMessage(cpuPowerRes.reason))
+          }
+
+        }),
+        settleMetric(needsCpuAux ? readService(() => window.services.getCpuVoltage(), 7000) : Promise.resolve(undefined), async (cpuVoltageRes) => {
+          if (needsCpuAux && cpuVoltageRes.status === 'fulfilled') {
+            const nextCpuVoltage = await retryMissingCpuVoltage(cpuVoltageRes.value)
+            if (isOlderMetricSample(nextCpuVoltage, cpuVoltage.value)) return
+            cpuVoltage.value = nextCpuVoltage
+            setProcessorMetricState('cpuVoltage', 'cpuVoltage', nextCpuVoltage)
+            if (getHardwareMetricState('cpuVoltage', nextCpuVoltage).status === 'ok') appendMetricHistory(metricHistory.cpuVoltage, nextCpuVoltage?.value || 0, false, 24, nextCpuVoltage?.sampledAt)
+            hasUpdatedDynamicMetric = true
+          } else if (needsCpuAux && cpuVoltageRes.status === 'rejected') {
+            setFetchState('cpuVoltage', 'error', normalizeErrorMessage(cpuVoltageRes.reason))
+          }
+
+        }),
+        settleMetric(needsCpuAux ? readService(() => window.services.getCpuFanSpeed(), 7000) : Promise.resolve(undefined), async (cpuFanRes) => {
+          if (needsCpuAux && cpuFanRes.status === 'fulfilled') {
+            cpuFanSpeed.value = cpuFanRes.value
+            setProcessorMetricState('fanSpeed', 'cpuFanSpeed', cpuFanRes.value)
+            hasUpdatedDynamicMetric = true
+          } else if (needsCpuAux && cpuFanRes.status === 'rejected') {
+            setFetchState('cpuFanSpeed', 'error', normalizeErrorMessage(cpuFanRes.reason))
+          }
+
+          if (needsCpuAux) {
+            lastCpuAuxRefreshAt = now
+          }
+
+        }),
+        settleMetric(needsTime ? readService(() => window.services.getTimeInfo(), 6000) : Promise.resolve(undefined), async (timeRes) => {
+          if (needsTime && timeRes.status === 'fulfilled') {
+            timeInfo.value = timeRes.value
+            setFetchState('timeInfo', timeRes.value ? 'ok' : 'missing', timeRes.value ? '' : '返回为空')
+            lastTimeRefreshAt = now
+            hasUpdatedDynamicMetric = true
+          } else if (needsTime && timeRes.status === 'rejected') {
+            setFetchState('timeInfo', 'error', normalizeErrorMessage(timeRes.reason))
+          }
+
+        }),
       ])
 
-      let hasUpdatedDynamicMetric = false
-
-      if (needsCpuTemp && temperatureRes.status === 'fulfilled') {
-        const nextCpuTemperature = await retryMissingCpuTemperature(temperatureRes.value)
-        cpuTemperature.value = nextCpuTemperature
-        const nextCpuTemperatureValue =
-          typeof nextCpuTemperature?.value === 'number'
-            ? nextCpuTemperature.value
-            : typeof nextCpuTemperature?.main === 'number'
-              ? nextCpuTemperature.main
-              : 0
-        setFetchState(
-          'cpuTemperature',
-          nextCpuTemperatureValue > 0 || nextCpuTemperature?.source === 'unsupported' ? 'ok' : 'missing',
-          nextCpuTemperatureValue > 0 ? '' : nextCpuTemperature?.message || nextCpuTemperature?.errorCode || 'main 为空'
-        )
-        appendMetricHistory(metricHistory.cpuTemp, nextCpuTemperatureValue)
-        lastCpuTempRefreshAt = now
-        hasUpdatedDynamicMetric = true
-      } else if (needsCpuTemp && temperatureRes.status === 'rejected') {
-        setFetchState('cpuTemperature', 'error', normalizeErrorMessage(temperatureRes.reason))
-      }
-
-      if (needsCpuLoad && cpuLoadRes.status === 'fulfilled') {
-        cpuLoadData.value = cpuLoadRes.value || emptyCurrentLoadData
-        setFetchState('cpuLoadData', cpuLoadRes.value ? 'ok' : 'missing', cpuLoadRes.value ? '' : '返回为空')
-        appendMetricHistory(metricHistory.cpuLoad, cpuLoadData.value.currentLoad || 0, true)
-        lastCpuLoadRefreshAt = now
-        hasUpdatedDynamicMetric = true
-      } else if (needsCpuLoad && cpuLoadRes.status === 'rejected') {
-        setFetchState('cpuLoadData', 'error', normalizeErrorMessage(cpuLoadRes.reason))
-      }
-
-      if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
-        const nextCpuSpeed = await retrySystemInformationCpuSpeed(cpuSpeedRes.value)
-        cpuCurrentSpeed.value = nextCpuSpeed || emptyCpuCurrentSpeedData
-        setFetchState('cpuCurrentSpeed', nextCpuSpeed ? 'ok' : 'missing', nextCpuSpeed ? '' : '返回为空')
-        appendMetricHistory(metricHistory.cpuSpeed, getDisplayCpuCurrentSpeedGHz(cpuCurrentSpeed.value))
-        lastCpuSpeedRefreshAt = now
-        hasUpdatedDynamicMetric = true
-      } else if (needsCpuSpeed && cpuSpeedRes.status === 'rejected') {
-        setFetchState('cpuCurrentSpeed', 'error', normalizeErrorMessage(cpuSpeedRes.reason))
-      }
-
-      if (needsCpuAux && cpuPowerRes.status === 'fulfilled') {
-        const nextCpuPower = await retryMissingCpuPower(cpuPowerRes.value)
-        cpuPower.value = nextCpuPower
-        setFetchState('cpuPower', nextCpuPower ? 'ok' : 'missing', nextCpuPower ? '' : '返回为空')
-        appendMetricHistory(metricHistory.cpuPower, nextCpuPower?.value || 0)
-        hasUpdatedDynamicMetric = true
-      } else if (needsCpuAux && cpuPowerRes.status === 'rejected') {
-        setFetchState('cpuPower', 'error', normalizeErrorMessage(cpuPowerRes.reason))
-      }
-
-      if (needsCpuAux && cpuVoltageRes.status === 'fulfilled') {
-        const nextCpuVoltage = await retryMissingCpuVoltage(cpuVoltageRes.value)
-        cpuVoltage.value = nextCpuVoltage
-        setFetchState('cpuVoltage', nextCpuVoltage ? 'ok' : 'missing', nextCpuVoltage ? '' : '返回为空')
-        appendMetricHistory(metricHistory.cpuVoltage, nextCpuVoltage?.value || 0)
-        hasUpdatedDynamicMetric = true
-      } else if (needsCpuAux && cpuVoltageRes.status === 'rejected') {
-        setFetchState('cpuVoltage', 'error', normalizeErrorMessage(cpuVoltageRes.reason))
-      }
-
-      if (needsCpuAux && cpuFanRes.status === 'fulfilled') {
-        cpuFanSpeed.value = cpuFanRes.value
-        setFetchState('cpuFanSpeed', cpuFanRes.value ? 'ok' : 'missing', cpuFanRes.value ? '' : '返回为空')
-        hasUpdatedDynamicMetric = true
-      } else if (needsCpuAux && cpuFanRes.status === 'rejected') {
-        setFetchState('cpuFanSpeed', 'error', normalizeErrorMessage(cpuFanRes.reason))
-      }
-
-      if (needsCpuAux) {
-        lastCpuAuxRefreshAt = now
-      }
-
-      if (needsTime && timeRes.status === 'fulfilled') {
-        timeInfo.value = timeRes.value
-        setFetchState('timeInfo', timeRes.value ? 'ok' : 'missing', timeRes.value ? '' : '返回为空')
-        lastTimeRefreshAt = now
-        hasUpdatedDynamicMetric = true
-      } else if (needsTime && timeRes.status === 'rejected') {
-        setFetchState('timeInfo', 'error', normalizeErrorMessage(timeRes.reason))
-      }
-
       if (hasUpdatedDynamicMetric) {
-        lastSyncedAt.value = Date.now()
+        if (!shared) lastSyncedAt.value = Date.now()
         diagnostics.markRefreshSuccess(backgroundThrottled.value)
       } else {
         diagnostics.markRefreshSkipped('no-metric-updated', backgroundThrottled.value)
@@ -425,41 +480,43 @@ async function refreshProcessorDynamicMetrics(force = false) {
 
 async function initProcessorHardwareData() {
   try {
-    const [cpuRes, boardRes, biosRes, osRes] = await Promise.allSettled([
-      readService(() => window.services.getCpuInfo(), 10000, 1),
-      readService(() => window.services.getBoardData(), 8000, 1),
-      readService(() => window.services.getBiosData(), 10000, 1),
-      readService(() => window.services.getOsInfo(), 8000, 1),
+    await Promise.all([
+      settleMetric(readService(() => window.services.getCpuInfo(), 10000, 1), (cpuRes) => {
+        if (cpuRes.status === 'fulfilled') {
+          cpuData.value = cpuRes.value
+          if (cpuRes.value) loading.value = false
+          setFetchState('cpuInfo', cpuRes.value ? 'ok' : 'missing', cpuRes.value ? '' : '返回为空')
+        } else {
+          setFetchState('cpuInfo', 'error', normalizeErrorMessage(cpuRes.reason))
+        }
+      }),
+      settleMetric(readService(() => window.services.getBoardData(), 8000, 1), (boardRes) => {
+        if (boardRes.status === 'fulfilled') {
+          boardData.value = boardRes.value
+          setFetchState('boardData', boardRes.value ? 'ok' : 'missing', boardRes.value ? '' : '返回为空')
+        } else {
+          setFetchState('boardData', 'error', normalizeErrorMessage(boardRes.reason))
+        }
+      }),
+      settleMetric(readService(() => window.services.getBiosData(), 10000, 1), (biosRes) => {
+        if (biosRes.status === 'fulfilled') {
+          biosData.value = biosRes.value
+          setFetchState('biosData', biosRes.value ? 'ok' : 'missing', biosRes.value ? '' : '返回为空')
+        } else {
+          setFetchState('biosData', 'error', normalizeErrorMessage(biosRes.reason))
+        }
+      }),
+      settleMetric(readService(() => window.services.getOsInfo(), 8000, 1), (osRes) => {
+        if (osRes.status === 'fulfilled') {
+          osInfo.value = osRes.value
+          setFetchState('osInfo', osRes.value ? 'ok' : 'missing', osRes.value ? '' : '返回为空')
+        } else {
+          setFetchState('osInfo', 'error', normalizeErrorMessage(osRes.reason))
+        }
+      }),
     ])
 
-    if (cpuRes.status === 'fulfilled') {
-      cpuData.value = cpuRes.value
-      setFetchState('cpuInfo', cpuRes.value ? 'ok' : 'missing', cpuRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('cpuInfo', 'error', normalizeErrorMessage(cpuRes.reason))
-    }
-
-    if (boardRes.status === 'fulfilled') {
-      boardData.value = boardRes.value
-      setFetchState('boardData', boardRes.value ? 'ok' : 'missing', boardRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('boardData', 'error', normalizeErrorMessage(boardRes.reason))
-    }
-
-    if (biosRes.status === 'fulfilled') {
-      biosData.value = biosRes.value
-      setFetchState('biosData', biosRes.value ? 'ok' : 'missing', biosRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('biosData', 'error', normalizeErrorMessage(biosRes.reason))
-    }
-
-    if (osRes.status === 'fulfilled') {
-      osInfo.value = osRes.value
-      setFetchState('osInfo', osRes.value ? 'ok' : 'missing', osRes.value ? '' : '返回为空')
-    } else {
-      setFetchState('osInfo', 'error', normalizeErrorMessage(osRes.reason))
-    }
-
+    loading.value = false
     await refreshProcessorDynamicMetrics(true)
   } finally {
     initialized.value = true
@@ -479,6 +536,7 @@ export async function activateProcessorHardwareStore(options?: ProcessorStoreAct
   })
 
   subscriberCount = activeSubscriberSessions.size
+  subscribeProcessorTelemetry()
   diagnostics.markActivated(subscriberCount)
   syncMonitoringVisibility()
 
@@ -500,22 +558,18 @@ export async function activateProcessorHardwareStore(options?: ProcessorStoreAct
 }
 
 export async function refreshProcessorHardwareDynamicMetrics() {
+  await refreshSharedHardwareMetrics(['cpuLoad', 'cpuTemperature', 'cpuFrequency', 'cpuPower', 'cpuVoltage', 'fanSpeed'])
   await refreshProcessorDynamicMetrics(true)
 }
 
 export async function refreshProcessorHardwareData() {
-  if (!initialized.value) {
-    if (!initPromise) {
-      initPromise = initProcessorHardwareData().finally(() => {
-        initPromise = undefined
-      })
-    }
-
-    await initPromise
-    return
+  window.services.invalidateHardwareInfoCache?.(['cpuInfo', 'boardData', 'biosData', 'osInfo'])
+  await refreshSharedHardwareMetrics(['cpuLoad', 'cpuTemperature', 'cpuFrequency', 'cpuPower', 'cpuVoltage', 'fanSpeed'])
+  if (initPromise) await initPromise
+  if (!initPromise) {
+    initPromise = initProcessorHardwareData().finally(() => { initPromise = undefined })
   }
-
-  await refreshProcessorDynamicMetrics(true)
+  await initPromise
 }
 
 export function deactivateProcessorHardwareStore(sessionId?: number) {
@@ -532,6 +586,8 @@ export function deactivateProcessorHardwareStore(sessionId?: number) {
   diagnostics.markDeactivated(subscriberCount)
 
   if (subscriberCount <= 0) {
+    stopSharedTelemetry?.()
+    stopSharedTelemetry = undefined
     stopPolling()
     return
   }

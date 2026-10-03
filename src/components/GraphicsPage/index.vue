@@ -11,6 +11,8 @@ import { clampPercent, formatDisplayResolution } from '../../utils'
 import { formatGpuTemperatureSensorLabel, getGpuIdlePercent, getGraphicsPlatformPanelVisibility } from '../../utils/gpu'
 import { normalizeOsPlatform } from '../../utils/platform'
 import StateBlock from '../common/StateBlock.vue'
+import HardwareIdentity from '../common/HardwareIdentity.vue'
+import HardwareMetric from '../common/HardwareMetric.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 import { getServiceErrorDescription } from '../../utils/serviceReader'
 
@@ -37,6 +39,7 @@ interface MonitorCard {
   footerLeft?: string
   footerRight?: string
   unsupported?: boolean
+  staticValue?: boolean
 }
 
 interface StatRow {
@@ -78,7 +81,7 @@ const pageStateBlock = computed(() => {
   if (fetchState.gpuInfo.status === 'error') {
     return {
       variant: 'error' as const,
-      title: '显卡数据读取失败',
+      title: primaryGpu.value ? '部分数据暂未更新，保留上次读数' : '显卡数据读取失败',
       description: getServiceErrorDescription(
         fetchState.gpuInfo.note,
         '读取显卡信息时发生异常，可以重试该模块。'
@@ -140,13 +143,6 @@ function buildHistoryFooter(values: number[], current: number | null, format: (v
   }
 }
 
-function ringStyle(percent: number, accent: string) {
-  const bounded = Math.max(0, Math.min(100, percent))
-  return {
-    background: `conic-gradient(${accent} 0deg ${(bounded / 100) * 360}deg, var(--gauge-track) ${(bounded / 100) * 360}deg 360deg)`,
-  }
-}
-
 function sparklinePoints(values: number[]) {
   const source = values.length ? values : [0, 0, 0, 0, 0, 0]
   const min = Math.min(...source)
@@ -157,7 +153,7 @@ function sparklinePoints(values: number[]) {
   return source
     .map((value, index) => {
       const x = Number((index * step).toFixed(2))
-      const y = Number((34 - ((value - min) / range) * 24).toFixed(2))
+      const y = Number((30 - ((value - min) / range) * 22).toFixed(2))
       return `${x},${y}`
     })
     .join(' ')
@@ -250,9 +246,20 @@ function formatDisplayLine(item: DisplayData) {
   return joinParts([item.model || item.deviceName, resolution, refresh], ' / ')
 }
 
-function inferHealthState(gpu: GpuData | undefined) {
+function inferHealthState(gpu: GpuData | undefined, hasReadError = false) {
   const temp = safeNumber(gpu?.temperatureGpu)
   const load = safeNumber(gpu?.utilizationGpu)
+
+  if (hasReadError) {
+    const hasLiveMetrics = temp !== null || load !== null
+    return {
+      title: hasLiveMetrics ? '部分数据可用' : '状态待更新',
+      subtitle: hasLiveMetrics
+        ? '显卡信息读取异常，健康状态按已到达的实时数据判断'
+        : '显示上次读数，当前健康状态无法确认',
+      accent: 'var(--accent-yellow)',
+    }
+  }
 
   if (temp === null && load === null) {
     return {
@@ -278,64 +285,14 @@ function inferHealthState(gpu: GpuData | undefined) {
     }
   }
 
+  if (temp === null || load === null) {
+    return { title: '部分数据可用', subtitle: '温度或负载数据未提供，无法完整判断状态', accent: 'var(--text-subtle)' }
+  }
+
   return {
     title: '运行良好',
     subtitle: 'GPU 当前状态正常',
     accent: 'var(--accent-green)',
-  }
-}
-
-function gpuBadgeData(gpu?: GpuData) {
-  const vendor = cleanText(gpu?.vendor)
-  const model = cleanText(gpu?.model || gpu?.name)
-  const haystack = `${vendor} ${model}`.toLowerCase()
-
-  if (haystack.includes('nvidia') || haystack.includes('geforce')) {
-    return {
-      top: 'GEFORCE',
-      middle: model.match(/rtx|gtx/i)?.[0]?.toUpperCase() || 'RTX',
-      bottom: 'gpu',
-      variant: 'nvidia',
-      compact: false,
-    }
-  }
-
-  if (haystack.includes('amd') || haystack.includes('radeon')) {
-    return {
-      top: 'RADEON',
-      middle: model.match(/rx\s*\d+/i)?.[0]?.toUpperCase() || 'AMD',
-      bottom: 'gpu',
-      variant: 'amd',
-      compact: false,
-    }
-  }
-
-  if (haystack.includes('apple')) {
-    return {
-      top: 'apple',
-      middle: 'GPU',
-      bottom: 'soc',
-      variant: 'apple',
-      compact: true,
-    }
-  }
-
-  if (haystack.includes('intel')) {
-    return {
-      top: 'intel',
-      middle: model.match(/arc|iris|uhd/i)?.[0]?.toUpperCase() || 'GPU',
-      bottom: 'graphics',
-      variant: 'intel',
-      compact: true,
-    }
-  }
-
-  return {
-    top: vendor || 'GPU',
-    middle: 'GRAPHICS',
-    bottom: 'chip',
-    variant: 'generic',
-    compact: true,
   }
 }
 
@@ -345,8 +302,13 @@ const connectedDisplays = computed(() =>
 const mainDisplay = computed(() => connectedDisplays.value.find((item) => item.main) || connectedDisplays.value[0])
 const normalizedGraphicsPlatform = computed(() => normalizeOsPlatform(osInfo.value))
 const graphicsPlatformPanels = computed(() => getGraphicsPlatformPanelVisibility(normalizedGraphicsPlatform.value))
-const healthState = computed(() => inferHealthState(primaryGpu.value))
-const badgeMeta = computed(() => gpuBadgeData(primaryGpu.value))
+const isAppleUnifiedMemoryGpu = computed(() => {
+  const gpu = primaryGpu.value
+  const identity = `${cleanText(gpu?.vendor)} ${cleanText(gpu?.model)} ${cleanText(gpu?.name)}`
+  return normalizedGraphicsPlatform.value === 'darwin'
+    && (/apple/i.test(identity) || /built[- ]in/i.test(cleanText(gpu?.bus)))
+})
+const healthState = computed(() => inferHealthState(primaryGpu.value, fetchState.gpuInfo.status === 'error'))
 
 const heroSpecs = computed(() => {
   const gpu = primaryGpu.value
@@ -354,11 +316,14 @@ const heroSpecs = computed(() => {
     { label: '架构', value: cleanText(gpu?.vendor).includes('NVIDIA') ? 'NVIDIA 架构' : cleanText(gpu?.vendor) || '--' },
     { label: '型号 / 核心', value: joinParts([gpu?.model || gpu?.name, gpu?.cores ? `${gpu.cores} cores` : ''], ' / ') || '--' },
     { label: '总线 / 接口', value: joinParts([gpu?.bus, gpu?.pciBus], ' / ') || '--' },
-    { label: '显存容量', value: formatMemoryAmount(gpu?.memoryTotal || gpu?.vram || null) },
+    {
+      label: isAppleUnifiedMemoryGpu.value ? '显存架构' : '显存容量',
+      value: isAppleUnifiedMemoryGpu.value ? '与系统统一内存共享' : formatMemoryAmount(gpu?.memoryTotal || gpu?.vram || null),
+    },
     { label: '当前频率', value: formatClock(safeNumber(gpu?.clockCore)) },
     { label: '显存频率', value: formatClock(safeNumber(gpu?.clockMemory)) },
     { label: '驱动版本', value: cleanText(gpu?.driverVersion) || '--' },
-    { label: '显存带宽', value: formatMemoryBandwidth(gpu) },
+    { label: isAppleUnifiedMemoryGpu.value ? '统一内存带宽' : '显存带宽', value: isAppleUnifiedMemoryGpu.value ? '系统未单独提供' : formatMemoryBandwidth(gpu) },
     { label: '输出接口', value: connectedDisplays.value.length ? `${connectedDisplays.value.length} 个活动显示输出` : '未检测到外接显示输出' },
   ]
 })
@@ -370,7 +335,7 @@ const quickStats = computed(() => {
       id: 'temp',
       label: '温度',
       value: formatTemperature(safeNumber(gpu?.temperatureGpu)),
-      accent: 'var(--accent-blue)',
+      accent: 'var(--accent-green)',
       trend: metricHistory.temp,
     },
     {
@@ -435,8 +400,8 @@ const monitorCards = computed<MonitorCard[]>(() => {
     {
       id: 'clock',
       label: '当前频率',
-      value: formatClock(gpuClock),
-      unit: gpuClock ? 'MHz' : '',
+      value: gpuClock === null ? graphicsMetricFallbackLabel('clock') : `${Math.round(gpuClock)}`,
+      unit: gpuClock === null ? '' : 'MHz',
       accent: 'var(--accent-blue)',
       percent: clampMetricPercent(gpuClock, Math.max(gpuClock || 0, 2800)),
       trend: metricHistory.clock,
@@ -445,32 +410,35 @@ const monitorCards = computed<MonitorCard[]>(() => {
     },
     {
       id: 'memory',
-      label: '显存占用',
-      value: formatMemoryAmount(memoryUsed),
-      unit: memoryUsed ? 'GB' : '',
+      label: isAppleUnifiedMemoryGpu.value ? 'GPU 内存架构' : '显存占用',
+      staticValue: isAppleUnifiedMemoryGpu.value,
+      value: isAppleUnifiedMemoryGpu.value ? '统一内存' : formatMemoryAmount(memoryUsed),
       accent: 'var(--accent-purple)',
-      percent: memoryUsed && memoryTotal ? clampPercent((memoryUsed / memoryTotal) * 100) : 0,
-      trend: metricHistory.memory,
+      percent: isAppleUnifiedMemoryGpu.value ? 0 : memoryUsed && memoryTotal ? clampPercent((memoryUsed / memoryTotal) * 100) : 0,
+      trend: isAppleUnifiedMemoryGpu.value ? [] : metricHistory.memory,
       ...buildHistoryFooter(
-        metricHistory.memory,
+        isAppleUnifiedMemoryGpu.value ? [] : metricHistory.memory,
         memoryUsed !== null && memoryTotal !== null ? memoryUsed : null,
         (value) => formatMemoryAmount(value)
       ),
-      unsupported: memoryUsed === null || memoryTotal === null,
+      footerLeft: isAppleUnifiedMemoryGpu.value ? 'Apple Silicon 统一内存' : undefined,
+      footerRight: isAppleUnifiedMemoryGpu.value ? 'GPU 无独立显存池' : undefined,
+      unsupported: !isAppleUnifiedMemoryGpu.value && (memoryUsed === null || memoryTotal === null),
     },
     {
       id: 'power',
       label: '当前功耗',
       value: formatPower(power),
-      unit: power ? 'W' : '',
       accent: 'var(--accent-orange)',
       percent: clampMetricPercent(power, Math.max(power || 0, safeNumber(gpu?.powerLimit) || 450)),
       trend: metricHistory.power,
-      ...buildHistoryFooter(metricHistory.power, power, (value) => `${Math.round(value)} W`),
+      ...buildHistoryFooter(metricHistory.power, power, (value) => formatPower(value)),
       unsupported: power === null,
     },
   ]
 })
+
+const visibleMonitorCards = computed(() => monitorCards.value.filter((card) => !card.staticValue))
 
 const telemetryRows = computed<StatRow[]>(() => {
   const gpu = primaryGpu.value
@@ -517,8 +485,12 @@ const telemetryRows = computed<StatRow[]>(() => {
     },
     {
       label: '显存占用',
-      value: joinParts([formatMemoryAmount(safeNumber(gpu?.memoryUsed)), '/', formatMemoryAmount(safeNumber(gpu?.memoryTotal || gpu?.vram))], ' '),
-      status: typeof gpu?.utilizationMemory === 'number' ? `${Math.round(gpu.utilizationMemory)}%` : '未知',
+      value: isAppleUnifiedMemoryGpu.value
+        ? '与系统统一内存共享'
+        : joinParts([formatMemoryAmount(safeNumber(gpu?.memoryUsed)), '/', formatMemoryAmount(safeNumber(gpu?.memoryTotal || gpu?.vram))], ' '),
+      status: isAppleUnifiedMemoryGpu.value
+        ? 'SoC 统一内存'
+        : typeof gpu?.utilizationMemory === 'number' ? `${Math.round(gpu.utilizationMemory)}%` : '未知',
       statusTone: 'normal',
     },
     {
@@ -648,7 +620,9 @@ const graphicsReportText = computed(() => {
     `功耗：${formatPower(safeNumber(gpu?.powerDraw))}`,
     `使用率：${formatPercent(safeNumber(gpu?.utilizationGpu))}`,
     `当前频率：${formatClock(safeNumber(gpu?.clockCore))}`,
-    `显存占用：${joinParts([formatMemoryAmount(safeNumber(gpu?.memoryUsed)), '/', formatMemoryAmount(safeNumber(gpu?.memoryTotal || gpu?.vram))], ' ')}`,
+    `显存占用：${isAppleUnifiedMemoryGpu.value
+      ? '与系统统一内存共享'
+      : joinParts([formatMemoryAmount(safeNumber(gpu?.memoryUsed)), '/', formatMemoryAmount(safeNumber(gpu?.memoryTotal || gpu?.vram))], ' ')}`,
     ...(graphicsPlatformPanels.value.temperatureProbes
       ? (
           gpu?.gpuCoreTemperatures?.length
@@ -724,7 +698,7 @@ useActivePageLifecycle(
 <template>
   <div class="graphics-page">
     <StateBlock
-      v-if="loading"
+      v-if="!primaryGpu && (loading || fetchState.gpuInfo.status === 'pending')"
       variant="loading"
       title="正在同步显卡数据"
       description="正在读取 GPU、显示器、驱动与实时监控信息。"
@@ -732,24 +706,20 @@ useActivePageLifecycle(
       @retry="retryGraphicsPage"
     />
 
-    <StateBlock
-      v-else-if="pageStateBlock"
-      :variant="pageStateBlock.variant"
-      :title="pageStateBlock.title"
-      :description="pageStateBlock.description"
-      :action-label="pageStateBlock.actionLabel"
-      @retry="retryGraphicsPage"
-    />
-
     <template v-else>
+      <StateBlock
+        v-if="pageStateBlock"
+        :variant="pageStateBlock.variant"
+        :title="pageStateBlock.title"
+        :description="pageStateBlock.description"
+        :action-label="pageStateBlock.actionLabel"
+        @retry="retryGraphicsPage"
+      />
+
       <section class="graphics-hero">
         <article class="hero-card">
           <div class="hero-card__head">
-            <div :class="['gpu-badge', `gpu-badge--${badgeMeta.variant}`, { 'gpu-badge--compact': badgeMeta.compact }]">
-              <span>{{ badgeMeta.top }}</span>
-              <strong>{{ badgeMeta.middle }}</strong>
-              <em>{{ badgeMeta.bottom }}</em>
-            </div>
+            <HardwareIdentity kind="gpu" />
 
             <div class="hero-card__title">
               <h2>{{ primaryGpu?.model || primaryGpu?.name || '读取中' }}</h2>
@@ -795,28 +765,27 @@ useActivePageLifecycle(
         </div>
 
         <div class="monitor-grid">
-          <article v-for="card in monitorCards" :key="card.id" class="monitor-card">
-            <div class="monitor-card__label">{{ card.label }}</div>
-            <div class="monitor-card__ring" :style="ringStyle(card.percent, card.accent)">
-              <div class="monitor-card__ring-inner">
-                <strong>{{ card.value }}</strong>
-                <span v-if="card.unit">{{ card.unit }}</span>
-              </div>
-            </div>
-            <svg class="monitor-card__sparkline" viewBox="0 0 116 34" preserveAspectRatio="none" aria-hidden="true">
-              <polyline :points="sparklinePoints(card.trend)" :stroke="card.accent" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <div class="monitor-card__foot" :class="{ 'monitor-card__foot--single': card.unsupported }">
-              <span>{{ card.unsupported ? card.value : card.footerLeft }}</span>
-              <span v-if="!card.unsupported">{{ card.footerRight }}</span>
-            </div>
-          </article>
+          <HardwareMetric
+            v-for="card in visibleMonitorCards"
+            :key="card.id"
+            :label="card.label"
+            :value="card.value"
+            :unit="card.unit"
+            :accent="card.accent"
+            :percent="card.percent"
+            :points="sparklinePoints(card.trend)"
+            :footer-left="card.footerLeft"
+            :footer-right="card.footerRight"
+            :unavailable="card.unsupported"
+          />
         </div>
       </section>
 
+      <p v-if="isAppleUnifiedMemoryGpu" class="graphics-memory-note">GPU 与系统共享统一内存，未提供独立显存占用读数。</p>
+
       <section class="graphics-grid">
         <article v-if="graphicsPlatformPanels.temperatureProbes" class="graphics-panel">
-          <div class="graphics-panel__title">
+          <div class="graphics-panel__title hardware-section-heading">
             <h3>GPU 温度测点</h3>
             <p>{{ gpuCoreTemperatureRows.length ? `已识别 ${gpuCoreTemperatureRows.length} 个温度测点` : '当前温度源未返回分测点数据' }}</p>
           </div>
@@ -839,7 +808,7 @@ useActivePageLifecycle(
         </article>
 
         <article v-if="graphicsPlatformPanels.telemetryDetails" class="graphics-panel">
-          <div class="graphics-panel__title">
+          <div class="graphics-panel__title hardware-section-heading">
             <h3>核心 / 显存详情</h3>
             <p>当前 GPU 遥测与链路状态</p>
           </div>
@@ -854,7 +823,7 @@ useActivePageLifecycle(
         </article>
 
         <article class="graphics-panel">
-          <div class="graphics-panel__title">
+          <div class="graphics-panel__title hardware-section-heading">
             <h3>接口与显示输出</h3>
             <p>当前连接状态与主显示器信息</p>
           </div>
@@ -875,7 +844,7 @@ useActivePageLifecycle(
         </article>
 
         <article class="graphics-panel">
-          <div class="graphics-panel__title">
+          <div class="graphics-panel__title hardware-section-heading">
             <h3>详细规格</h3>
             <p>驱动、能力与板卡信息</p>
           </div>
@@ -938,85 +907,7 @@ useActivePageLifecycle(
 .hero-card__head {
   display: flex;
   gap: 18px;
-  align-items: flex-start;
-}
-
-.gpu-badge {
-  display: grid;
-  gap: 4px;
-  align-content: center;
-  width: 102px;
-  min-height: 82px;
-  padding: 12px 10px;
-  border-radius: 14px;
-  background: linear-gradient(160deg, rgba(69, 181, 255, 0.94), rgba(35, 79, 162, 0.9));
-  color: var(--text-on-accent);
-  box-shadow: 0 18px 36px rgba(13, 39, 80, 0.28);
-  overflow: hidden;
-
-  span {
-    display: block;
-    min-width: 0;
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    line-height: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  strong {
-    display: block;
-    min-width: 0;
-    font-size: 22px;
-    line-height: 1;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  em {
-    font-style: normal;
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 1;
-    text-transform: uppercase;
-    opacity: 0.86;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-}
-
-.gpu-badge--compact {
-  gap: 5px;
-
-  strong {
-    font-size: 16px;
-  }
-
-  em {
-    font-size: 12px;
-  }
-}
-
-.gpu-badge--amd {
-  background: linear-gradient(160deg, rgba(221, 62, 56, 0.92), rgba(118, 32, 28, 0.88));
-  box-shadow: 0 18px 36px rgba(64, 16, 14, 0.28);
-}
-
-.gpu-badge--apple {
-  background: linear-gradient(160deg, rgba(107, 121, 255, 0.92), rgba(54, 63, 156, 0.88));
-  box-shadow: 0 18px 36px rgba(25, 31, 85, 0.28);
-}
-
-.gpu-badge--intel {
-  background: linear-gradient(160deg, rgba(69, 144, 255, 0.92), rgba(34, 79, 162, 0.88));
-  box-shadow: 0 18px 36px rgba(13, 39, 80, 0.28);
-}
-
-.gpu-badge--generic {
-  background: linear-gradient(160deg, rgba(62, 118, 181, 0.9), rgba(32, 61, 105, 0.88));
-  box-shadow: 0 18px 36px rgba(14, 30, 55, 0.26);
+  align-items: center;
 }
 
 .hero-card__title {
@@ -1046,7 +937,7 @@ useActivePageLifecycle(
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 18px;
-  border-top: 1px solid rgba(86, 101, 126, 0.18);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .hero-spec {
@@ -1054,7 +945,7 @@ useActivePageLifecycle(
   flex-direction: column;
   gap: 8px;
   padding: 14px 12px 10px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.12);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -1092,7 +983,7 @@ useActivePageLifecycle(
   }
 
   p {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-muted);
     font-size: 14px;
   }
@@ -1105,7 +996,7 @@ useActivePageLifecycle(
   gap: 14px;
   margin-top: 6px;
   padding-top: 12px;
-  border-top: 1px solid rgba(86, 101, 126, 0.16);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .quick-stat {
@@ -1156,7 +1047,7 @@ useActivePageLifecycle(
   }
 
   p {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-subtle);
     font-size: 13px;
   }
@@ -1171,77 +1062,16 @@ useActivePageLifecycle(
 
 .monitor-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
 
-.monitor-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  padding: 8px 10px 10px;
-  border-left: 1px solid rgba(86, 101, 126, 0.18);
-}
-
-.monitor-card:first-child {
-  border-left: 0;
-}
-
-.monitor-card__label {
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-}
-
-.monitor-card__ring {
-  display: grid;
-  place-items: center;
-  width: 106px;
-  height: 106px;
-  margin: 0 auto;
-  border-radius: 50%;
-}
-
-.monitor-card__ring-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 84px;
-  height: 84px;
-  border-radius: 50%;
-  background: var(--panel-background-strong);
-
-  strong {
-    color: var(--text-primary);
-    font-size: 16px;
-    font-weight: 700;
-  }
-
-  span {
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-}
-
-.monitor-card__sparkline {
-  width: 100%;
-  height: 34px;
-}
-
-.monitor-card__foot {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
+.graphics-memory-note {
+  margin: 0;
+  padding: 0 4px;
   color: var(--text-muted);
   font-size: 12px;
-}
-
-.monitor-card__foot--single {
-  justify-content: center;
-  text-align: center;
+  line-height: 1.5;
 }
 
 .graphics-grid {
@@ -1272,8 +1102,8 @@ useActivePageLifecycle(
   flex-direction: column;
   gap: 4px;
   padding: 10px 10px 8px;
-  border: 1px solid rgba(84, 104, 132, 0.28);
-  border-radius: 10px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--tile-radius);
   background: var(--surface-soft-background);
 
   strong {
@@ -1299,7 +1129,7 @@ useActivePageLifecycle(
   place-items: center;
   min-height: 160px;
   border: 1px dashed rgba(84, 104, 132, 0.28);
-  border-radius: 12px;
+  border-radius: var(--tile-radius);
   color: var(--text-muted);
   font-size: 13px;
   text-align: center;
@@ -1311,7 +1141,7 @@ useActivePageLifecycle(
   align-items: center;
   gap: 12px;
   padding: 8px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -1369,8 +1199,8 @@ useActivePageLifecycle(
   gap: 6px;
   min-width: 0;
   padding: 10px 10px 8px;
-  border: 1px solid rgba(84, 104, 132, 0.28);
-  border-radius: 10px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--tile-radius);
   background: var(--surface-soft-background);
 
   strong {
@@ -1409,7 +1239,7 @@ useActivePageLifecycle(
   grid-template-columns: 110px minmax(0, 1fr);
   gap: 12px;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);

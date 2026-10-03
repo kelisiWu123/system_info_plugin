@@ -12,7 +12,9 @@ import {
   Pushpin,
   Thermometer,
 } from '@icon-park/vue-next'
+import { selectPrimaryGpu } from '../../utils/gpu'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
+import { settleMetric, isNewMetricSample, subscribeHardwareMetrics, hasSharedHardwareTelemetry, isOlderMetricSample, type HardwareTelemetryHandlers } from '../../utils/metricRefresh'
 import {
   clampPercent,
   getDisplayCpuCurrentSpeedGHz,
@@ -23,9 +25,8 @@ import {
   getMemoryPressureLabel,
   formatSpeed,
 } from '../../utils'
-import { withTimeout } from '../../utils/serviceReader'
+import { withTimeout, normalizeErrorMessage } from '../../utils/serviceReader'
 import {
-  formatSuperLiteRefreshLabel,
   resolveSuperLiteMetricStatus,
   resolveSuperLiteOverallStatus,
 } from '../../utils/superLiteMonitor'
@@ -72,6 +73,7 @@ const memoData = reactive<MemoData>({
 const gpuData = ref<GpuData[]>([])
 const cpuInfo = ref<CpuData>()
 const cpuLoad = ref(0)
+let latestCpuLoadSample: CurrentLoadData | undefined
 const cpuTemperature = ref<CpuTemperatureData>()
 const cpuCurrentSpeed = ref<CpuCurrentSpeedData>()
 const cpuPower = ref<CpuPowerData>()
@@ -157,21 +159,10 @@ function getCurrentPollProfile() {
   return WATCH_MODE_POLL_PROFILES[monitorMode.value]
 }
 
-function clampHistory(list: number[], value: number) {
+function clampHistory(list: number[], value: number, sampledAt?: number) {
+  if (!isNewMetricSample(list, sampledAt)) return
   list.push(Number.isFinite(value) ? value : 0)
   if (list.length > 24) list.shift()
-}
-
-function gpuTelemetryScore(item: GpuData) {
-  let score = 0
-
-  if (typeof item.utilizationGpu === 'number') score += 100
-  if (typeof item.temperatureGpu === 'number') score += 40
-  if (typeof item.powerDraw === 'number') score += 30
-  if (typeof item.memoryUsed === 'number') score += 20
-  score += item.memoryTotal || item.vram || 0
-
-  return score
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -265,9 +256,7 @@ function sparklinePaletteStyle(palette: { fill: string; stroke: string }) {
   }
 }
 
-const primaryGpu = computed(() => {
-  return [...gpuData.value].sort((left, right) => gpuTelemetryScore(right) - gpuTelemetryScore(left))[0]
-})
+const primaryGpu = computed(() => selectPrimaryGpu(gpuData.value))
 
 const cpuPercent = computed(() => clampPercent(cpuLoad.value))
 const hasCpuLoadSample = computed(() => history.cpu.length > 0)
@@ -344,7 +333,16 @@ const footerStatus = computed(() => {
   return '状态良好'
 })
 
+const telemetryErrors = reactive<Partial<Record<HardwareTelemetryKey, string>>>({})
+const telemetryWarning = computed(() => Object.keys(telemetryErrors).length ? '部分数据暂未更新，显示上次读数' : '')
+const telemetryErrorDetails = computed(() => Object.values(telemetryErrors).join('；'))
+function recordWatchMetricResult(key: HardwareTelemetryKey, result: PromiseSettledResult<unknown>) {
+  if (result.status === 'rejected') telemetryErrors[key] = normalizeErrorMessage(result.reason)
+  else if (result.value !== undefined) delete telemetryErrors[key]
+}
+
 const superLiteStatus = computed(() => {
+  if (telemetryWarning.value) return { level: 'warning' as const, label: '旧数据' }
   const hasCpuTelemetry = history.cpu.length > 0 || cpuTempValue.value !== null || cpuPowerValue.value !== null
   const hasGpuTelemetry = !primaryGpu.value
     || typeof primaryGpu.value.utilizationGpu === 'number'
@@ -369,7 +367,7 @@ const superLiteStatus = computed(() => {
     memoryPressure: memoData.pressure?.level,
   })
 })
-const superLiteFooterLeft = computed(() => formatSuperLiteRefreshLabel(getCurrentPollProfile().fast))
+const superLiteFooterLeft = computed(() => telemetryWarning.value ? '等待数据恢复' : '实时监控')
 const superLiteFooterRight = computed(() => `运行 ${formatWatchRuntime(timeInfo.value?.uptime)}`)
 const superLiteThroughput = computed(() => ({
   networkDown: formatSpeed(networkStatus.value.rxSec),
@@ -577,116 +575,133 @@ async function performFastMetricsRefresh(force = false) {
     const ohmBecameReady = await refreshOpenHardwareMonitorReadiness(force)
     if (refreshGeneration !== watchRefreshGeneration) return
 
+    const shared = hasSharedHardwareTelemetry()
     const effectiveForce = force || ohmBecameReady
     const now = Date.now()
     const pollProfile = getCurrentPollProfile()
     const isStandardMode = floatingMode.value === 'standard'
     const needsCpuDetailSensors = isStandardMode && monitorMode.value === 'cpu'
-    const needsCpuTemp = pollProfile.cpuTemp > 0 && (effectiveForce || now - lastCpuSensorRefreshAt >= pollProfile.cpuTemp)
-    const needsCpuSpeed = isStandardMode
+    const needsCpuTemp = !shared && pollProfile.cpuTemp > 0 && (effectiveForce || now - lastCpuSensorRefreshAt >= pollProfile.cpuTemp)
+    const needsCpuSpeed = !shared && isStandardMode
       && (monitorMode.value === 'overview' || needsCpuDetailSensors)
       && (effectiveForce || now - lastCpuSpeedRefreshAt >= CPU_SPEED_INFO_INTERVAL_MS)
-    const needsCpuPower = pollProfile.cpuPower > 0 && (effectiveForce || now - lastCpuPowerRefreshAt >= pollProfile.cpuPower)
-    const needsCpuAuxSensors = needsCpuDetailSensors
+    const needsCpuPower = !shared && pollProfile.cpuPower > 0 && (effectiveForce || now - lastCpuPowerRefreshAt >= pollProfile.cpuPower)
+    const needsCpuAuxSensors = !shared && needsCpuDetailSensors
       && pollProfile.cpuAux > 0
       && (effectiveForce || now - lastCpuAuxSensorRefreshAt >= pollProfile.cpuAux)
     const needsTimeInfo = effectiveForce || now - lastTimeRefreshAt >= TIME_INFO_INTERVAL_MS
-    const needsThroughputMetrics = floatingMode.value === 'super-lite' || monitorMode.value === 'overview'
+    const needsThroughputMetrics = !shared && (floatingMode.value === 'super-lite' || monitorMode.value === 'overview')
 
-    const [
-      cpuLoadRes,
-      memoRes,
-      cpuTemperatureRes,
-      cpuSpeedRes,
-      cpuPowerRes,
-      cpuVoltageRes,
-      cpuFanRes,
-      timeRes,
-      networkStatusRes,
-      storageIoRes,
-    ] = await Promise.allSettled([
-      withTimeout(window.services.getCpuFullLoad()),
-      withTimeout(window.services.getMemInfo()),
-      needsCpuTemp ? withTimeout(window.services.getCpuTemperature(), 3500) : Promise.resolve(undefined),
-      needsCpuSpeed ? withTimeout(window.services.getCpuCurrentSpeed(), 3500) : Promise.resolve(undefined),
-      (needsCpuPower || needsCpuAuxSensors) ? withTimeout(window.services.getCpuPower(), 3500) : Promise.resolve(undefined),
-      needsCpuAuxSensors ? withTimeout(window.services.getCpuVoltage(), 3500) : Promise.resolve(undefined),
-      needsCpuAuxSensors ? withTimeout(window.services.getCpuFanSpeed(), 3500) : Promise.resolve(undefined),
-      needsTimeInfo ? withTimeout(window.services.getTimeInfo(), 3500) : Promise.resolve(undefined),
-      needsThroughputMetrics ? withTimeout(window.services.getNetworkStatus(), 3500) : Promise.resolve(undefined),
-      needsThroughputMetrics ? withTimeout(window.services.getStorageIo(), 3500) : Promise.resolve(undefined),
+    await Promise.all([
+      settleMetric(!shared ? withTimeout(window.services.getCpuLoadData()) : Promise.resolve(undefined), (cpuLoadRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (!shared) recordWatchMetricResult('cpuLoad', cpuLoadRes)
+        if (!shared && cpuLoadRes.status === 'fulfilled' && !isOlderMetricSample(cpuLoadRes.value, latestCpuLoadSample)) {
+          latestCpuLoadSample = cpuLoadRes.value
+          cpuLoad.value = cpuLoadRes.value?.currentLoad || 0
+          clampHistory(history.cpu, cpuLoad.value, cpuLoadRes.value?.sampledAt)
+        }
+
+      }),
+      settleMetric(!shared ? withTimeout(window.services.getMemInfo()) : Promise.resolve(undefined), (memoRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (!shared) recordWatchMetricResult('memoryUsage', memoRes)
+        if (!shared && memoRes.status === 'fulfilled' && !isOlderMetricSample(memoRes.value, memoData) && memoRes.value) {
+          memoData.active = memoRes.value.active
+          memoData.total = memoRes.value.total
+          memoData.available = memoRes.value.available
+          memoData.free = memoRes.value.free || 0
+          memoData.used = memoRes.value.used || 0
+          memoData.rawActive = memoRes.value.rawActive || 0
+          memoData.rawAvailable = memoRes.value.rawAvailable || 0
+          memoData.normalizedPlatform = memoRes.value.normalizedPlatform || ''
+          memoData.swaptotal = memoRes.value.swaptotal || 0
+          memoData.swapused = memoRes.value.swapused || 0
+          memoData.swapfree = memoRes.value.swapfree || 0
+          memoData.pressure = memoRes.value.pressure || memoData.pressure
+          clampHistory(history.memory, memoryPercent.value, memoRes.value.sampledAt)
+        }
+
+      }),
+      settleMetric(needsCpuTemp ? withTimeout(window.services.getCpuTemperature(), 3500) : Promise.resolve(undefined), (cpuTemperatureRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsCpuTemp) recordWatchMetricResult('cpuTemperature', cpuTemperatureRes)
+        if (needsCpuTemp && cpuTemperatureRes.status === 'fulfilled' && !isOlderMetricSample(cpuTemperatureRes.value, cpuTemperature.value)) {
+          cpuTemperature.value = cpuTemperatureRes.value
+          clampHistory(history.cpuTemp, cpuTempValue.value || 0, cpuTemperatureRes.value?.sampledAt)
+          lastCpuSensorRefreshAt = now
+        }
+
+      }),
+      settleMetric(needsCpuSpeed ? withTimeout(window.services.getCpuCurrentSpeed(), 3500) : Promise.resolve(undefined), (cpuSpeedRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsCpuSpeed) recordWatchMetricResult('cpuFrequency', cpuSpeedRes)
+        if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled' && !isOlderMetricSample(cpuSpeedRes.value, cpuCurrentSpeed.value)) {
+          cpuCurrentSpeed.value = cpuSpeedRes.value
+          clampHistory(history.cpuSpeed, cpuFrequencyValue.value || 0, cpuSpeedRes.value?.sampledAt)
+          lastCpuSpeedRefreshAt = now
+        }
+
+      }),
+      settleMetric((needsCpuPower || needsCpuAuxSensors) ? withTimeout(window.services.getCpuPower(), 3500) : Promise.resolve(undefined), (cpuPowerRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsCpuPower || needsCpuAuxSensors) recordWatchMetricResult('cpuPower', cpuPowerRes)
+        if ((needsCpuPower || needsCpuAuxSensors) && cpuPowerRes.status === 'fulfilled' && !isOlderMetricSample(cpuPowerRes.value, cpuPower.value)) {
+          cpuPower.value = cpuPowerRes.value
+          clampHistory(history.cpuPower, cpuPowerRes.value?.value || 0, cpuPowerRes.value?.sampledAt)
+        }
+
+        if (needsCpuPower) {
+          lastCpuPowerRefreshAt = now
+        }
+
+      }),
+      settleMetric(needsCpuAuxSensors ? withTimeout(window.services.getCpuVoltage(), 3500) : Promise.resolve(undefined), (cpuVoltageRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsCpuAuxSensors) recordWatchMetricResult('cpuVoltage', cpuVoltageRes)
+        if (needsCpuAuxSensors && cpuVoltageRes.status === 'fulfilled' && !isOlderMetricSample(cpuVoltageRes.value, cpuVoltage.value)) {
+          cpuVoltage.value = cpuVoltageRes.value
+          clampHistory(history.cpuVoltage, cpuVoltageRes.value?.value || 0, cpuVoltageRes.value?.sampledAt)
+        }
+
+      }),
+      settleMetric(needsCpuAuxSensors ? withTimeout(window.services.getCpuFanSpeed(), 3500) : Promise.resolve(undefined), (cpuFanRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsCpuAuxSensors) recordWatchMetricResult('fanSpeed', cpuFanRes)
+        if (needsCpuAuxSensors && cpuFanRes.status === 'fulfilled' && !isOlderMetricSample(cpuFanRes.value, cpuFanSpeed.value)) {
+          cpuFanSpeed.value = cpuFanRes.value
+          clampHistory(history.cpuFan, cpuFanRes.value?.value || 0, cpuFanRes.value?.sampledAt)
+        }
+
+        if (needsCpuAuxSensors) {
+          lastCpuAuxSensorRefreshAt = now
+        }
+
+      }),
+      settleMetric(needsTimeInfo ? withTimeout(window.services.getTimeInfo(), 3500) : Promise.resolve(undefined), (timeRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsTimeInfo && timeRes.status === 'fulfilled') {
+          timeInfo.value = timeRes.value
+          lastTimeRefreshAt = now
+        }
+
+      }),
+      settleMetric(needsThroughputMetrics ? withTimeout(window.services.getNetworkStatus(), 3500) : Promise.resolve(undefined), (networkStatusRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsThroughputMetrics) recordWatchMetricResult('networkIo', networkStatusRes)
+        if (needsThroughputMetrics && networkStatusRes.status === 'fulfilled' && networkStatusRes.value && !isOlderMetricSample(networkStatusRes.value, networkStatus.value)) {
+          networkStatus.value = networkStatusRes.value
+        }
+
+      }),
+      settleMetric(needsThroughputMetrics ? withTimeout(window.services.getStorageIo(), 3500) : Promise.resolve(undefined), (storageIoRes) => {
+        if (refreshGeneration !== watchRefreshGeneration) return
+        if (needsThroughputMetrics) recordWatchMetricResult('diskIo', storageIoRes)
+        if (needsThroughputMetrics && storageIoRes.status === 'fulfilled' && storageIoRes.value && !isOlderMetricSample(storageIoRes.value, storageIoData.value)) {
+          storageIoData.value = storageIoRes.value
+        }
+      }),
     ])
-
-    if (refreshGeneration !== watchRefreshGeneration) return
-
-    if (cpuLoadRes.status === 'fulfilled') {
-      cpuLoad.value = cpuLoadRes.value
-      clampHistory(history.cpu, cpuLoadRes.value)
-    }
-
-    if (memoRes.status === 'fulfilled') {
-      memoData.active = memoRes.value.active
-      memoData.total = memoRes.value.total
-      memoData.available = memoRes.value.available
-      memoData.free = memoRes.value.free || 0
-      memoData.used = memoRes.value.used || 0
-      memoData.rawActive = memoRes.value.rawActive || 0
-      memoData.rawAvailable = memoRes.value.rawAvailable || 0
-      memoData.normalizedPlatform = memoRes.value.normalizedPlatform || ''
-      memoData.swaptotal = memoRes.value.swaptotal || 0
-      memoData.swapused = memoRes.value.swapused || 0
-      memoData.swapfree = memoRes.value.swapfree || 0
-      memoData.pressure = memoRes.value.pressure || memoData.pressure
-      clampHistory(history.memory, memoryPercent.value)
-    }
-
-    if (needsCpuTemp && cpuTemperatureRes.status === 'fulfilled') {
-      cpuTemperature.value = cpuTemperatureRes.value
-      clampHistory(history.cpuTemp, cpuTempValue.value || 0)
-      lastCpuSensorRefreshAt = now
-    }
-
-    if (needsCpuSpeed && cpuSpeedRes.status === 'fulfilled') {
-      cpuCurrentSpeed.value = cpuSpeedRes.value
-      clampHistory(history.cpuSpeed, cpuFrequencyValue.value || 0)
-      lastCpuSpeedRefreshAt = now
-    }
-
-    if ((needsCpuPower || needsCpuAuxSensors) && cpuPowerRes.status === 'fulfilled') {
-      cpuPower.value = cpuPowerRes.value
-      clampHistory(history.cpuPower, cpuPowerRes.value?.value || 0)
-    }
-
-    if (needsCpuPower) {
-      lastCpuPowerRefreshAt = now
-    }
-
-    if (needsCpuAuxSensors && cpuVoltageRes.status === 'fulfilled') {
-      cpuVoltage.value = cpuVoltageRes.value
-      clampHistory(history.cpuVoltage, cpuVoltageRes.value?.value || 0)
-    }
-
-    if (needsCpuAuxSensors && cpuFanRes.status === 'fulfilled') {
-      cpuFanSpeed.value = cpuFanRes.value
-      clampHistory(history.cpuFan, cpuFanRes.value?.value || 0)
-    }
-
-    if (needsCpuAuxSensors) {
-      lastCpuAuxSensorRefreshAt = now
-    }
-
-    if (needsTimeInfo && timeRes.status === 'fulfilled') {
-      timeInfo.value = timeRes.value
-      lastTimeRefreshAt = now
-    }
-
-    if (needsThroughputMetrics && networkStatusRes.status === 'fulfilled' && networkStatusRes.value) {
-      networkStatus.value = networkStatusRes.value
-    }
-
-    if (needsThroughputMetrics && storageIoRes.status === 'fulfilled' && storageIoRes.value) {
-      storageIoData.value = storageIoRes.value
-    }
   } catch (error) {
     console.warn('悬浮监控快速刷新失败:', error)
   }
@@ -698,7 +713,7 @@ async function performSlowMetricsRefresh(force = false) {
     const now = Date.now()
     const pollProfile = getCurrentPollProfile()
     const needsGpuDetail = monitorMode.value === 'gpu'
-    const needsGpu = force || now - lastGpuRefreshAt >= (needsGpuDetail ? pollProfile.gpu : pollProfile.gpu)
+    const needsGpu = !hasSharedHardwareTelemetry() && (force || now - lastGpuRefreshAt >= (needsGpuDetail ? pollProfile.gpu : pollProfile.gpu))
     const needsStaticInfo = force || now - lastInfoRefreshAt >= STATIC_INFO_INTERVAL_MS
 
     const [gpuRes, cpuInfoRes, memoryLayoutRes] = await Promise.allSettled([
@@ -709,12 +724,13 @@ async function performSlowMetricsRefresh(force = false) {
 
     if (refreshGeneration !== watchRefreshGeneration) return
 
-    if (needsGpu && gpuRes.status === 'fulfilled') {
+    if (needsGpu) recordWatchMetricResult('gpu', gpuRes)
+    if (needsGpu && gpuRes.status === 'fulfilled' && !isOlderMetricSample(gpuRes.value, gpuData.value)) {
       gpuData.value = gpuRes.value || gpuData.value
-      clampHistory(history.gpu, gpuPercent.value)
-      clampHistory(history.gpuTemp, gpuTempValue.value || 0)
-      clampHistory(history.gpuMemory, gpuMemoryUsedValue.value || 0)
-      clampHistory(history.gpuPower, gpuPowerValue.value || 0)
+      clampHistory(history.gpu, gpuPercent.value, gpuRes.value?.[0]?.sampledAt)
+      clampHistory(history.gpuTemp, gpuTempValue.value || 0, gpuRes.value?.[0]?.sampledAt)
+      clampHistory(history.gpuMemory, gpuMemoryUsedValue.value || 0, gpuRes.value?.[0]?.sampledAt)
+      clampHistory(history.gpuPower, gpuPowerValue.value || 0, gpuRes.value?.[0]?.sampledAt)
       lastGpuRefreshAt = now
     }
 
@@ -773,7 +789,42 @@ function refreshSlowMetrics(force = false): Promise<void> {
   return slowRefreshInFlight
 }
 
+let stopSharedTelemetry: (() => void) | undefined
+function subscribeWatchTelemetry() {
+  const handlers: HardwareTelemetryHandlers = {
+    cpuLoad: (value, at) => { latestCpuLoadSample = value; cpuLoad.value = value.currentLoad; clampHistory(history.cpu, value.currentLoad, at) },
+    memoryUsage: (value, at) => { Object.assign(memoData, value); clampHistory(history.memory, memoryPercent.value, at) },
+    cpuTemperature: (value, at) => { cpuTemperature.value = value; if (value) clampHistory(history.cpuTemp, cpuTempValue.value ?? 0, at) },
+    cpuFrequency: (value, at) => { cpuCurrentSpeed.value = value; clampHistory(history.cpuSpeed, cpuFrequencyValue.value ?? 0, at) },
+    cpuPower: (value, at) => { cpuPower.value = value; if (value) clampHistory(history.cpuPower, value.value ?? 0, at) },
+    cpuVoltage: (value, at) => { cpuVoltage.value = value; if (value) clampHistory(history.cpuVoltage, value.value ?? 0, at) },
+    fanSpeed: (value, at) => { cpuFanSpeed.value = value; if (value) clampHistory(history.cpuFan, value.value ?? 0, at) },
+    gpu: (value, at) => {
+      gpuData.value = value
+      clampHistory(history.gpu, gpuPercent.value, at)
+      clampHistory(history.gpuTemp, gpuTempValue.value ?? 0, at)
+      clampHistory(history.gpuMemory, gpuMemoryUsedValue.value ?? 0, at)
+      clampHistory(history.gpuPower, gpuPowerValue.value ?? 0, at)
+    },
+    networkIo: (value) => { networkStatus.value = value },
+    diskIo: (value) => { storageIoData.value = value },
+  }
+  if (floatingMode.value !== 'standard' || monitorMode.value !== 'cpu') {
+    delete handlers.cpuVoltage
+    delete handlers.fanSpeed
+  }
+  if (getCurrentPollProfile().cpuPower <= 0) delete handlers.cpuPower
+  for (const key of Object.keys(telemetryErrors) as HardwareTelemetryKey[]) {
+    if (!(key in handlers)) delete telemetryErrors[key]
+  }
+  stopSharedTelemetry = subscribeHardwareMetrics(handlers,
+    (key, error) => { telemetryErrors[key] = error },
+    (key) => { delete telemetryErrors[key] })
+}
+
 function stopPolling() {
+  stopSharedTelemetry?.()
+  stopSharedTelemetry = undefined
   watchRefreshGeneration += 1
   if (fastTimerId) {
     window.clearInterval(fastTimerId)
@@ -788,6 +839,7 @@ function stopPolling() {
 
 async function startPolling() {
   stopPolling()
+  subscribeWatchTelemetry()
   watchRefreshGeneration += 1
   const pollingGeneration = watchRefreshGeneration
   lastCpuSensorRefreshAt = 0
@@ -956,7 +1008,7 @@ onUnmounted(() => {
     <div v-else class="monitor-shell">
       <header class="monitor-shell__header">
         <div class="monitor-shell__brand">
-          <div class="monitor-shell__brand-mark">H</div>
+          <div class="monitor-shell__brand-mark" :class="{ 'monitor-shell__brand-mark--stale': telemetryWarning }" :title="telemetryWarning ? `${telemetryWarning}：${telemetryErrorDetails}` : '硬件监控'" role="status" :aria-label="telemetryWarning || '硬件监控'">{{ telemetryWarning ? '!' : 'H' }}</div>
         </div>
 
         <div class="monitor-shell__modes" role="group" aria-label="监控视图">
@@ -1228,6 +1280,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="less">
+.monitor-shell__brand-mark.monitor-shell__brand-mark--stale { color: #b45309; background: #fef3c7; }
 .watch-container {
   height: 100%;
   width: 100%;
@@ -1246,7 +1299,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 10px 12px 8px;
   border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  border-radius: var(--watch-shell-radius);
   background: var(--watch-shell-background);
   box-shadow:
     inset 0 1px 0 var(--surface-inset-highlight),
@@ -1287,7 +1340,7 @@ onUnmounted(() => {
   justify-content: center;
   width: 18px;
   height: 18px;
-  border-radius: 7px;
+  border-radius: var(--watch-control-radius);
   background: linear-gradient(180deg, rgba(95, 149, 255, 0.92), rgba(56, 103, 255, 0.76));
   color: #f6f9ff;
   font-size: 9px;
@@ -1301,7 +1354,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 4px;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   border: 1px solid var(--panel-border-soft);
   background: var(--watch-muted-surface);
   -webkit-app-region: no-drag;
@@ -1312,7 +1365,7 @@ onUnmounted(() => {
   height: 20px;
   padding: 0 8px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: transparent;
   color: var(--text-watch-muted);
   font-size: 9px;
@@ -1341,7 +1394,7 @@ onUnmounted(() => {
   width: 30px;
   height: 24px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--watch-control-radius);
   background: transparent;
   color: var(--text-watch-muted);
   cursor: pointer;
@@ -1409,7 +1462,7 @@ onUnmounted(() => {
   min-width: 0;
   padding: 6px 9px;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 8px;
+  border-radius: var(--watch-card-radius);
   background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--throughput-accent) 12%, transparent), transparent 54%),
     var(--watch-throughput-background);
@@ -1440,7 +1493,7 @@ onUnmounted(() => {
 .overview-throughput-card__dot {
   width: 5px;
   height: 5px;
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--throughput-accent);
   box-shadow: 0 0 8px color-mix(in srgb, var(--throughput-accent) 62%, transparent);
 }
@@ -1489,7 +1542,7 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  border-radius: var(--watch-card-radius);
   background: var(--watch-detail-background);
   box-shadow:
     inset 0 1px 0 var(--surface-inset-highlight),
@@ -1502,7 +1555,7 @@ onUnmounted(() => {
   inset: -20% auto auto -12%;
   width: 140px;
   height: 140px;
-  border-radius: 999px;
+  border-radius: 50%;
   opacity: 0.22;
   filter: blur(18px);
   pointer-events: none;
@@ -1781,7 +1834,7 @@ onUnmounted(() => {
   position: relative;
   height: 7px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: var(--surface-track-background);
 }
 

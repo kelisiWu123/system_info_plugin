@@ -193,6 +193,10 @@
     openItem.target = self;
     [menu addItem:openItem];
 
+    NSMenuItem *settingsItem = [[NSMenuItem alloc] initWithTitle:@"托盘显示设置" action:@selector(openMenubarSettings) keyEquivalent:@","];
+    settingsItem.target = self;
+    [menu addItem:settingsItem];
+
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"退出菜单栏" action:@selector(quitApp) keyEquivalent:@"q"];
@@ -415,9 +419,33 @@
 }
 
 - (void)openMainApp {
-    // Open this plugin's hardware feature through uTools' external protocol.
-    NSURL *url = [NSURL URLWithString:@"utools://HWInfoX%20%E7%A1%AC%E4%BB%B6%E4%BF%A1%E6%81%AF/%E7%A1%AC%E4%BB%B6%E4%BF%A1%E6%81%AF"];
-    [[NSWorkspace sharedWorkspace] openURL:url];
+    [self openPreset:@"a_computer"];
+}
+
+- (void)openMenubarSettings {
+    [self openPreset:@"a_menubar_settings"];
+}
+
+- (void)openPreset:(NSString *)preset {
+    const char *commandPath = getenv("HWINFOX_MENUBAR_COMMAND_PATH");
+    if (!commandPath || commandPath[0] == '\0') {
+        NSLog(@"HWInfoX: missing menubar command channel");
+        NSBeep();
+        return;
+    }
+    NSDictionary *command = @{
+        @"id": [[NSUUID UUID] UUIDString],
+        @"action": @"openPreset",
+        @"preset": preset,
+        @"helperPid": @(getpid()),
+        @"createdAt": @([[NSDate date] timeIntervalSince1970] * 1000.0),
+    };
+    NSError *error = nil;
+    NSData *payload = [NSJSONSerialization dataWithJSONObject:command options:0 error:&error];
+    if (!payload || ![payload writeToFile:[NSString stringWithUTF8String:commandPath] options:NSDataWritingAtomic error:&error]) {
+        NSLog(@"HWInfoX: failed to send open-window command: %@", error);
+        NSBeep();
+    }
 }
 
 - (void)quitApp {

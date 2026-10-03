@@ -22,6 +22,15 @@ if (typeof runtimeUtools.onPluginOut === 'function') {
     }
 
     systemService.stopMacMenubarRuntime?.()
+    systemService.stopHardwareTelemetry?.()
+  })
+}
+
+if (typeof systemService.setMacMenubarCommandHandler === 'function') {
+  systemService.setMacMenubarCommandHandler((command) => {
+    if (command?.action === 'openPreset' && ['a_computer', 'a_menubar_settings'].includes(command.preset)) {
+      return openPresetWindow(command.preset)
+    }
   })
 }
 
@@ -95,6 +104,11 @@ const windowPresets = {
     dev: { height: 200, width: 200, backgroundColor: 0 },
   },
 }
+
+window.addEventListener?.('unload', () => {
+  systemService.setMacMenubarCommandHandler?.(null)
+  systemService.stopHardwareTelemetry?.()
+})
 
 window.services = {
   ...systemService,

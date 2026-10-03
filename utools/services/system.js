@@ -1,4 +1,6 @@
 import si from 'systeminformation'
+import { createHash } from 'node:crypto'
+import { createSharedTelemetry } from './sharedTelemetry.cjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,6 +17,7 @@ import {
 } from './windowsSensorHelper'
 import {
   configureMacMenubarContext,
+  setMacMenubarCommandHandler,
   getMacMenubarStatus,
   startMacMenubarHelper,
   stopMacMenubarHelper,
@@ -80,6 +83,19 @@ const MACOS_MENUBAR_SCHEDULER_LOCK_PATH = path.join(MACOS_MENUBAR_SCHEDULER_DIRE
 const MACOS_MENUBAR_SCHEDULER_RECORD_PATH = path.join(MACOS_MENUBAR_SCHEDULER_DIRECTORY, 'scheduler.json')
 const MACOS_MENUBAR_RUNTIME_STOP_PATH = path.join(MACOS_MENUBAR_SCHEDULER_DIRECTORY, 'runtime-stop.json')
 const MACOS_MENUBAR_SCHEDULER_STALE_MS = 10000
+const HARDWARE_METRICS = {
+  cpuLoad: { service: 'getCpuLoadData', cache: 'currentLoadSnapshot' },
+  cpuTemperature: { service: 'getCpuTemperature', cache: 'cpuTemperature' },
+  cpuFrequency: { service: 'getCpuCurrentSpeed', cache: 'cpuCurrentSpeed' },
+  fanSpeed: { service: 'getCpuFanSpeed', cache: 'cpuFanSpeed' },
+  memoryUsage: { service: 'getMemInfo', cache: 'memInfo' },
+  diskIo: { service: 'getStorageIo', cache: 'storageIo' },
+  networkIo: { service: 'getNetworkStatus', cache: 'networkStatus' },
+  gpu: { service: 'getGpuInfo', cache: 'gpuInfo' },
+  cpuPower: { service: 'getCpuPower', cache: 'cpuPower' },
+  cpuVoltage: { service: 'getCpuVoltage', cache: 'cpuVoltage' },
+  storage: { service: 'getDiskData', cache: 'diskData' },
+}
 
 const EMPTY_MACOS_MENUBAR_TELEMETRY = {
   fanSpeed: null,
@@ -265,9 +281,15 @@ async function readCachedServiceValue(cacheKey, maxAgeMs, reader) {
 }
 
 export function configureSystemServiceContext({ pluginRoot, utools } = {}) {
-  configuredPluginRoot = typeof pluginRoot === 'string' && pluginRoot.trim()
+  const resolvedPluginRoot = typeof pluginRoot === 'string' && pluginRoot.trim()
     ? path.resolve(pluginRoot)
     : ''
+  // Electron's development preload lives in dist-electron/preload. The Vite
+  // fallback root points at dist-electron, while bundled native tools remain
+  // in the project root beside that directory.
+  configuredPluginRoot = path.basename(resolvedPluginRoot) === 'dist-electron'
+    ? path.dirname(resolvedPluginRoot)
+    : resolvedPluginRoot
   configuredUtoolsRuntime = utools
   configureMacMenubarContext({ pluginRoot: configuredPluginRoot })
   configureWindowsTrayContext({ pluginRoot: configuredPluginRoot })
@@ -1083,6 +1105,8 @@ let macMenubarTelemetrySchedulerTimer
 let macMenubarTelemetrySchedulerLockHandle = null
 let macMenubarTelemetrySchedulerToken = ''
 let macMenubarTelemetryRefreshInFlight = false
+let stopTrayTelemetrySubscription
+let traySubscriptionKeys = ''
 
 function hasEnabledMacMenubarMetric(settings) {
   return Object.values(settings?.metrics || {}).some(Boolean)
@@ -1290,6 +1314,35 @@ function tryAcquireMacMenubarTelemetryScheduler() {
   return false
 }
 
+function subscribeTrayTelemetry(settings) {
+  const keys = Object.keys(settings.metrics).filter((key) => settings.metrics[key])
+  const signature = keys.join(',')
+  if (stopTrayTelemetrySubscription && traySubscriptionKeys === signature) return
+  stopTrayTelemetrySubscription?.()
+  traySubscriptionKeys = signature
+  stopTrayTelemetrySubscription = getSharedHardwareTelemetry().subscribe(keys, (records) => {
+    if (isMacMenubarRuntimeStopSignaled() || !getMacMenubarSettings().enabled
+      || readMacMenubarSchedulerRecord()?.token !== macMenubarTelemetrySchedulerToken) return
+    const value = (key) => records[key]?.status === 'ok' ? records[key].value : undefined
+    const memory = value('memoryUsage')
+    const used = Number.isFinite(memory?.used) && memory.used > 0 ? memory.used : memory?.active ?? null
+    const speed = value('cpuFrequency')
+    syncMacMenubarTelemetry({
+      temp: value('cpuTemperature')?.value ?? null,
+      load: Number.isFinite(value('cpuLoad')?.currentLoad) ? Math.round(value('cpuLoad').currentLoad) : null,
+      speed: speed?.displayGHz || speed?.max || speed?.avg || null,
+      fanSpeed: value('fanSpeed')?.value ?? null,
+      memoryUsedBytes: used,
+      memoryTotalBytes: memory?.total ?? null,
+      memoryPercent: memory?.total > 0 && used !== null ? Math.max(0, Math.min(100, used / memory.total * 100)) : null,
+      diskReadBytesPerSec: value('diskIo')?.readBytesPerSec ?? null,
+      diskWriteBytesPerSec: value('diskIo')?.writeBytesPerSec ?? null,
+      networkDownloadBytesPerSec: value('networkIo')?.rxSec ?? null,
+      networkUploadBytesPerSec: value('networkIo')?.txSec ?? null,
+    }, { force: true })
+  }, { foreground: true })
+}
+
 async function runMacMenubarTelemetrySchedulerTick() {
   const settings = getMacMenubarSettings()
   if ((!isMacOS() && !isWindows()) || isTrayRuntimeStopSignaled() || !settings.enabled || !hasEnabledMacMenubarMetric(settings)) {
@@ -1297,6 +1350,10 @@ async function runMacMenubarTelemetrySchedulerTick() {
     return
   }
 
+  if (isMacOS()) {
+    if (tryAcquireMacMenubarTelemetryScheduler()) subscribeTrayTelemetry(settings)
+    return
+  }
   await refreshMacMenubarTelemetry()
 }
 
@@ -1311,6 +1368,9 @@ export function startMacMenubarTelemetryScheduler() {
 }
 
 export function stopMacMenubarTelemetryScheduler() {
+  stopTrayTelemetrySubscription?.()
+  stopTrayTelemetrySubscription = undefined
+  traySubscriptionKeys = ''
   if (macMenubarTelemetrySchedulerTimer) {
     clearInterval(macMenubarTelemetrySchedulerTimer)
     macMenubarTelemetrySchedulerTimer = undefined
@@ -1366,14 +1426,16 @@ export async function refreshMacMenubarTelemetry(options = {}) {
 
   const settings = getMacMenubarSettings()
   if (!settings.enabled || !hasEnabledMacMenubarMetric(settings)) return
-  if (macMenubarTelemetryRefreshInFlight || (!force && !tryAcquireMacMenubarTelemetryScheduler())) return
+  if (macMenubarTelemetryRefreshInFlight || ((isMacOS() || !force) && !tryAcquireMacMenubarTelemetryScheduler())) return
 
   macMenubarTelemetryRefreshInFlight = true
   try {
     const definitions = [
       ['cpuTemperature', () => systemService.getCpuTemperature(), (value) => ({ temp: value?.value ?? null })],
-      ['cpuLoad', () => systemService.getCpuFullLoad(), (value) => ({ load: value ?? null })],
-      ['cpuFrequency', () => systemService.getCpuCurrentSpeed(), (value) => ({ speed: value?.max || value?.avg || null })],
+      ['cpuLoad', () => isMacOS() ? systemService.getCpuLoadData() : systemService.getCpuFullLoad(), (value) => isMacOS()
+        ? { load: Math.round(value.currentLoad || 0) }
+        : { load: value ?? null }],
+      ['cpuFrequency', () => systemService.getCpuCurrentSpeed(), (value) => ({ speed: value?.displayGHz || value?.max || value?.avg || null })],
       ['fanSpeed', () => systemService.getCpuFanSpeed(), (value) => ({ fanSpeed: value?.value ?? null })],
       ['memoryUsage', () => systemService.getMemInfo(), (value) => ({
         memoryUsedBytes: value?.used ?? null,
@@ -4321,7 +4383,9 @@ async function getCurrentLoadSnapshot() {
     syncMacMenubarTelemetry()
   }
 
-  return current
+  return isMacOS() && current
+    ? { ...current, sampledAt: runtimeServiceCache.get('currentLoadSnapshot')?.cachedAt ?? Date.now() }
+    : current
 }
 
 function normalizeRateValue(value) {
@@ -4666,6 +4730,8 @@ export const systemService = {
     return { ok: true, running: false }
   },
 
+  setMacMenubarCommandHandler: (handler) => setMacMenubarCommandHandler(handler),
+
   setWindowsTrayCommandHandler: (handler) => setWindowsTrayCommandHandler(handler),
 
   startMacMenubarTelemetryScheduler: () => startMacMenubarTelemetryScheduler(),
@@ -4681,15 +4747,16 @@ export const systemService = {
       () => readSystemInfo('cpu', undefined, () => readCpuInfo())
     ),
 
-  getCpuFullLoad: () =>
-    readCachedServiceValue(
+  getCpuFullLoad: () => {
+    return readCachedServiceValue(
       'cpuFullLoad',
       1000,
       async () => {
         const current = await getCurrentLoadSnapshot()
         return Math.round(current.currentLoad || 0)
       }
-    ),
+    )
+  },
 
   getCpuTemperature: () =>
     readCachedServiceValue(
@@ -4816,15 +4883,16 @@ export const systemService = {
     )
   },
 
-  getCpuLoadData: () =>
-    readCachedServiceValue(
+  getCpuLoadData: () => {
+    return readCachedServiceValue(
       'cpuLoadData',
       1000,
       async () => {
         const current = await getCurrentLoadSnapshot()
         return current || emptyCurrentLoadData
       }
-    ),
+    )
+  },
 
   getCpuVoltage: async () => {
     const value = await readCachedServiceValue(
@@ -5009,4 +5077,91 @@ export const systemService = {
       5000,
       () => readSystemInfo('time', undefined, () => si.time())
     ),
+}
+
+
+// These readers are captured before wrapping. Only the elected sampler uses
+// them; renderers and the tray never fall back to independent hardware sampling.
+const rawTelemetryReaders = Object.fromEntries(Object.entries(HARDWARE_METRICS).map(([key, config]) => [key, systemService[config.service]]))
+let sharedHardwareTelemetry
+let hardwareTelemetryHidden = false
+const HARDWARE_SAMPLE_PROFILES = {
+  eco: { cpuLoad: 10000, cpuTemperature: 10000, cpuFrequency: 8000, fanSpeed: 18000,
+    memoryUsage: 8000, diskIo: 10000, networkIo: 8000, gpu: 12000, cpuPower: 18000, cpuVoltage: 18000, storage: 10000 },
+  balanced: { cpuLoad: 4000, cpuTemperature: 7000, cpuFrequency: 4000, fanSpeed: 12000,
+    memoryUsage: 4000, diskIo: 6000, networkIo: 4000, gpu: 8000, cpuPower: 12000, cpuVoltage: 12000, storage: 6000 },
+  realtime: { cpuLoad: 1500, cpuTemperature: 3000, cpuFrequency: 1500, fanSpeed: 8000,
+    memoryUsage: 2000, diskIo: 3000, networkIo: 3000, gpu: 3000, cpuPower: 8000, cpuVoltage: 8000, storage: 3000 },
+}
+function getHardwareSampleIntervals() {
+  const settings = getMonitoringRefreshSettings()
+  const foreground = HARDWARE_SAMPLE_PROFILES[settings.profile]
+  const background = settings.backgroundThrottleEnabled
+    ? Object.fromEntries(Object.entries(foreground).map(([key, interval]) => [key,
+      ['cpuLoad', 'gpu', 'cpuPower', 'cpuVoltage', 'fanSpeed'].includes(key) ? 0 : interval * 2]))
+    : foreground
+  return { ...foreground, background }
+}
+
+function getSharedHardwareTelemetry() {
+  if (!sharedHardwareTelemetry) {
+    sharedHardwareTelemetry = createSharedTelemetry({
+      directory: path.join(os.tmpdir(), 'system-info-plugin', 'hardware-telemetry-v1',
+        createHash('sha256').update(configuredPluginRoot || path.resolve(__dirname, '../..')).digest('hex').slice(0, 16)),
+      pid: process.pid,
+      isAlive: isProcessAlive,
+      intervals: getHardwareSampleIntervals,
+      initialBackground: hardwareTelemetryHidden,
+      readers: Object.fromEntries(Object.entries(HARDWARE_METRICS).map(([key, config]) => [key, async () => {
+        // Only the owner calls raw readers. Its schedule, rather than an older
+        // per-service cache TTL, determines when a new hardware sample is taken.
+        invalidateRuntimeServiceCache(config.cache)
+        if (key === 'cpuLoad') invalidateRuntimeServiceCache('cpuLoadData')
+        const value = await rawTelemetryReaders[key]()
+        if (key === 'cpuFrequency' && value) {
+          const cores = getValidCpuClockGhzValues(value.cores)
+          const displayGHz = cores.length ? Math.max(...cores)
+            : Number.isFinite(value.max) && value.max > 0 ? value.max
+              : Number.isFinite(value.avg) && value.avg > 0 ? value.avg : 0
+          return { ...value, displayGHz, sampledAt: runtimeServiceCache.get(config.cache)?.cachedAt ?? Date.now() }
+        }
+        const sampledAt = value?.sampledAt ?? runtimeServiceCache.get(config.cache)?.cachedAt ?? Date.now()
+        if (Array.isArray(value)) return value.map((item) => ({ ...item, sampledAt }))
+        return value && typeof value === 'object' ? { ...value, sampledAt } : value
+      }])),
+    })
+  }
+  return sharedHardwareTelemetry
+}
+
+for (const [key, config] of Object.entries(HARDWARE_METRICS)) {
+  systemService[config.service] = () => isMacOS()
+    ? getSharedHardwareTelemetry().read(key)
+    : rawTelemetryReaders[key]()
+}
+const localCpuFullLoad = systemService.getCpuFullLoad
+systemService.getCpuFullLoad = async () => isMacOS()
+  ? Math.round((await systemService.getCpuLoadData())?.currentLoad || 0)
+  : localCpuFullLoad()
+
+systemService.sharedHardwareTelemetrySupported = isMacOS()
+systemService.subscribeHardwareTelemetry = (keys, listener) => isMacOS()
+  ? getSharedHardwareTelemetry().subscribe(keys, listener)
+  : () => {}
+systemService.stopHardwareTelemetry = () => {
+  sharedHardwareTelemetry?.dispose()
+  sharedHardwareTelemetry = undefined
+}
+
+systemService.setHardwareTelemetryVisibility = (hidden) => {
+  hardwareTelemetryHidden = Boolean(hidden)
+  if (isMacOS()) sharedHardwareTelemetry?.setBackground(hidden)
+}
+
+systemService.refreshHardwareTelemetry = async (keys) => {
+  if (isMacOS()) await getSharedHardwareTelemetry().refresh(keys)
+}
+systemService.invalidateHardwareInfoCache = (keys) => {
+  const allowed = ['cpuInfo', 'boardData', 'biosData', 'osInfo', 'memInfo', 'memoryLayout', 'diskLayout', 'displaysData', 'staticGpuInfo']
+  invalidateRuntimeServiceCache(keys.filter((key) => allowed.includes(key)))
 }

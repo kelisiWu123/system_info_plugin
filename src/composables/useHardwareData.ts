@@ -1,3 +1,4 @@
+import { subscribeHardwareMetrics, hasSharedHardwareTelemetry, refreshSharedHardwareMetrics, isOlderMetricSample } from '../utils/metricRefresh'
 import { computed, reactive, ref } from 'vue'
 import {
   appendMetricHistory,
@@ -16,6 +17,7 @@ type SharedServiceKey =
   | 'memInfo'
   | 'memoryLayout'
   | 'diskData'
+  | 'storageIo'
   | 'diskLayout'
   | 'biosData'
   | 'boardData'
@@ -23,7 +25,7 @@ type SharedServiceKey =
   | 'audioDevices'
   | 'networkInterfaces'
 
-type StaticServiceKey = Exclude<SharedServiceKey, 'memInfo' | 'diskData'>
+type StaticServiceKey = Exclude<SharedServiceKey, 'memInfo' | 'diskData' | 'storageIo'>
 type DynamicScope = Extract<SharedHardwareScope, 'memory' | 'storage'>
 
 const emptyMemoData: MemoData = {
@@ -82,6 +84,7 @@ const fetchState = reactive<Record<SharedServiceKey, { status: FetchStatus; note
   memInfo: { status: 'pending', note: '' },
   memoryLayout: { status: 'pending', note: '' },
   diskData: { status: 'pending', note: '' },
+  storageIo: { status: 'pending', note: '' },
   diskLayout: { status: 'pending', note: '' },
   biosData: { status: 'pending', note: '' },
   boardData: { status: 'pending', note: '' },
@@ -267,6 +270,7 @@ async function loadStaticScope(scope: SharedHardwareScope, force = false) {
 }
 
 async function refreshMemory(force = false) {
+  if (hasSharedHardwareTelemetry()) return
   const existing = dynamicRefreshInFlight.get('memory')
   if (existing) return existing
 
@@ -276,12 +280,13 @@ async function refreshMemory(force = false) {
 
   diagnostics.markRefreshAttempt(force, backgroundThrottled.value)
   const promise = (async () => {
-    setFetchState('memInfo', 'pending')
+    if (!memoData.value.total) setFetchState('memInfo', 'pending')
     try {
       const value = await readService(() => window.services.getMemInfo(), 6000)
+      if (isOlderMetricSample(value, memoData.value)) return
       memoData.value = value || emptyMemoData
       setFetchState('memInfo', memoData.value.total > 0 ? 'ok' : 'missing', memoData.value.total > 0 ? '' : 'total <= 0')
-      appendMetricHistory(metricHistory.memoryLoad, usedMemoPercent.value, true)
+      appendMetricHistory(metricHistory.memoryLoad, usedMemoPercent.value, true, 24, value?.sampledAt)
       lastMemoryRefreshAt = Date.now()
       lastSyncedAt.value = lastMemoryRefreshAt
       diagnostics.markRefreshSuccess(backgroundThrottled.value)
@@ -297,6 +302,7 @@ async function refreshMemory(force = false) {
 }
 
 async function refreshStorage(force = false) {
+  if (hasSharedHardwareTelemetry()) return
   const existing = dynamicRefreshInFlight.get('storage')
   if (existing) return existing
 
@@ -306,24 +312,26 @@ async function refreshStorage(force = false) {
 
   diagnostics.markRefreshAttempt(force, backgroundThrottled.value)
   const promise = (async () => {
-    setFetchState('diskData', 'pending')
+    if (!diskData.value.length) setFetchState('diskData', 'pending')
     const [diskResult, ioResult] = await Promise.allSettled([
       readService(() => window.services.getDiskData(), 10000),
       readService(() => window.services.getStorageIo(), 8000),
     ])
 
-    if (diskResult.status === 'fulfilled') {
+    if (diskResult.status === 'fulfilled' && !isOlderMetricSample(diskResult.value, diskData.value)) {
       diskData.value = diskResult.value || []
       setFetchState('diskData', diskData.value.length ? 'ok' : 'missing', diskData.value.length ? '' : '返回空数组')
-      appendMetricHistory(metricHistory.storageLoad, storageUsage.value.percent, true)
-    } else {
+      appendMetricHistory(metricHistory.storageLoad, storageUsage.value.percent, true, 24, diskResult.value?.[0]?.sampledAt)
+    } else if (diskResult.status === 'rejected') {
       setFetchState('diskData', 'error', normalizeErrorMessage(diskResult.reason))
     }
 
-    if (ioResult.status === 'fulfilled' && ioResult.value) {
+    if (ioResult.status === 'fulfilled' && ioResult.value && !isOlderMetricSample(ioResult.value, storageIoData.value)) {
       storageIoData.value = ioResult.value
+      setFetchState('storageIo', 'ok', '')
     }
 
+    if (ioResult.status === 'rejected') setFetchState('storageIo', 'error', normalizeErrorMessage(ioResult.reason))
     lastStorageRefreshAt = Date.now()
     lastSyncedAt.value = lastStorageRefreshAt
     if (diskResult.status === 'fulfilled' || ioResult.status === 'fulfilled') {
@@ -381,6 +389,7 @@ function scheduleNextPoll() {
 }
 
 function startPolling() {
+  if (hasSharedHardwareTelemetry()) return
   if (!hasActiveDynamicScope()) return
   scheduleNextPoll()
 }
@@ -396,8 +405,35 @@ function restartPolling() {
   startPolling()
 }
 
+let stopSharedTelemetry: (() => void) | undefined
+function syncHardwareTelemetrySubscription() {
+  stopSharedTelemetry?.()
+  stopSharedTelemetry = subscribeHardwareMetrics({
+    ...(activeScopeCounts.memory > 0 ? { memoryUsage: (value: MemoData, at: number) => {
+      memoData.value = value
+      setFetchState('memInfo', value.total > 0 ? 'ok' : 'missing', '')
+      appendMetricHistory(metricHistory.memoryLoad, usedMemoPercent.value, true, 24, at)
+      lastSyncedAt.value = at
+    } } : {}),
+    ...(activeScopeCounts.storage > 0 ? {
+      storage: (value: DiskData[], at: number) => {
+        diskData.value = value
+        setFetchState('diskData', value.length ? 'ok' : 'missing', '')
+        appendMetricHistory(metricHistory.storageLoad, storageUsage.value.percent, true, 24, at)
+        lastSyncedAt.value = at
+      },
+      diskIo: (value: StorageIoData) => { storageIoData.value = value; setFetchState('storageIo', 'ok', '') },
+    } : {}),
+  }, (key, error) => {
+    if (key === 'memoryUsage') setFetchState('memInfo', 'error', error)
+    if (key === 'storage') setFetchState('diskData', 'error', error)
+    if (key === 'diskIo') setFetchState('storageIo', 'error', error)
+  })
+}
+
 export async function activateHardwareStore(scope: SharedHardwareScope) {
   activeScopeCounts[scope] += 1
+  syncHardwareTelemetrySubscription()
   diagnostics.markActivated(getActiveSubscriberCount())
 
   if (scope !== 'board') {
@@ -410,6 +446,7 @@ export async function activateHardwareStore(scope: SharedHardwareScope) {
 
 export function deactivateHardwareStore(scope: SharedHardwareScope) {
   activeScopeCounts[scope] = Math.max(0, activeScopeCounts[scope] - 1)
+  syncHardwareTelemetrySubscription()
   diagnostics.markDeactivated(getActiveSubscriberCount())
   if (!hasActiveDynamicScope()) {
     stopPolling()
@@ -419,6 +456,9 @@ export function deactivateHardwareStore(scope: SharedHardwareScope) {
 }
 
 export async function refreshHardwareData(scope: SharedHardwareScope) {
+  window.services.invalidateHardwareInfoCache?.(['memInfo', 'memoryLayout', 'diskLayout', 'boardData', 'biosData', 'osInfo'])
+  await refreshSharedHardwareMetrics(scope === 'memory' ? ['memoryUsage'] : scope === 'storage' ? ['storage', 'diskIo'] : [])
+  await Promise.all([...staticReadsInFlight.values()])
   await loadScope(scope, true)
 }
 

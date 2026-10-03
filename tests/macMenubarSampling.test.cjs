@@ -45,7 +45,8 @@ test('preload handles plugin termination in every window type while opening a pa
   }
 })
 
-function createHarness(t) {
+function createHarness(t, { cpuLoad = false } = {}) {
+  let samples = 0
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hwinfox-sampling-test-'))
   t.after(() => {
     try {
@@ -59,16 +60,20 @@ function createHarness(t) {
   const starts = []
   let running = false
   let settings = { enabled: true, metrics: {
-    cpuTemperature: true, cpuLoad: false, cpuFrequency: false,
+    cpuTemperature: true, cpuLoad, cpuFrequency: false,
     fanSpeed: false, memoryUsage: true, diskIo: true, networkIo: true,
   } }
-  function load(pid) {
+  function load(pid, { mockMetrics = true } = {}) {
     alive.add(pid)
     const mockRequire = (id) => {
       if (id === 'node:os') return { default: { ...os, tmpdir: () => directory } }
       if (id === 'node:fs') return { default: fs }
       if (id === 'node:path') return { default: path }
-      if (id === 'systeminformation') return { default: {} }
+      if (id === 'systeminformation') return { default: { currentLoad: async () => {
+        samples++
+        return { currentLoad: pid === 4101 ? 37.4 : 81.2, cpus: [{ load: 20 }, { load: 54.8 }] }
+      } } }
+      if (id === './sharedTelemetry.cjs') return require('../utools/services/sharedTelemetry.cjs')
       if (id === './macSensors.cjs') return { default: {} }
       if (id === './windowsSensorHelper') return {}
       if (id === './windowsTrayHelper') return {}
@@ -76,7 +81,11 @@ function createHarness(t) {
         getMacMenubarStatus: () => ({ running }),
         startMacMenubarHelper: () => { running = true; starts.push(pid) },
         stopMacMenubarHelper: () => { running = false; return { ok: true } },
-        updateMacMenubarTelemetry: (value) => writes.push({ pid, value }),
+        updateMacMenubarTelemetry: (value) => {
+          writes.push({ pid, value })
+          const file = path.join(directory, 'system-info-plugin/macos-menubar/telemetry.json')
+          fs.writeFileSync(file, JSON.stringify(value))
+        },
       }
       return require(id)
     }
@@ -94,6 +103,7 @@ function createHarness(t) {
     )
     const api = module.exports
     const service = api.systemService
+    t.after(() => service.stopHardwareTelemetry())
     // Reproduce reader side effects in separate preload contexts.
     for (const [name, value] of Object.entries({
       getCpuTemperature: { value: 59.5 }, getCpuFullLoad: 0,
@@ -102,11 +112,12 @@ function createHarness(t) {
       getStorageIo: { readBytesPerSec: 1234, writeBytesPerSec: 0 },
       getNetworkStatus: { rxSec: 4321, txSec: 0 },
     })) {
+      if (!mockMetrics || (cpuLoad && name === 'getCpuFullLoad')) continue
       service[name] = async () => { api.syncMacMenubarTelemetry(); return value }
     }
     return api
   }
-  return { load, writes, starts, alive, directory }
+  return { load, writes, starts, alive, directory, sampleCount: () => samples, disableCpu: () => { settings.metrics.cpuLoad = false } }
 }
 
 test('two preload contexts cannot overwrite a complete tray snapshot with partial page data', async (t) => {
@@ -180,4 +191,18 @@ test('ending the plugin during a pending sample cannot restart its tray', async 
   await page.refreshMacMenubarTelemetry()
   assert.equal(h.writes.length, 0)
   assert.equal(h.starts.length, 0)
+})
+
+
+test('CPU sampling is shared by separate windows even with tray CPU display disabled', async (t) => {
+  const h = createHarness(t, { cpuLoad: true })
+  const owner = h.load(4101, { mockMetrics: false })
+  const page = h.load(4102, { mockMetrics: false })
+  h.disableCpu()
+  const first = await owner.systemService.getCpuLoadData()
+  const second = await page.systemService.getCpuLoadData()
+  assert.deepEqual(first, second)
+  assert.equal(await page.systemService.getCpuFullLoad(), Math.round(first.currentLoad))
+  assert.equal(h.sampleCount(), 1, 'every window uses the elected hardware reader')
+  assert.equal(h.writes.length, 0, 'sampling does not require a tray publication')
 })

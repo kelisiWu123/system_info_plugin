@@ -1,3 +1,4 @@
+import { subscribeHardwareMetrics, hasSharedHardwareTelemetry, refreshSharedHardwareMetrics, isOlderMetricSample } from '../utils/metricRefresh'
 import { computed, reactive, ref } from 'vue'
 import {
   createMonitoringDiagnostics,
@@ -156,13 +157,14 @@ async function refreshOverviewMetrics(force = false) {
   refreshInFlight = (async () => {
     try {
       const now = Date.now()
+      const shared = hasSharedHardwareTelemetry()
       const intervals = getCurrentRefreshIntervals()
       diagnostics.markRefreshAttempt(force, backgroundThrottled.value)
-      const needsMemory = force || now - lastMemoryRefreshAt >= intervals.memory
-      const needsDisk = force || now - lastDiskRefreshAt >= intervals.disk
+      const needsMemory = !shared && (force || now - lastMemoryRefreshAt >= intervals.memory)
+      const needsDisk = !shared && (force || now - lastDiskRefreshAt >= intervals.disk)
       const needsTime = force || now - lastTimeRefreshAt >= intervals.time
       const networkStatusInterval = Math.max(intervals.base * 2, 6000)
-      const needsNetworkStatus = force || now - lastNetworkStatusRefreshAt >= networkStatusInterval
+      const needsNetworkStatus = !shared && (force || now - lastNetworkStatusRefreshAt >= networkStatusInterval)
 
       if (!force && !needsMemory && !needsDisk && !needsTime && !needsNetworkStatus) {
         diagnostics.markRefreshSkipped('not-due', backgroundThrottled.value)
@@ -180,6 +182,7 @@ async function refreshOverviewMetrics(force = false) {
 
       if (needsMemory && memoRes.status === 'fulfilled') {
         const nextMemoData = memoRes.value || emptyMemoData
+        if (isOlderMetricSample(nextMemoData, memoData.value)) return
         memoData.value = nextMemoData
         setFetchState('memInfo', nextMemoData.total > 0 ? 'ok' : 'missing', nextMemoData.total > 0 ? '' : 'total <= 0')
         lastMemoryRefreshAt = now
@@ -190,6 +193,7 @@ async function refreshOverviewMetrics(force = false) {
 
       if (needsDisk && diskRes.status === 'fulfilled') {
         const nextDiskData = diskRes.value || []
+        if (isOlderMetricSample(nextDiskData, diskData.value)) return
         diskData.value = nextDiskData
         setFetchState('diskData', nextDiskData.length ? 'ok' : 'missing', nextDiskData.length ? '' : '返回空数组')
         lastDiskRefreshAt = now
@@ -207,7 +211,7 @@ async function refreshOverviewMetrics(force = false) {
         setFetchState('timeInfo', 'error', normalizeErrorMessage(timeRes.reason))
       }
 
-      if (needsNetworkStatus && networkStatusRes.status === 'fulfilled' && networkStatusRes.value) {
+      if (needsNetworkStatus && networkStatusRes.status === 'fulfilled' && networkStatusRes.value && !isOlderMetricSample(networkStatusRes.value, networkStatus.value)) {
         networkStatus.value = networkStatusRes.value
         setFetchState('networkStatus', networkStatusRes.value.defaultInterface ? 'ok' : 'missing', networkStatusRes.value.defaultInterface ? '' : '未识别默认网络接口')
         lastNetworkStatusRefreshAt = now
@@ -253,8 +257,9 @@ async function loadOverviewCoreSummary() {
       (error) => setFetchState('cpuInfo', 'error', normalizeErrorMessage(error))
     ),
     runOverviewRead(
-      () => readService(() => window.services.getMemInfo(), 6000, 1),
+      () => hasSharedHardwareTelemetry() ? Promise.resolve(undefined) : readService(() => window.services.getMemInfo(), 6000, 1),
       (value) => {
+        if (hasSharedHardwareTelemetry()) return
         memoData.value = value || emptyMemoData
         setFetchState('memInfo', memoData.value.total > 0 ? 'ok' : 'missing', memoData.value.total > 0 ? '' : 'total <= 0')
         lastMemoryRefreshAt = Date.now()
@@ -283,8 +288,10 @@ async function loadOverviewEarlyEnrichment() {
       (error) => setFetchState('networkInterfaces', 'error', normalizeErrorMessage(error))
     ),
     runOverviewRead(
-      () => readService(() => window.services.getNetworkStatus(), 10000),
+      () => hasSharedHardwareTelemetry() ? Promise.resolve(undefined) : readService(() => window.services.getNetworkStatus(), 10000),
       (value) => {
+        if (!value || hasSharedHardwareTelemetry()) return
+        if (isOlderMetricSample(value, networkStatus.value)) return
         networkStatus.value = value
         setFetchState('networkStatus', value.defaultInterface ? 'ok' : 'missing', value.defaultInterface ? '' : '未识别默认网络接口')
         lastNetworkStatusRefreshAt = Date.now()
@@ -407,8 +414,23 @@ function stopPolling() {
   }
 }
 
+let stopSharedTelemetry: (() => void) | undefined
+function subscribeOverviewTelemetry() {
+  if (stopSharedTelemetry) return
+  stopSharedTelemetry = subscribeHardwareMetrics({
+    memoryUsage: (value, at) => { memoData.value = value; setFetchState('memInfo', value.total > 0 ? 'ok' : 'missing', ''); lastSyncedAt.value = at },
+    storage: (value, at) => { diskData.value = value; setFetchState('diskData', value.length ? 'ok' : 'missing', ''); lastSyncedAt.value = at },
+    networkIo: (value) => { networkStatus.value = value; setFetchState('networkStatus', value.defaultInterface ? 'ok' : 'missing', '') },
+  }, (key, error) => {
+    if (key === 'memoryUsage') setFetchState('memInfo', 'error', error)
+    if (key === 'storage') setFetchState('diskData', 'error', error)
+    if (key === 'networkIo') setFetchState('networkStatus', 'error', error)
+  })
+}
+
 export async function activateOverviewHardwareStore() {
   subscriberCount += 1
+  subscribeOverviewTelemetry()
   diagnostics.markActivated(subscriberCount)
   syncMonitoringVisibility()
 
@@ -426,24 +448,21 @@ export async function activateOverviewHardwareStore() {
 }
 
 export async function refreshOverviewHardwareData() {
-  if (!initialized.value) {
-    if (!initPromise) {
-      initPromise = initOverviewHardwareData().finally(() => {
-        initPromise = undefined
-      })
-    }
-
-    await initPromise
-    return
+  window.services.invalidateHardwareInfoCache?.(['cpuInfo', 'memInfo', 'diskLayout', 'osInfo', 'staticGpuInfo'])
+  await refreshSharedHardwareMetrics(['memoryUsage', 'storage', 'networkIo'])
+  if (initPromise) await initPromise
+  if (!initPromise) {
+    initPromise = initOverviewHardwareData().finally(() => { initPromise = undefined })
   }
-
-  await refreshOverviewMetrics(true)
+  await initPromise
 }
 
 export function deactivateOverviewHardwareStore() {
   subscriberCount = Math.max(0, subscriberCount - 1)
   diagnostics.markDeactivated(subscriberCount)
   if (subscriberCount === 0) {
+    stopSharedTelemetry?.()
+    stopSharedTelemetry = undefined
     stopPolling()
   }
 }

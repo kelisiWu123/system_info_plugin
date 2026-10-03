@@ -9,6 +9,8 @@ import {
 } from '../../composables/useProcessorHardwareData'
 import { clampPercent, formatUptime, getDisplayCpuCurrentSpeedGHz, getPeakCpuCurrentSpeedGHz } from '../../utils'
 import StateBlock from '../common/StateBlock.vue'
+import HardwareIdentity from '../common/HardwareIdentity.vue'
+import HardwareMetric from '../common/HardwareMetric.vue'
 import { downloadTextFile, writeClipboardText } from '../../utils/presentation'
 import { getServiceErrorDescription } from '../../utils/serviceReader'
 import {
@@ -102,12 +104,13 @@ let cpuSpeedDiagnosticCopyFeedbackTimerId: number | undefined
 let windowsSensorDiagnosticCopyFeedbackTimerId: number | undefined
 
 const pageStateBlock = computed(() => {
-  if (fetchState.cpuInfo.status === 'error' || fetchState.cpuTemperature.status === 'error') {
+  const failedMetric = Object.values(fetchState).find((state) => state.status === 'error')
+  if (fetchState.cpuInfo.status === 'error' || fetchState.cpuTemperature.status === 'error' || failedMetric) {
     return {
       variant: 'error' as const,
-      title: '处理器数据读取失败',
+      title: cpuData.value || cpuLoadData.value.cpus.length ? '部分数据暂未更新，保留上次读数' : '处理器数据读取失败',
       description: getServiceErrorDescription(
-        fetchState.cpuInfo.note || fetchState.cpuTemperature.note,
+        fetchState.cpuInfo.note || fetchState.cpuTemperature.note || failedMetric?.note,
         '读取处理器规格或温度信息时发生异常，可以重试该模块。'
       ),
       actionLabel: '重试该模块',
@@ -169,13 +172,6 @@ function buildHistoryFooter(values: number[], current: number | null, format: (v
   }
 }
 
-function ringStyle(percent: number, accent: string) {
-  const bounded = Math.max(0, Math.min(100, percent))
-  return {
-    background: `conic-gradient(${accent} 0deg ${(bounded / 100) * 360}deg, var(--gauge-track) ${(bounded / 100) * 360}deg 360deg)`,
-  }
-}
-
 function sparklinePoints(values: number[]) {
   const source = values.length ? values : [0, 0, 0, 0, 0, 0]
   const min = Math.min(...source)
@@ -186,7 +182,7 @@ function sparklinePoints(values: number[]) {
   return source
     .map((value, index) => {
       const x = Number((index * step).toFixed(2))
-      const y = Number((34 - ((value - min) / range) * 24).toFixed(2))
+      const y = Number((30 - ((value - min) / range) * 22).toFixed(2))
       return `${x},${y}`
     })
     .join(' ')
@@ -256,7 +252,7 @@ function formatVoltage(value: number | null) {
 function formatFanSpeed(value: number | null) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? `${Math.round(value)} RPM`
-    : sensorMetricFallbackLabel('fan')
+    : cpuFanSpeedIssueLabel.value
 }
 
 function formatSensorReason(reason?: string) {
@@ -421,52 +417,6 @@ function parseFlagHighlights(flags?: string) {
   return (picked.length ? picked : fallback).join(', ') || '--'
 }
 
-function vendorBadgeData(brand: string) {
-  const lower = brand.toLowerCase()
-
-  const appleChipMatch = brand.match(/\b(M[1-9](?:\s+(?:Pro|Max|Ultra))?)\b/i)
-
-  if (lower.includes('apple') || appleChipMatch) {
-    return {
-      top: 'apple',
-      middle: appleChipMatch?.[1]?.toUpperCase() || 'APPLE',
-      bottom: 'soc',
-      variant: 'apple',
-      compact: true,
-    }
-  }
-
-  if (lower.includes('intel')) {
-    const tierMatch = brand.match(/i[3579]/i)
-    return {
-      top: 'intel',
-      middle: 'CORE',
-      bottom: tierMatch ? tierMatch[0].toLowerCase() : 'cpu',
-      variant: 'intel',
-      compact: false,
-    }
-  }
-
-  if (lower.includes('amd') || lower.includes('ryzen')) {
-    const tierMatch = brand.match(/(ryzen\s+\d|ai\s+\d+)/i)
-    return {
-      top: 'amd',
-      middle: 'RYZEN',
-      bottom: tierMatch ? tierMatch[0].replace(/\s+/g, ' ').toLowerCase() : 'cpu',
-      variant: 'amd',
-      compact: false,
-    }
-  }
-
-  return {
-    top: 'cpu',
-    middle: 'CHIP',
-    bottom: 'info',
-    variant: 'generic',
-    compact: true,
-  }
-}
-
 function coreTypeLabel(index: number, total: number, performanceCores?: number, efficiencyCores?: number) {
   const perf = performanceCores || 0
   const eff = efficiencyCores || 0
@@ -496,9 +446,23 @@ const cpuPowerValue = computed(() => safeNumber(cpuPower.value?.value))
 const cpuVoltageValue = computed(() => safeNumber(cpuVoltage.value?.value) ?? parseVoltageString(cpuData.value?.voltage))
 const cpuVoltageMetricLabel = computed(() => cpuVoltage.value?.measurement === 'vid' ? '核心 VID' : '核心电压')
 const cpuFanSpeedValue = computed(() => safeNumber(cpuFanSpeed.value?.value))
+const cpuFanSpeedIssueLabel = computed(() => {
+  const reason = cpuFanSpeed.value?.reason || cpuFanSpeed.value?.errorCode || ''
+  if (reason === 'MACOS_SMC_PERMISSION_REQUIRED') return '需要管理员权限'
+  if (reason.startsWith('MACOS_SMC_')) return 'AppleSMC 读取失败'
+  if (fetchState.cpuFanSpeed.status === 'error') return '风扇数据读取失败'
+  return sensorMetricFallbackLabel('fan')
+})
 const cpuLoadPercent = computed(() => clampPercent(cpuLoadData.value.currentLoad || 0))
 const cpuLoadTelemetryAvailable = computed(() => Array.isArray(cpuLoadData.value?.cpus) && cpuLoadData.value.cpus.length > 0)
 const cpuIdlePercent = computed(() => getProcessorIdlePercent(cpuLoadData.value))
+function processorFamilyLabel() {
+  const family = cleanText(cpuData.value?.family)
+  const vendor = cleanText(cpuData.value?.vendor)
+  if (/^\d+$/.test(family)) return /apple/i.test(vendor) ? 'Apple Silicon' : '未解码家族编号'
+  return joinParts([family, vendor], ' · ') || vendor || '--'
+}
+
 const cpuHybridCoreCounts = computed(() => getCpuHybridCoreCounts(cpuData.value))
 const displayPhysicalCoreCount = computed(() => getProcessorDisplayCoreCount(cpuData.value, cpuCurrentSpeed.value, cpuLoadData.value))
 const currentSpeedValue = computed(() => {
@@ -525,6 +489,9 @@ const cpuSpeedDiagnosticCopyLabel = computed(() => {
   return hasCpuSpeedAnomaly.value ? '复制异常信息' : '复制频率诊断'
 })
 const isMacPlatform = computed(() => sensorEnhancementPlatform.value === 'macos')
+const perCoreFrequencyMappingAvailable = computed(() =>
+  !(isMacPlatform.value && cpuCurrentSpeed.value.source === 'powermetrics')
+)
 const cpuTemperatureSourceLabel = computed(() => formatTemperatureSource(cpuTemperature.value?.source))
 const cpuTemperatureReasonLabel = computed(() => formatSensorReason(cpuTemperature.value?.reason || cpuTemperature.value?.errorCode))
 const windowsSensorReadiness = computed(() => getWindowsSensorEnhancementReadiness(openHardwareMonitorStatus.value))
@@ -618,6 +585,9 @@ const sensorEnhancementReady = computed(() => {
 const healthState = computed(() => {
   const temperature = cpuTemperatureValue.value
   const load = cpuLoadPercent.value
+  if (fetchState.cpuLoadData.status === 'error' || fetchState.cpuTemperature.status === 'error') {
+    return { title: '状态待更新', subtitle: '显示上次读数，当前健康状态无法确认', accent: 'var(--text-subtle)' }
+  }
   if (temperature === null && !cpuLoadTelemetryAvailable.value) {
     return {
       title: '实时数据待补齐',
@@ -642,6 +612,10 @@ const healthState = computed(() => {
     }
   }
 
+  if (temperature === null || !cpuLoadTelemetryAvailable.value) {
+    return { title: '部分数据可用', subtitle: '温度或负载数据未提供，无法完整判断状态', accent: 'var(--text-subtle)' }
+  }
+
   return {
     title: '运行良好',
     subtitle: 'CPU 当前状态正常',
@@ -649,7 +623,6 @@ const healthState = computed(() => {
   }
 })
 
-const vendorBadge = computed(() => vendorBadgeData(cpuData.value?.brand || ''))
 
 const primarySpecs = computed(() => [
   {
@@ -695,7 +668,7 @@ const quickStats = computed(() => [
     id: 'temp',
     label: '温度',
     value: cpuTemperatureValue.value === null ? cpuTemperatureIssueLabel.value : formatTemperature(cpuTemperatureValue.value),
-    accent: 'var(--accent-blue)',
+    accent: 'var(--accent-green)',
     trend: metricHistory.temp,
   },
   {
@@ -737,12 +710,12 @@ const monitorCards = computed<MonitorCard[]>(() => [
   {
     id: 'speed',
     label: '当前频率',
-    value: formatFrequency(currentSpeedValue.value),
-    unit: currentSpeedValue.value ? 'GHz' : '',
+    value: currentSpeedValue.value === null ? '--' : currentSpeedValue.value.toFixed(2),
+    unit: currentSpeedValue.value === null ? '' : 'GHz',
     accent: 'var(--accent-blue)',
     percent: currentSpeedMax.value > 0 ? clampPercent(((currentSpeedValue.value || 0) / currentSpeedMax.value) * 100) : 0,
     trend: metricHistory.speed,
-    footerLeft: `来源 ${currentSpeedSourceLabel.value}`,
+    footerLeft: `来源 ${currentSpeedSourceLabel.value.replace(/\s+helper$/, '')}`,
     footerRight: currentSpeedValue.value === null && !metricHistory.speed.length
       ? '暂无采样'
       : (isWindowsPlatform.value && currentPeakSpeedValue.value && currentPeakSpeedValue.value > (currentSpeedValue.value || 0)
@@ -766,7 +739,7 @@ const monitorCards = computed<MonitorCard[]>(() => [
         id: 'voltage',
         label: cpuVoltageMetricLabel.value,
         value: formatVoltage(cpuVoltageValue.value),
-        unit: cpuVoltageValue.value ? 'V' : '',
+        unit: '',
         accent: 'var(--accent-purple)',
         percent: cpuVoltageValue.value ? clampPercent((cpuVoltageValue.value / Math.max(cpuVoltageValue.value, safeNumber(cpuVoltage.value?.max) || 1.6)) * 100) : 0,
         trend: metricHistory.voltage,
@@ -777,11 +750,11 @@ const monitorCards = computed<MonitorCard[]>(() => [
     id: 'power',
     label: '当前功耗',
     value: formatPower(cpuPowerValue.value),
-    unit: cpuPowerValue.value ? 'W' : '',
+    unit: '',
     accent: 'var(--accent-orange)',
     percent: cpuPowerValue.value ? clampPercent((cpuPowerValue.value / Math.max(cpuPowerValue.value, 125)) * 100) : 0,
     trend: metricHistory.power,
-    footerLeft: `来源 ${formatCpuPowerSource(cpuPower.value)}`,
+    footerLeft: `来源 ${formatCpuPowerSource(cpuPower.value).replace(/\s+helper$/, '')}`,
     footerRight: cpuPowerValue.value === null && !metricHistory.power.length
       ? '暂无采样'
       : `最高 ${Math.round(getHistoryMax(metricHistory.power, cpuPowerValue.value || 0))} W`,
@@ -819,7 +792,7 @@ const allCoreRows = computed<CoreRow[]>(() => {
       id: `core-${index}`,
       label: `${coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency)} ${index + 1}`,
       type: coreTypeLabel(index, total, cpuHybridCoreCounts.value.performance, cpuHybridCoreCounts.value.efficiency),
-      speed: safeNumber(speedCores[index]) ?? null,
+      speed: perCoreFrequencyMappingAvailable.value ? safeNumber(speedCores[index]) ?? null : null,
       load: coreLoad,
       temperature: safeNumber(temperatureCores[index]) ?? cpuTemperatureValue.value,
     }
@@ -874,7 +847,7 @@ const detailSpecs = computed(() => [
   },
   {
     label: '微架构',
-    value: cleanText(cpuData.value?.family) || cleanText(cpuData.value?.vendor) || '--',
+    value: processorFamilyLabel(),
   },
   {
     label: '制造商',
@@ -1071,7 +1044,7 @@ const processorReportText = computed(() => {
     ...(pageStateBlock.value ? [`读取状态：${pageStateBlock.value.title}；${pageStateBlock.value.description}`] : []),
     '',
     `处理器：${cpuData.value?.brand || '--'}`,
-    `家族信息：${joinParts([cpuData.value?.family, cpuData.value?.vendor], ' / ') || '--'}`,
+    `家族信息：${processorFamilyLabel()}`,
     `核心 / 线程：${joinParts([displayPhysicalCoreCount.value ? `${displayPhysicalCoreCount.value} 核` : '', cpuData.value?.cores ? `${cpuData.value.cores} 线程` : ''], ' / ') || '--'}`,
     `当前温度：${formatTemperature(cpuTemperatureValue.value)}`,
     `当前功耗：${formatPower(cpuPowerValue.value)}`,
@@ -1459,7 +1432,7 @@ onUnmounted(() => {
 <template>
   <div class="processor-page">
     <StateBlock
-      v-if="loading"
+      v-if="loading && !cpuData && !cpuLoadData.cpus.length"
       variant="loading"
       title="正在同步处理器数据"
       description="正在读取 CPU 规格、实时负载、频率和传感器状态。"
@@ -1467,28 +1440,24 @@ onUnmounted(() => {
       @retry="retryProcessorPage"
     />
 
-    <StateBlock
-      v-else-if="pageStateBlock"
-      :variant="pageStateBlock.variant"
-      :title="pageStateBlock.title"
-      :description="pageStateBlock.description"
-      :action-label="pageStateBlock.actionLabel"
-      @retry="retryProcessorPage"
-    />
-
     <template v-else>
+      <StateBlock
+        v-if="pageStateBlock"
+        :variant="pageStateBlock.variant"
+        :title="pageStateBlock.title"
+        :description="pageStateBlock.description"
+        :action-label="pageStateBlock.actionLabel"
+        @retry="retryProcessorPage"
+      />
+
       <section class="processor-hero">
         <article class="hero-card">
           <div class="hero-card__head">
-            <div :class="['cpu-badge', `cpu-badge--${vendorBadge.variant}`, { 'cpu-badge--compact': vendorBadge.compact }]">
-              <span>{{ vendorBadge.top }}</span>
-              <strong>{{ vendorBadge.middle }}</strong>
-              <em>{{ vendorBadge.bottom }}</em>
-            </div>
+            <HardwareIdentity kind="cpu" />
 
             <div class="hero-card__title">
               <h2>{{ cpuData?.brand || '读取中' }}</h2>
-              <p>{{ joinParts([cpuData?.family, cpuData?.vendor], ' | ') || '等待处理器识别' }}</p>
+              <p>{{ processorFamilyLabel() === '--' ? '等待处理器识别' : processorFamilyLabel() }}</p>
             </div>
           </div>
 
@@ -1764,30 +1733,28 @@ onUnmounted(() => {
         </div>
 
         <div class="monitor-grid">
-          <article v-for="card in monitorCards" :key="card.id" class="monitor-card">
-            <div class="monitor-card__label">{{ card.label }}</div>
-            <div class="monitor-card__ring" :style="ringStyle(card.percent, card.accent)">
-              <div class="monitor-card__ring-inner">
-                <strong>{{ card.value }}</strong>
-                <span v-if="card.unit">{{ card.unit }}</span>
-              </div>
-            </div>
-            <svg class="monitor-card__sparkline" viewBox="0 0 116 34" preserveAspectRatio="none" aria-hidden="true">
-              <polyline :points="sparklinePoints(card.trend)" :stroke="card.accent" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <div class="monitor-card__foot" :class="{ 'monitor-card__foot--single': card.unsupported }">
-              <span>{{ card.unsupported ? card.value : card.footerLeft }}</span>
-              <span v-if="!card.unsupported">{{ card.footerRight }}</span>
-            </div>
-          </article>
+          <HardwareMetric
+            v-for="card in monitorCards"
+            :key="card.id"
+            :label="card.label"
+            :value="card.value"
+            :unit="card.unit"
+            :accent="card.accent"
+            :percent="card.percent"
+            :points="sparklinePoints(card.trend)"
+            :footer-left="card.footerLeft"
+            :footer-right="card.footerRight"
+            :unavailable="card.unsupported"
+          />
         </div>
       </section>
 
       <section class="processor-grid">
         <article class="processor-panel">
-          <div class="processor-panel__title">
+          <div class="processor-panel__title hardware-section-heading">
             <h3>核心频率详情</h3>
-            <p>{{ allCoreRows.length }} 个核心行</p>
+            <p v-if="perCoreFrequencyMappingAvailable">{{ allCoreRows.length }} 个核心行</p>
+            <p v-else>频率源未提供核心编号映射</p>
           </div>
 
           <div class="core-table">
@@ -1814,9 +1781,9 @@ onUnmounted(() => {
         </article>
 
         <article class="processor-panel">
-          <div class="processor-panel__title">
+          <div class="processor-panel__title hardware-section-heading">
             <h3>核心状态总览</h3>
-            <p>按核心类型查看瞬时频率与负载</p>
+            <p>{{ perCoreFrequencyMappingAvailable ? '按核心类型查看瞬时频率与负载' : '按核心类型查看负载；频率请看上方整体读数' }}</p>
           </div>
 
           <div class="processor-panel__body processor-panel__body--stack">
@@ -1825,7 +1792,7 @@ onUnmounted(() => {
               <div class="core-chip-grid">
                 <article v-for="row in performanceCoreRows" :key="row.id" class="core-chip core-chip--performance">
                   <strong>{{ row.label.replace('P-Core ', 'P') }}</strong>
-                  <span>{{ formatFrequency(row.speed) }}</span>
+                  <span v-if="perCoreFrequencyMappingAvailable">{{ formatFrequency(row.speed) }}</span>
                   <em>{{ typeof row.load === 'number' ? `${Math.round(row.load)}%` : '--' }}</em>
                 </article>
               </div>
@@ -1836,7 +1803,7 @@ onUnmounted(() => {
               <div class="core-chip-grid">
                 <article v-for="row in efficiencyCoreRows" :key="row.id" class="core-chip core-chip--efficiency">
                   <strong>{{ row.label.replace('E-Core ', 'E') }}</strong>
-                  <span>{{ formatFrequency(row.speed) }}</span>
+                  <span v-if="perCoreFrequencyMappingAvailable">{{ formatFrequency(row.speed) }}</span>
                   <em>{{ typeof row.load === 'number' ? `${Math.round(row.load)}%` : '--' }}</em>
                 </article>
               </div>
@@ -1847,7 +1814,7 @@ onUnmounted(() => {
               <div class="core-chip-grid">
                 <article v-for="row in genericCoreRows" :key="row.id" class="core-chip">
                   <strong>{{ row.label.replace('Core ', 'C') }}</strong>
-                  <span>{{ formatFrequency(row.speed) }}</span>
+                  <span v-if="perCoreFrequencyMappingAvailable">{{ formatFrequency(row.speed) }}</span>
                   <em>{{ typeof row.load === 'number' ? `${Math.round(row.load)}%` : '--' }}</em>
                 </article>
               </div>
@@ -1856,7 +1823,7 @@ onUnmounted(() => {
         </article>
 
         <article class="processor-panel">
-          <div class="processor-panel__title">
+          <div class="processor-panel__title hardware-section-heading">
             <h3>详细规格</h3>
             <p>静态规格与指令能力</p>
           </div>
@@ -1922,86 +1889,7 @@ onUnmounted(() => {
 .hero-card__head {
   display: flex;
   gap: 18px;
-  align-items: flex-start;
-}
-
-.cpu-badge {
-  display: grid;
-  gap: 3px;
-  align-content: space-between;
-  width: 88px;
-  min-height: 82px;
-  padding: 10px;
-  border-radius: 14px;
-  background: linear-gradient(160deg, rgba(45, 106, 255, 0.96), rgba(34, 63, 164, 0.88));
-  color: var(--text-on-accent);
-  box-shadow: 0 18px 36px rgba(10, 30, 78, 0.34);
-  overflow: hidden;
-
-  span {
-    display: block;
-    min-width: 0;
-    font-size: 12px;
-    text-transform: lowercase;
-    letter-spacing: 0.06em;
-    line-height: 1;
-    opacity: 0.88;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  strong {
-    display: block;
-    min-width: 0;
-    font-size: 17px;
-    line-height: 1.05;
-    letter-spacing: 0.03em;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  em {
-    justify-self: end;
-    font-style: normal;
-    font-size: 15px;
-    font-weight: 700;
-    line-height: 1;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
-.cpu-badge--compact {
-  gap: 4px;
-
-  strong {
-    font-size: 15px;
-    letter-spacing: 0.01em;
-  }
-
-  em {
-    justify-self: start;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    opacity: 0.86;
-  }
-}
-
-.cpu-badge--apple {
-  background: linear-gradient(160deg, rgba(76, 112, 255, 0.96), rgba(42, 61, 154, 0.9));
-
-  strong {
-    font-size: 18px;
-    letter-spacing: 0;
-  }
-}
-
-.cpu-badge--generic {
-  background: linear-gradient(160deg, rgba(49, 92, 180, 0.92), rgba(35, 55, 120, 0.88));
+  align-items: center;
 }
 
 .hero-card__title {
@@ -2032,7 +1920,7 @@ onUnmounted(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   margin-top: 18px;
-  border-top: 1px solid rgba(86, 101, 126, 0.18);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .hero-spec {
@@ -2040,7 +1928,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 14px 12px 10px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.12);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -2078,7 +1966,7 @@ onUnmounted(() => {
   }
 
   p {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-muted);
     font-size: 14px;
   }
@@ -2091,7 +1979,7 @@ onUnmounted(() => {
   gap: 14px;
   margin-top: 6px;
   padding-top: 12px;
-  border-top: 1px solid rgba(86, 101, 126, 0.16);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .quick-stat {
@@ -2142,7 +2030,7 @@ onUnmounted(() => {
   }
 
   p {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-subtle);
     font-size: 13px;
   }
@@ -2166,7 +2054,7 @@ onUnmounted(() => {
   margin-bottom: 14px;
   padding: 14px;
   border: 1px solid rgba(66, 128, 240, 0.18);
-  border-radius: 14px;
+  border-radius: var(--frame-radius);
   background: var(--surface-detail-background);
 }
 
@@ -2189,7 +2077,7 @@ onUnmounted(() => {
   }
 
   p {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-muted);
     font-size: 13px;
     line-height: 1.55;
@@ -2231,8 +2119,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  border: 1px solid rgba(84, 104, 132, 0.2);
-  border-radius: 12px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--tile-radius);
   background: var(--surface-softer-background);
 
   span {
@@ -2290,7 +2178,7 @@ onUnmounted(() => {
   gap: 10px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--accent-orange) 28%, transparent);
-  border-radius: 12px;
+  border-radius: var(--tile-radius);
   background: var(--state-danger-bg);
 
   > p {
@@ -2372,7 +2260,7 @@ onUnmounted(() => {
     gap: 5px;
     padding: 9px 10px;
     border: 1px solid var(--panel-border);
-    border-radius: 9px;
+    border-radius: var(--control-radius);
     background: var(--surface-soft-background);
   }
 
@@ -2405,7 +2293,7 @@ onUnmounted(() => {
 .sensor-debug-panel {
   margin-bottom: 14px;
   border: 1px solid rgba(66, 128, 240, 0.18);
-  border-radius: 12px;
+  border-radius: var(--frame-radius);
   background: var(--surface-detail-background);
   overflow: hidden;
 
@@ -2424,7 +2312,7 @@ onUnmounted(() => {
   }
 
   &[open] summary {
-    border-bottom: 1px solid rgba(84, 104, 132, 0.2);
+    border-bottom: 1px solid var(--panel-border-soft);
   }
 }
 
@@ -2458,8 +2346,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  border: 1px solid rgba(84, 104, 132, 0.2);
-  border-radius: 10px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--control-radius);
   background: var(--surface-soft-background);
 }
 
@@ -2501,7 +2389,7 @@ onUnmounted(() => {
   align-items: center;
   min-height: 24px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: var(--state-info-bg);
   color: var(--accent-blue);
   font-size: 12px;
@@ -2514,95 +2402,30 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.monitor-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  padding: 8px 10px 10px;
-  border-left: 1px solid rgba(86, 101, 126, 0.18);
-}
-
-.monitor-card:first-child {
-  border-left: 0;
-}
-
-.monitor-card__label {
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-}
-
-.monitor-card__ring {
-  display: grid;
-  place-items: center;
-  width: 106px;
-  height: 106px;
-  margin: 0 auto;
-  border-radius: 50%;
-}
-
-.monitor-card__ring-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 84px;
-  height: 84px;
-  border-radius: 50%;
-  background: var(--panel-background-strong);
-
-  strong {
-    color: var(--text-primary);
-    font-size: 16px;
-    font-weight: 700;
-  }
-
-  span {
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-}
-
-.monitor-card__sparkline {
-  width: 100%;
-  height: 34px;
-}
-
-.monitor-card__foot {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.monitor-card__foot--single {
-  justify-content: center;
-  text-align: center;
-}
-
 .processor-grid {
   display: grid;
-  grid-template-columns: 1.2fr 0.9fr 0.8fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .processor-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 420px;
+  height: auto;
   padding: var(--surface-padding);
+}
+
+.processor-panel:last-child {
+  grid-column: 1 / -1;
 }
 
 .processor-panel__body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding-right: 4px;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .processor-panel__body--stack {
@@ -2630,23 +2453,23 @@ onUnmounted(() => {
   padding: 0 2px 12px;
   color: var(--text-subtle);
   font-size: 12px;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.18);
+  border-bottom: 1px solid var(--panel-border-soft);
 }
 
 .core-table__body {
   display: flex;
   flex-direction: column;
   flex: 1;
-  gap: 8px;
-  overflow: auto;
+  gap: 0;
+  overflow: visible;
   padding-top: 12px;
 }
 
 .core-table__row {
-  padding: 8px 2px;
+  padding: 10px 2px;
   color: var(--text-secondary);
   font-size: 13px;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 }
 
 .core-badge {
@@ -2654,9 +2477,9 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   min-width: 62px;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 8px;
+  min-height: var(--pill-height);
+  padding: 0 10px;
+  border-radius: var(--pill-radius);
   font-style: normal;
   font-size: 12px;
   font-weight: 700;
@@ -2711,8 +2534,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   padding: 10px 10px 8px;
-  border: 1px solid rgba(84, 104, 132, 0.28);
-  border-radius: 10px;
+  border: 1px solid var(--panel-border-soft);
+  border-radius: var(--tile-radius);
   background: var(--surface-soft-background);
 
   strong {
@@ -2743,6 +2566,7 @@ onUnmounted(() => {
 
 .detail-specs {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 10px;
 }
 
@@ -2751,7 +2575,7 @@ onUnmounted(() => {
   grid-template-columns: 122px minmax(0, 1fr);
   gap: 12px;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);

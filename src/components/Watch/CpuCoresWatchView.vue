@@ -118,6 +118,7 @@ function closeWindow() {
 }
 
 const cpuHybridCoreCounts = computed(() => getCpuHybridCoreCounts(cpuData.value))
+const perCoreFrequencyMappingAvailable = computed(() => cpuCurrentSpeed.value?.source !== 'powermetrics')
 const displayPhysicalCoreCount = computed(() =>
   getProcessorDisplayCoreCount(cpuData.value, cpuCurrentSpeed.value, cpuLoadData.value)
 )
@@ -190,7 +191,7 @@ const allCoreRows = computed(() => {
         ? `E${index + 1 - (perf || 0)}`
         : `C${index + 1}`
 
-    const speedVal = typeof speedCores[index] === 'number' && speedCores[index] > 0
+    const speedVal = perCoreFrequencyMappingAvailable.value && typeof speedCores[index] === 'number' && speedCores[index] > 0
       ? speedCores[index]
       : null
 
@@ -269,7 +270,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
     :package-temp="packageTempNum"
     :cpu-brand="cpuBrandShort"
     :hybrid-counts="cpuHybridCoreCounts"
-    :loading="loading"
+    :loading="loading && !allCoreRows.length"
     :pinned="pinned"
     @toggle-pin="togglePin"
     @close-window="closeWindow"
@@ -284,7 +285,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
     :package-temp="packageTempNum"
     :cpu-brand="cpuBrandShort"
     :hybrid-counts="cpuHybridCoreCounts"
-    :loading="loading"
+    :loading="loading && !allCoreRows.length"
     :pinned="pinned"
     @toggle-pin="togglePin"
     @close-window="closeWindow"
@@ -367,6 +368,10 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
       </div>
     </section>
 
+    <p v-if="!perCoreFrequencyMappingAvailable" class="cpu-cores-watch__frequency-note">
+      macOS 频率采样没有提供核心编号映射；各核心频率留空，整体频率仍按系统读数显示。
+    </p>
+
     <main class="cpu-cores-watch__grid-container">
       <div v-if="allCoreRows.length" class="core-chips-grid">
         <article
@@ -405,7 +410,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
         </article>
       </div>
 
-      <div v-else-if="loading" class="cpu-cores-watch__state cpu-cores-watch__state--loading" role="status" aria-live="polite">
+      <div v-else-if="loading && !allCoreRows.length" class="cpu-cores-watch__state cpu-cores-watch__state--loading" role="status" aria-live="polite">
         <div class="cpu-cores-watch__mark" aria-hidden="true">
           <span class="cpu-cores-watch__spinner"></span>
         </div>
@@ -437,7 +442,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   gap: 8px;
   padding: 10px 12px 10px;
   border: 1px solid var(--panel-border);
-  border-radius: 10px;
+  border-radius: var(--watch-shell-radius);
   background: var(--watch-shell-background);
   box-shadow:
     inset 0 1px 0 var(--surface-inset-highlight),
@@ -469,7 +474,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--watch-control-radius);
   background: var(--surface-icon-background);
   color: var(--accent-cyan);
 }
@@ -510,7 +515,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 5px;
+  border-radius: var(--watch-control-radius);
   background: var(--watch-muted-surface);
   color: var(--text-subtle);
   cursor: pointer;
@@ -545,7 +550,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 4px 6px;
-  border-radius: 6px;
+  border-radius: var(--watch-card-radius);
   background: var(--surface-soft-background);
   -webkit-app-region: drag;
 }
@@ -578,6 +583,15 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   }
 }
 
+.cpu-cores-watch__frequency-note {
+  flex: 0 0 auto;
+  margin: 0 8px 7px;
+  color: var(--text-subtle);
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: center;
+}
+
 .cpu-cores-watch__grid-container {
   display: flex;
   flex-direction: column;
@@ -592,7 +606,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   }
 
   &::-webkit-scrollbar-thumb {
-    border-radius: 4px;
+    border-radius: var(--pill-radius);
     background: rgba(110, 128, 160, 0.28);
   }
 }
@@ -614,7 +628,7 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
   box-sizing: border-box;
   padding: 6px 7px;
   border: 1px solid var(--panel-border-soft);
-  border-radius: 7px;
+  border-radius: var(--watch-card-radius);
   background: var(--card-background);
   transition: border-color 0.18s ease, background 0.18s ease;
 
@@ -686,14 +700,14 @@ function getTempTone(temp: number | null): 'normal' | 'warn' | 'danger' {
 .core-chip__progress {
   height: 3px;
   margin-top: 1px;
-  border-radius: 2px;
+  border-radius: var(--pill-radius);
   background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
 
   i {
     display: block;
     height: 100%;
-    border-radius: 2px;
+    border-radius: var(--pill-radius);
     background: var(--accent-cyan);
     transition: width 0.24s ease;
 

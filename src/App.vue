@@ -413,9 +413,8 @@ const headerActionFeedbackText = computed(() => {
   return ''
 })
 
-const processorSensorControlVisible = computed(() =>
+const sensorControlVisible = computed(() =>
   currentPage.value === 'computer'
-  && (selectedSection.value === 'processor' || selectedSection.value === 'graphics')
   && sensorEnhancementPlatform.value !== 'unsupported'
 )
 const showMainHeaderActions = computed(() =>
@@ -591,7 +590,7 @@ onUnmounted(() => {
       <div class="window-titlebar__drag-spacer" aria-hidden="true" />
 
       <div class="window-titlebar__right">
-        <div v-if="processorSensorControlVisible" class="window-titlebar__controls">
+        <div v-if="sensorControlVisible" class="window-titlebar__controls">
           <div ref="sensorMenuRootRef" class="header-sensor-menu">
             <button
               ref="sensorMenuTriggerRef"
@@ -898,7 +897,7 @@ onUnmounted(() => {
 .standalone-titlebar .window-titlebar__mark {
   width: 28px;
   height: 28px;
-  border-radius: 10px;
+  border-radius: var(--icon-radius);
 }
 
 .device-specs-titlebar__text,
@@ -1047,7 +1046,7 @@ onUnmounted(() => {
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 10px;
+  border-radius: var(--icon-radius);
   background: var(--brand-bg);
   color: var(--brand-fg);
   font-size: 15px;
@@ -1208,7 +1207,7 @@ onUnmounted(() => {
   width: 288px;
   padding: 14px;
   border: 1px solid var(--panel-border);
-  border-radius: 12px;
+  border-radius: var(--frame-radius);
   background: var(--surface-menu-background);
   box-shadow: var(--panel-shadow);
   -webkit-app-region: no-drag;
@@ -1299,7 +1298,7 @@ onUnmounted(() => {
   width: min(440px, 100%);
   padding: 20px;
   border: 1px solid var(--panel-border);
-  border-radius: 14px;
+  border-radius: var(--frame-radius);
   background: var(--surface-modal-background);
   box-shadow: var(--panel-shadow);
 
@@ -1344,7 +1343,7 @@ onUnmounted(() => {
     top: 10px;
     width: 4px;
     height: 34px;
-    border-radius: 999px;
+    border-radius: var(--pill-radius);
     background: linear-gradient(180deg, rgba(74, 174, 255, 0.95), rgba(74, 174, 255, 0.22));
     box-shadow: 0 0 16px rgba(74, 174, 255, 0.18);
   }

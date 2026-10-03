@@ -307,7 +307,7 @@ const footerRightText = computed(() => {
   box-sizing: border-box;
   padding: 8px;
   border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  border-radius: var(--watch-shell-radius);
   background: var(--surface-watch);
   color: var(--text-watch);
   backdrop-filter: blur(24px);
@@ -387,7 +387,7 @@ const footerRightText = computed(() => {
 .super-lite-mode-switch {
   height: 18px;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--watch-control-radius);
   background: var(--watch-muted-surface);
   font-size: 9px;
   font-weight: 700;
@@ -406,7 +406,7 @@ const footerRightText = computed(() => {
   justify-content: center;
   width: 22px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--watch-control-radius);
   background: var(--watch-muted-surface);
   color: var(--text-watch-subtle);
   transition: background 0.16s ease, color 0.16s ease;
@@ -428,7 +428,7 @@ const footerRightText = computed(() => {
   justify-content: center;
   width: 22px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--watch-control-radius);
   background: var(--watch-muted-surface);
   color: var(--text-watch-subtle);
   transition: background 0.16s ease, color 0.16s ease;
@@ -447,7 +447,7 @@ const footerRightText = computed(() => {
   height: 20px;
   margin-top: 3px;
   padding: 0 6px;
-  border-radius: 5px;
+  border-radius: var(--watch-card-radius);
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--panel-border-soft);
   flex: 0 0 auto;
@@ -478,14 +478,14 @@ const footerRightText = computed(() => {
   display: inline-block;
   width: 26px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--pill-radius);
   background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
 
   i {
     display: block;
     height: 100%;
-    border-radius: 2px;
+    border-radius: var(--pill-radius);
     transition: width 0.3s ease, background-color 0.3s ease;
   }
 }
@@ -534,7 +534,7 @@ const footerRightText = computed(() => {
   flex-direction: column;
   justify-content: space-between;
   padding: 2px 3px 3px;
-  border-radius: 4px;
+  border-radius: var(--watch-micro-radius);
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-sizing: border-box;
@@ -642,7 +642,7 @@ const footerRightText = computed(() => {
 .glyph--idle {
   width: 14px;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: #475569;
   opacity: 0.65;
 }
@@ -651,7 +651,7 @@ const footerRightText = computed(() => {
 .glyph--base {
   width: 20px;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--pill-radius);
   background: #38bdf8;
   box-shadow: 0 0 4px rgba(56, 189, 248, 0.45);
 }
@@ -660,7 +660,7 @@ const footerRightText = computed(() => {
 .glyph--boost {
   width: 25px;
   height: 7px;
-  border-radius: 3px;
+  border-radius: var(--pill-radius);
   background: linear-gradient(90deg, #818cf8, #a855f7);
   box-shadow: 0 0 6px rgba(168, 85, 247, 0.55);
 }
@@ -669,7 +669,7 @@ const footerRightText = computed(() => {
 .glyph--turbo {
   width: 28px;
   height: 8px;
-  border-radius: 3px;
+  border-radius: var(--pill-radius);
   background: linear-gradient(90deg, #f59e0b, #fbbf24);
   box-shadow: 0 0 8px rgba(251, 191, 36, 0.75);
 }
@@ -679,7 +679,7 @@ const footerRightText = computed(() => {
   position: relative;
   width: 100%;
   height: 1.5px;
-  border-radius: 1px;
+  border-radius: var(--pill-radius);
   background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
   margin-top: 1px;
@@ -687,7 +687,7 @@ const footerRightText = computed(() => {
   i {
     display: block;
     height: 100%;
-    border-radius: 1px;
+    border-radius: var(--pill-radius);
     transition: width 0.3s ease, background-color 0.3s ease;
   }
 }

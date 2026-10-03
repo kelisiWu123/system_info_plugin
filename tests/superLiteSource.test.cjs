@@ -28,7 +28,7 @@ test('super-lite view is presentational and Watch owns services and timers', () 
   const superLite = readSource('src/components/Watch/SuperLiteMonitorView.vue')
 
   assert.match(watch, /import SuperLiteMonitorView/)
-  assert.match(watch, /window\.services\.getCpuFullLoad/)
+  assert.match(watch, /window\.services\.getCpuLoadData/)
   assert.match(watch, /window\.setInterval/)
   assert.match(watch, /history\.cpu/)
 
@@ -47,7 +47,7 @@ test('Watch switches floating modes, resizes the window, and persists mode and p
   assert.match(watch, /resizeFloatingMode\(mode\)\s*\n\s*floatingMode\.value = mode/)
   assert.match(watch, /updateFloatingMonitorSettings/)
   assert.match(watch, /SuperLiteMonitorView/)
-  assert.match(watch, /formatSuperLiteRefreshLabel\(getCurrentPollProfile\(\)\.fast\)/)
+  assert.match(watch, /telemetryWarning\.value \? '等待数据恢复' : '实时监控'/)
 })
 
 test('floating monitor settings are persisted in interaction order', () => {

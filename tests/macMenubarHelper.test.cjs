@@ -83,5 +83,25 @@ test('macMenubarHelper telemetry serialization formats JSON payload correctly', 
   assert.match(source, /networkUploadBytesPerSec/)
 
   const nativeSource = fs.readFileSync(path.join(__dirname, '../native/macos-menubar-helper/main.m'), 'utf8')
-  assert.match(nativeSource, /utools:\/\/HWInfoX%20%E7%A1%AC%E4%BB%B6%E4%BF%A1%E6%81%AF\/%E7%A1%AC%E4%BB%B6%E4%BF%A1%E6%81%AF/)
+  assert.doesNotMatch(nativeSource, /utools:\/\//)
+  assert.match(nativeSource, /HWINFOX_MENUBAR_COMMAND_PATH/)
+  assert.match(nativeSource, /openPreset:@"a_computer"/)
+  assert.match(nativeSource, /openPreset:@"a_menubar_settings"/)
+})
+
+
+test('tray serialization preserves a real zero load', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../utools/services/macMenubarHelper.js'), 'utf8')
+  const match = source.match(/export function updateMacMenubarTelemetry\(telemetry = \{\}\) \{[\s\S]*?\n\}/)
+  assert.ok(match)
+  let payload
+  const context = {
+    module: { exports: {} },
+    normalizeTelemetryNumber: (value) => typeof value === 'number' ? value : null,
+    writeMenubarTelemetry: (value) => { payload = value; return true },
+    getMacMenubarStatus: () => ({ running: true }),
+  }
+  vm.runInNewContext(`${match[0].replace('export ', '')}; module.exports = updateMacMenubarTelemetry`, context)
+  assert.equal(context.module.exports({ load: 0 }), true)
+  assert.equal(payload.load, 0)
 })

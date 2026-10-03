@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { useActivePageLifecycle } from '../../composables/useActivePageLifecycle'
 import { activateHardwareStore, deactivateHardwareStore, hardwareStore, refreshHardwareData } from '../../composables/useHardwareData'
 import StateBlock from '../common/StateBlock.vue'
+import HardwareIdentity from '../common/HardwareIdentity.vue'
 import {
   filterBoardReportRows,
   getBoardDisplayName,
@@ -112,6 +113,7 @@ function formatMemorySlot(item?: MemoLayoutData) {
 }
 
 function buildMemorySlots() {
+  if (isAppleUnifiedMemory.value) return []
   const actualSlots = memoLayoutData.value.length
   const slotCount = boardData.value?.memSlots && boardData.value.memSlots > 0 ? boardData.value.memSlots : actualSlots
   const normalizedSlotLabels = isDarwinPlatform.value ? [] : buildMemorySlotLabels(slotCount, memoLayoutData.value)
@@ -147,6 +149,10 @@ function makePlaceholderRows(message: string): BoardListRow[] {
 }
 
 const isDarwinPlatform = computed(() => cleanText(osInfo.value?.platform).toLowerCase() === 'darwin')
+const isAppleUnifiedMemory = computed(() => {
+  const memoryType = cleanText(memoLayoutData.value.find((item) => item.size)?.type || memoLayoutData.value[0]?.type)
+  return isDarwinPlatform.value && /LPDDR/i.test(memoryType)
+})
 const failedBoardServiceKeys = computed(() =>
   boardServiceKeys.filter((key) => fetchState[key].status === 'error')
 )
@@ -211,28 +217,28 @@ const installedMemoryModules = computed(() => memoLayoutData.value.filter((item)
 const usedSlotCount = computed(() => installedMemoryModules.value.length)
 const reportedMemorySlotCount = computed(() => Math.max(0, boardData.value?.memSlots || 0))
 const inferredMemorySlotCount = computed(() => memoLayoutData.value.length)
-const memorySlotTotal = computed(() => (reportedMemorySlotCount.value > 0 ? reportedMemorySlotCount.value : inferredMemorySlotCount.value))
+const memorySlotTotal = computed(() => isAppleUnifiedMemory.value ? 0 : (reportedMemorySlotCount.value > 0 ? reportedMemorySlotCount.value : inferredMemorySlotCount.value))
 const maxMemoryClock = computed(() => Math.max(0, ...memoLayoutData.value.map((item) => item.clockSpeed || 0)))
 const heroSpecs = computed(() =>
   filterBoardReportRows([
     { label: '厂商', value: cleanText(boardData.value?.manufacturer) || '--' },
     { label: '芯片组', value: chipsetName.value },
-    { label: '插槽', value: cleanText(cpuData.value?.socket) || '--' },
+    { label: isAppleUnifiedMemory.value ? 'SoC 封装' : 'CPU 插槽', value: cleanText(cpuData.value?.socket) || '--' },
     { label: '发布日期', value: formatDate(biosData.value?.releaseDate) },
     { label: 'PCB 版本', value: cleanText(boardData.value?.version) || '--' },
     { label: 'BIOS 版本', value: cleanText(biosData.value?.version) || '--' },
     { label: '内存上限', value: boardData.value?.memMax ? formatBytes(boardData.value.memMax) : '--' },
-    { label: '插槽数量', value: `${memorySlotTotal.value || 0} 个` },
+    { label: isAppleUnifiedMemory.value ? '内存封装' : '插槽数量', value: isAppleUnifiedMemory.value ? 'Apple Silicon SoC 集成' : `${memorySlotTotal.value || 0} 个` },
     { label: '固件模式', value: isDarwinPlatform.value ? 'Apple 平台固件' : '系统未提供' },
   ])
 )
 
-const boardTabs = [
-  { id: 'slots' as const, label: '扩展插槽', icon: Chip },
+const boardTabs = computed(() => [
+  { id: 'slots' as const, label: isAppleUnifiedMemory.value ? 'SoC 与集成设备' : '扩展插槽', icon: Chip },
   { id: 'storage' as const, label: '存储接口', icon: HardDisk },
   { id: 'usb' as const, label: 'USB 接口', icon: Memory },
   { id: 'io' as const, label: '网络与音频', icon: Signal },
-]
+])
 
 function focusBoardTab(tab: BoardTabKey) {
   window.requestAnimationFrame(() => {
@@ -246,10 +252,10 @@ function selectBoardTab(tab: BoardTabKey, shouldFocus = false) {
 }
 
 function handleBoardTabKeydown(event: KeyboardEvent, currentTab: BoardTabKey) {
-  const currentIndex = boardTabs.findIndex((tab) => tab.id === currentTab)
+  const currentIndex = boardTabs.value.findIndex((tab) => tab.id === currentTab)
   if (currentIndex < 0) return
 
-  const lastIndex = boardTabs.length - 1
+  const lastIndex = boardTabs.value.length - 1
   let nextIndex: number | undefined
 
   if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
@@ -264,13 +270,19 @@ function handleBoardTabKeydown(event: KeyboardEvent, currentTab: BoardTabKey) {
 
   if (nextIndex === undefined) return
   event.preventDefault()
-  selectBoardTab(boardTabs[nextIndex].id, true)
+  selectBoardTab(boardTabs.value[nextIndex].id, true)
 }
 
 const tabRows = computed<Record<BoardTabKey, BoardListRow[]>>(() => {
   const slotRows: BoardListRow[] = []
 
-  if (boardPrimaryGpu.value) {
+  if (isAppleUnifiedMemory.value && boardPrimaryGpu.value) {
+    slotRows.push({
+      label: 'SoC 图形',
+      primary: cleanText(boardPrimaryGpu.value.model || boardPrimaryGpu.value.name) || 'Apple GPU',
+      secondary: '与 CPU 共用 SoC 封装，不占 PCIe 插槽',
+    })
+  } else if (boardPrimaryGpu.value) {
     slotRows.push({
       label: '主显卡插槽',
       primary: boardPrimaryGpu.value.bus || 'PCIe',
@@ -278,7 +290,7 @@ const tabRows = computed<Record<BoardTabKey, BoardListRow[]>>(() => {
     })
   }
 
-  if (boardData.value?.memSlots) {
+  if (!isAppleUnifiedMemory.value && boardData.value?.memSlots) {
     slotRows.push({
       label: 'DIMM 插槽',
       primary: `${usedSlotCount.value} / ${boardData.value.memSlots} 已占用`,
@@ -332,7 +344,7 @@ const tabRows = computed<Record<BoardTabKey, BoardListRow[]>>(() => {
 const memorySpecRows = computed(() => [
   { label: '支持类型', value: cleanText(memoLayoutData.value[0]?.type) || '--' },
   { label: '最大容量', value: boardData.value?.memMax ? formatBytes(boardData.value.memMax) : '--' },
-  { label: '已用插槽', value: `${usedSlotCount.value} / ${memorySlotTotal.value || 0}` },
+  { label: isAppleUnifiedMemory.value ? '内存封装' : '已用插槽', value: isAppleUnifiedMemory.value ? 'SoC 集成，不适用 DIMM 插槽' : `${usedSlotCount.value} / ${memorySlotTotal.value || 0}` },
   { label: '当前频率', value: maxMemoryClock.value ? `${maxMemoryClock.value} MHz` : '--' },
 ])
 
@@ -496,6 +508,7 @@ useActivePageLifecycle(
       <section class="board-hero">
         <article class="hero-card">
           <div class="hero-card__head">
+            <HardwareIdentity kind="board" />
             <div class="hero-card__title">
               <h2>{{ boardName }}</h2>
               <p>{{ joinParts([chipsetName, cpuData?.socket, biosData?.version], ' / ') || '等待主板识别' }}</p>
@@ -541,8 +554,9 @@ useActivePageLifecycle(
           >
             <StateBlock
               v-if="activeTab === 'usb'"
-              variant="soon"
-              title="USB 端口级枚举即将支持"
+              variant="empty"
+              compact
+              title="暂无 USB 端口信息"
               description="当前系统数据链路尚未提供主板 USB 端口、控制器与连接设备的稳定枚举。"
             />
 
@@ -555,15 +569,22 @@ useActivePageLifecycle(
                 </div>
               </div>
 
-              <div class="board-schematic" :data-active-tab="activeTab">
+              <div class="board-schematic" :class="{ 'board-schematic--soc': isAppleUnifiedMemory }" :data-active-tab="activeTab">
                 <div class="board-schematic__outline">
-                  <div class="board-schematic__cpu"></div>
-                  <div class="board-schematic__ram bank-1"></div>
-                  <div class="board-schematic__ram bank-2"></div>
-                  <div class="board-schematic__slot slot-1"></div>
-                  <div class="board-schematic__slot slot-2"></div>
-                  <div class="board-schematic__slot slot-3"></div>
-                  <div class="board-schematic__io"></div>
+                  <div v-if="isAppleUnifiedMemory" class="board-schematic__soc-chip">
+                    <span>APPLE SILICON</span>
+                    <strong>{{ cpuData?.brand || 'SoC' }}</strong>
+                    <em>CPU · GPU · 统一内存</em>
+                  </div>
+                  <template v-else>
+                    <div class="board-schematic__cpu"></div>
+                    <div class="board-schematic__ram bank-1"></div>
+                    <div class="board-schematic__ram bank-2"></div>
+                    <div class="board-schematic__slot slot-1"></div>
+                    <div class="board-schematic__slot slot-2"></div>
+                    <div class="board-schematic__slot slot-3"></div>
+                    <div class="board-schematic__io"></div>
+                  </template>
                 </div>
               </div>
             </div>
@@ -571,12 +592,19 @@ useActivePageLifecycle(
         </article>
 
         <article class="board-panel">
-          <div class="board-panel__title">
-            <h3>内存插槽</h3>
-            <p>{{ usedSlotCount }} / {{ memorySlotTotal || 0 }} 已安装</p>
+          <div class="board-panel__title hardware-section-heading">
+            <h3>{{ isAppleUnifiedMemory ? '统一内存' : '内存插槽' }}</h3>
+            <p>{{ isAppleUnifiedMemory ? 'SoC 集成 · 无 DIMM 插槽' : `${usedSlotCount} / ${memorySlotTotal || 0} 已安装` }}</p>
           </div>
 
-          <div class="memory-slot-list">
+          <div v-if="isAppleUnifiedMemory" class="memory-slot-list">
+            <div class="memory-slot memory-slot--filled memory-slot--unified">
+              <span>Apple Silicon SoC</span>
+              <strong>{{ formatMemorySlot(installedMemoryModules[0]) }}</strong>
+              <em>统一封装，不可拆卸</em>
+            </div>
+          </div>
+          <div v-else class="memory-slot-list">
             <div v-for="(slot, slotIndex) in memorySlots" :key="`memory-slot-${slotIndex}-${slot.bank}`" :class="['memory-slot', { 'memory-slot--filled': slot.installed }]">
               <span>{{ slot.bank }}</span>
               <strong>{{ slot.type }}</strong>
@@ -586,7 +614,7 @@ useActivePageLifecycle(
 
           <div class="board-panel__title board-panel__title--sub">
             <h3>内存规格</h3>
-            <p>按当前主板与已安装模组估算</p>
+            <p>{{ isAppleUnifiedMemory ? '系统可识别的 SoC 内存规格' : '按当前主板与已安装模组估算' }}</p>
           </div>
 
           <div class="detail-specs">
@@ -600,7 +628,7 @@ useActivePageLifecycle(
 
       <section class="board-bottom">
         <article class="board-panel">
-          <div class="board-panel__title">
+          <div class="board-panel__title hardware-section-heading">
             <h3>BIOS 信息</h3>
             <p>固件版本与兼容信息</p>
           </div>
@@ -614,7 +642,7 @@ useActivePageLifecycle(
         </article>
 
         <article class="board-panel">
-          <div class="board-panel__title">
+          <div class="board-panel__title hardware-section-heading">
             <h3>芯片组</h3>
             <p>平台控制器与板载控制器识别</p>
           </div>
@@ -628,7 +656,7 @@ useActivePageLifecycle(
         </article>
 
         <article class="board-panel">
-          <div class="board-panel__title">
+          <div class="board-panel__title hardware-section-heading">
             <h3>特色功能</h3>
             <p>基于固件与设备识别结果生成</p>
           </div>
@@ -643,7 +671,7 @@ useActivePageLifecycle(
       </section>
 
       <section class="board-manufacturing">
-        <div class="board-panel__title">
+        <div class="board-panel__title hardware-section-heading">
           <h3>制造信息</h3>
           <p>厂商、序列号与系统环境概览</p>
         </div>
@@ -739,6 +767,7 @@ useActivePageLifecycle(
 
 .board-middle {
   grid-template-columns: 1.35fr 0.7fr;
+  align-items: start;
 }
 
 .board-bottom {
@@ -759,7 +788,9 @@ useActivePageLifecycle(
 }
 
 .hero-card__head {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 18px;
 }
 
 .hero-card__title {
@@ -789,7 +820,7 @@ useActivePageLifecycle(
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 18px;
-  border-top: 1px solid rgba(86, 101, 126, 0.18);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .hero-spec {
@@ -798,7 +829,7 @@ useActivePageLifecycle(
   gap: 8px;
   min-width: 0;
   padding: 14px 12px 10px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.12);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -838,7 +869,7 @@ useActivePageLifecycle(
   }
 
   p {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-subtle);
     font-size: 13px;
   }
@@ -847,7 +878,7 @@ useActivePageLifecycle(
 .board-panel__title--sub {
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid rgba(86, 101, 126, 0.14);
+  border-top: 1px solid var(--panel-border-soft);
 }
 
 .board-panel__tabs {
@@ -902,7 +933,7 @@ useActivePageLifecycle(
   grid-template-columns: 118px minmax(0, 1fr);
   gap: 10px 14px;
   padding: 12px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -930,7 +961,7 @@ useActivePageLifecycle(
 .board-schematic {
   display: grid;
   place-items: center;
-  border-left: 1px solid rgba(86, 101, 126, 0.12);
+  border-left: 1px solid var(--panel-border-soft);
 }
 
 .board-schematic__outline {
@@ -940,6 +971,46 @@ useActivePageLifecycle(
   border-radius: var(--surface-radius);
   border: 1px solid rgba(124, 144, 173, 0.22);
   background: var(--surface-detail-background);
+}
+
+.board-schematic--soc .board-schematic__outline {
+  width: 188px;
+  height: 188px;
+  border-radius: 26px;
+  background: radial-gradient(circle at 50% 42%, rgba(70, 129, 214, 0.12), var(--surface-detail-background) 68%);
+}
+
+.board-schematic__soc-chip {
+  position: absolute;
+  inset: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(122, 164, 222, 0.34);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(91, 143, 218, 0.18), rgba(49, 67, 95, 0.16));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 30px rgba(20, 48, 86, 0.14);
+}
+
+.board-schematic__soc-chip span {
+  color: var(--text-subtle);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+.board-schematic__soc-chip strong {
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.board-schematic__soc-chip em {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-style: normal;
 }
 
 .board-schematic__cpu,
@@ -984,7 +1055,7 @@ useActivePageLifecycle(
   gap: 12px;
   align-items: center;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -1004,6 +1075,10 @@ useActivePageLifecycle(
   }
 }
 
+.memory-slot--unified {
+  grid-template-columns: minmax(115px, 0.8fr) minmax(105px, 1fr) auto;
+}
+
 .memory-slot--filled em {
   color: var(--text-primary);
 }
@@ -1013,7 +1088,7 @@ useActivePageLifecycle(
   grid-template-columns: 108px minmax(0, 1fr);
   gap: 12px;
   padding: 8px 0;
-  border-bottom: 1px solid rgba(86, 101, 126, 0.08);
+  border-bottom: 1px solid var(--panel-border-soft);
 
   span {
     color: var(--text-subtle);
@@ -1043,7 +1118,7 @@ useActivePageLifecycle(
 .feature-item__dot {
   width: 10px;
   height: 10px;
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--accent-green);
   box-shadow: 0 0 0 3px rgba(90, 155, 57, 0.18);
 }
@@ -1104,7 +1179,7 @@ useActivePageLifecycle(
 
   .board-schematic {
     border-left: 0;
-    border-top: 1px solid rgba(86, 101, 126, 0.12);
+    border-top: 1px solid var(--panel-border-soft);
     padding-top: 16px;
   }
 

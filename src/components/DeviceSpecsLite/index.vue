@@ -775,7 +775,7 @@ onUnmounted(() => {
   width: 46px;
   height: 46px;
   flex: 0 0 auto;
-  border-radius: 14px;
+  border-radius: var(--frame-radius);
   background: var(--state-info-bg);
   color: var(--state-info-fg);
   box-shadow: inset 0 0 0 1px var(--control-active-border);
@@ -1004,7 +1004,7 @@ onUnmounted(() => {
   justify-content: center;
   width: 31px;
   height: 31px;
-  border-radius: 10px;
+  border-radius: var(--icon-radius);
   background: var(--state-info-bg);
   color: var(--state-info-fg);
 }
@@ -1018,7 +1018,7 @@ onUnmounted(() => {
 .core-spec-card__status {
   flex: 0 0 auto;
   padding: 3px 6px;
-  border-radius: 999px;
+  border-radius: var(--pill-radius);
   background: var(--surface-soft-background);
   color: var(--text-subtle);
   font-size: 9px;

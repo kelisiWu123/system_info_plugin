@@ -6,9 +6,11 @@ withDefaults(defineProps<{
   title: string
   description?: string
   actionLabel?: string
+  compact?: boolean
 }>(), {
   description: '',
   actionLabel: '',
+  compact: false,
 })
 
 defineEmits<{
@@ -18,7 +20,7 @@ defineEmits<{
 
 <template>
   <section
-    :class="['state-block', `state-block--${variant}`]"
+    :class="['state-block', `state-block--${variant}`, { 'state-block--compact': compact }]"
     :role="variant === 'error' ? 'alert' : 'status'"
     :aria-live="variant === 'error' ? 'assertive' : 'polite'"
     :aria-busy="variant === 'loading'"
@@ -60,6 +62,41 @@ defineEmits<{
   background: var(--surface-card-background);
   box-shadow: var(--panel-shadow);
   text-align: center;
+}
+
+.state-block--compact {
+  display: flex;
+  min-height: 0;
+  padding: 10px 14px;
+  gap: 12px;
+  text-align: left;
+
+  .state-block__mark {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+  }
+
+  .state-block__copy {
+    flex: 1 1 auto;
+    min-width: 0;
+
+    h3 {
+      font-size: 13px;
+    }
+
+    p {
+      max-width: none;
+      margin-top: 3px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+  }
+
+  .state-block__action {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
 }
 
 .state-block__mark {

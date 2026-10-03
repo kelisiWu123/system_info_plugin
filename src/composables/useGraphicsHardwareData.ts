@@ -1,3 +1,4 @@
+import { subscribeHardwareMetrics, hasSharedHardwareTelemetry, refreshSharedHardwareMetrics, isOlderMetricSample } from '../utils/metricRefresh'
 import { computed, reactive, ref } from 'vue'
 import {
   appendMetricHistory,
@@ -49,6 +50,21 @@ let lastGpuRefreshAt = 0
 let visibilityListenersBound = false
 const diagnostics = createMonitoringDiagnostics('graphics')
 
+let stopSharedTelemetry: (() => void) | undefined
+function subscribeGraphicsTelemetry() {
+  if (stopSharedTelemetry) return
+  stopSharedTelemetry = subscribeHardwareMetrics({ gpu: (value, at) => {
+    gpuData.value = value
+    setFetchState('gpuInfo', value.length ? 'ok' : 'missing', '')
+    lastSyncedAt.value = at
+    appendMetricHistory(metricHistory.gpuLoad, primaryGpu.value?.utilizationGpu ?? 0, true, 24, at)
+    appendMetricHistory(metricHistory.gpuTemp, primaryGpu.value?.temperatureGpu ?? 0, false, 24, at)
+    appendMetricHistory(metricHistory.gpuPower, primaryGpu.value?.powerDraw ?? 0, false, 24, at)
+    appendMetricHistory(metricHistory.gpuMemory, primaryGpu.value?.memoryUsed ?? 0, false, 24, at)
+    appendMetricHistory(metricHistory.gpuClock, primaryGpu.value?.clockCore ?? 0, false, 24, at)
+  } }, (_, error) => setFetchState('gpuInfo', 'error', error))
+}
+
 function setFetchState(key: GraphicsServiceKey, status: FetchStatus, note = '') {
   fetchState[key].status = status
   fetchState[key].note = note
@@ -69,6 +85,7 @@ function stopPolling() {
 }
 
 function startPolling() {
+  if (hasSharedHardwareTelemetry()) return
   if (pollingTimerId || subscriberCount <= 0 || !hasActiveRefreshIntervals()) return
 
   if (!lastSyncedAt.value || Date.now() - lastSyncedAt.value > getCurrentRefreshIntervals().base) {
@@ -114,6 +131,7 @@ function syncMonitoringVisibility() {
 }
 
 async function refreshGraphicsDynamicMetrics(force = false) {
+  if (hasSharedHardwareTelemetry()) return
   if (refreshInFlight) return refreshInFlight
 
   refreshInFlight = (async () => {
@@ -134,6 +152,7 @@ async function refreshGraphicsDynamicMetrics(force = false) {
 
       try {
         const gpuRes = await readService(() => window.services.getGpuInfo(), 15000)
+        if (isOlderMetricSample(gpuRes, gpuData.value)) return
         gpuData.value = gpuRes || []
         setFetchState('gpuInfo', gpuData.value.length ? 'ok' : 'missing', gpuData.value.length ? '' : '返回空数组')
       } catch (error) {
@@ -143,11 +162,11 @@ async function refreshGraphicsDynamicMetrics(force = false) {
       }
 
       const nextPrimaryGpu = selectPrimaryGpu(gpuData.value)
-      appendMetricHistory(metricHistory.gpuTemp, nextPrimaryGpu?.temperatureGpu || 0)
-      appendMetricHistory(metricHistory.gpuLoad, nextPrimaryGpu?.utilizationGpu || 0, true)
-      appendMetricHistory(metricHistory.gpuClock, nextPrimaryGpu?.clockCore || 0)
-      appendMetricHistory(metricHistory.gpuMemory, nextPrimaryGpu?.memoryUsed || 0)
-      appendMetricHistory(metricHistory.gpuPower, nextPrimaryGpu?.powerDraw || 0)
+      appendMetricHistory(metricHistory.gpuTemp, nextPrimaryGpu?.temperatureGpu || 0, false, 24, nextPrimaryGpu?.sampledAt)
+      appendMetricHistory(metricHistory.gpuLoad, nextPrimaryGpu?.utilizationGpu || 0, true, 24, nextPrimaryGpu?.sampledAt)
+      appendMetricHistory(metricHistory.gpuClock, nextPrimaryGpu?.clockCore || 0, false, 24, nextPrimaryGpu?.sampledAt)
+      appendMetricHistory(metricHistory.gpuMemory, nextPrimaryGpu?.memoryUsed || 0, false, 24, nextPrimaryGpu?.sampledAt)
+      appendMetricHistory(metricHistory.gpuPower, nextPrimaryGpu?.powerDraw || 0, false, 24, nextPrimaryGpu?.sampledAt)
 
       lastGpuRefreshAt = now
       lastSyncedAt.value = Date.now()
@@ -197,6 +216,7 @@ async function initGraphicsHardwareData() {
       setFetchState('displaysData', 'error', normalizeErrorMessage(displaysRes.reason))
     }
 
+    loading.value = false
     await refreshGraphicsDynamicMetrics(true)
   } finally {
     initialized.value = true
@@ -206,6 +226,7 @@ async function initGraphicsHardwareData() {
 
 export async function activateGraphicsHardwareStore() {
   subscriberCount += 1
+  subscribeGraphicsTelemetry()
   diagnostics.markActivated(subscriberCount)
   syncMonitoringVisibility()
 
@@ -223,18 +244,13 @@ export async function activateGraphicsHardwareStore() {
 }
 
 export async function refreshGraphicsHardwareData() {
-  if (!initialized.value) {
-    if (!initPromise) {
-      initPromise = initGraphicsHardwareData().finally(() => {
-        initPromise = undefined
-      })
-    }
-
-    await initPromise
-    return
+  window.services.invalidateHardwareInfoCache?.(['boardData', 'biosData', 'osInfo', 'displaysData'])
+  await refreshSharedHardwareMetrics(['gpu'])
+  if (initPromise) await initPromise
+  if (!initPromise) {
+    initPromise = initGraphicsHardwareData().finally(() => { initPromise = undefined })
   }
-
-  await refreshGraphicsDynamicMetrics(true)
+  await initPromise
 }
 
 export function deactivateGraphicsHardwareStore() {
@@ -242,6 +258,8 @@ export function deactivateGraphicsHardwareStore() {
   diagnostics.markDeactivated(subscriberCount)
 
   if (subscriberCount <= 0) {
+    stopSharedTelemetry?.()
+    stopSharedTelemetry = undefined
     stopPolling()
     return
   }
